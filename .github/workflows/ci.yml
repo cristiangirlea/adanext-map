@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # The owner's lab runner for pushes and the repository's own pull requests; a fork's pull
+    # request goes to GitHub's hosted runner (free for a public repository) and never to the lab.
+    # While the repository has no CI_RUNNER variable, everything runs on GitHub's runner.
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test -count=1 ./...
+      - name: test with the race detector
+        run: go test -race -count=1 ./...
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: hook scripts parse
+        run: bash -n .claude/hooks/go-rules.sh
