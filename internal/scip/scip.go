@@ -81,6 +81,8 @@ func Convert(x *scippb.Index) (*model.Index, error) {
 		ProjectRoot: x.GetMetadata().GetProjectRoot(),
 	}
 	globals := map[string]*model.Symbol{}
+	// rels indexes each symbol's relationships by target, so combining them stays linear.
+	rels := map[*model.Symbol]map[string]int{}
 	var docs []*document
 	byPath := map[string]*document{}
 	for i, d := range x.GetDocuments() {
@@ -102,9 +104,9 @@ func Convert(x *scippb.Index) (*model.Index, error) {
 				return nil, fmt.Errorf("document %s: symbol information %d has no symbol", path, j)
 			}
 			if scippb.IsLocalSymbol(si.GetSymbol()) {
-				merge(doc.locals, si)
+				merge(doc.locals, rels, si)
 			} else {
-				merge(globals, si)
+				merge(globals, rels, si)
 			}
 		}
 		for j, o := range d.GetOccurrences() {
@@ -135,7 +137,7 @@ func Convert(x *scippb.Index) (*model.Index, error) {
 	// External symbols are global by nature: a local one has no document to belong to.
 	for _, si := range x.GetExternalSymbols() {
 		if si.GetSymbol() != "" && !scippb.IsLocalSymbol(si.GetSymbol()) {
-			merge(globals, si)
+			merge(globals, rels, si)
 		}
 	}
 
@@ -242,7 +244,7 @@ func roles(bits int32) model.Role {
 
 // merge adds si to table. When a symbol is described more than once, the first non-empty value of
 // each field wins and the relationships are combined.
-func merge(table map[string]*model.Symbol, si *scippb.SymbolInformation) {
+func merge(table map[string]*model.Symbol, rels map[*model.Symbol]map[string]int, si *scippb.SymbolInformation) {
 	s := table[si.GetSymbol()]
 	if s == nil {
 		s = &model.Symbol{ID: si.GetSymbol()}
@@ -264,10 +266,14 @@ func merge(table map[string]*model.Symbol, si *scippb.SymbolInformation) {
 		if rel.GetSymbol() == "" || !(rel.GetIsImplementation() || rel.GetIsReference() || rel.GetIsTypeDefinition()) {
 			continue
 		}
-		i := slices.IndexFunc(s.Relationships, func(r model.Relationship) bool { return r.Symbol == rel.GetSymbol() })
-		if i < 0 {
+		if rels[s] == nil {
+			rels[s] = map[string]int{}
+		}
+		i, ok := rels[s][rel.GetSymbol()]
+		if !ok {
 			s.Relationships = append(s.Relationships, model.Relationship{Symbol: rel.GetSymbol()})
 			i = len(s.Relationships) - 1
+			rels[s][rel.GetSymbol()] = i
 		}
 		r := &s.Relationships[i]
 		r.Implementation = r.Implementation || rel.GetIsImplementation()

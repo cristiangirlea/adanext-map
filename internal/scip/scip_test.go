@@ -2,11 +2,13 @@ package scip
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	scippb "github.com/scip-code/scip/bindings/go/scip"
 
@@ -164,6 +166,27 @@ func TestConvertRejectsMalformedInput(t *testing.T) {
 				t.Fatalf("err = %q, want it to mention %q", err, c.want)
 			}
 		})
+	}
+}
+
+// A symbol with many relationships costs time in proportion to their number: with a search per
+// relationship, 200,000 of them took minutes.
+func TestConvertTakesLinearTimeInRelationships(t *testing.T) {
+	x := sciptest.Index()
+	si := x.Documents[1].Symbols[0]
+	for i := range 200_000 {
+		si.Relationships = append(si.Relationships, &scippb.Relationship{Symbol: fmt.Sprint("s", i), IsReference: true})
+	}
+	start := time.Now()
+	got, err := Convert(x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("Convert took %s", took)
+	}
+	if n := len(got.Symbols[3].Relationships); n != 200_001 {
+		t.Fatalf("impl has %d relationships, want 200001", n)
 	}
 }
 
