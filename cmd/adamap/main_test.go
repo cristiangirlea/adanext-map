@@ -22,12 +22,14 @@ func TestVersionPrintsTheVersion(t *testing.T) {
 }
 
 func TestHelpGoesToStdout(t *testing.T) {
-	var out, errOut bytes.Buffer
-	if code := run([]string{"help"}, &out, &errOut); code != 0 {
-		t.Fatalf("exit %d", code)
-	}
-	if !strings.HasPrefix(out.String(), "usage: adamap") || errOut.Len() != 0 {
-		t.Fatalf("stdout %q, stderr %q", out.String(), errOut.String())
+	for _, arg := range []string{"help", "--help", "-h"} {
+		var out, errOut bytes.Buffer
+		if code := run([]string{arg}, &out, &errOut); code != 0 {
+			t.Fatalf("%s: exit %d", arg, code)
+		}
+		if !strings.HasPrefix(out.String(), "usage: adamap") || errOut.Len() != 0 {
+			t.Fatalf("%s: stdout %q, stderr %q", arg, out.String(), errOut.String())
+		}
 	}
 }
 
