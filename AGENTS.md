@@ -46,9 +46,10 @@ Never attach a self-hosted runner or route public contributions to the owner's m
 
 ## Rules of this repository
 
-- **Few dependencies, all named.** The SCIP Go bindings (`github.com/sourcegraph/scip`) and the
-  official MCP Go SDK (`github.com/modelcontextprotocol/go-sdk`) with what they need; otherwise
-  the standard library. Another one is a decision recorded in `PLAN.md` first.
+- **Few dependencies, all named.** The SCIP Go bindings
+  (`github.com/scip-code/scip/bindings/go/scip`) and the official MCP Go SDK
+  (`github.com/modelcontextprotocol/go-sdk`) with what they need; otherwise the standard library.
+  Another one is a decision recorded in `PLAN.md` first.
 - **No model calls.** adamap never calls a model API, and tests never need a key or the network.
   The benchmark runs agent CLIs on their plans and refuses to run when an API key is set.
 - **The store stays loadable.** Fields added to the store's types are additive with `omitempty`; a
