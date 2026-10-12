@@ -111,6 +111,60 @@ func TestIndexRunsTheIndexerTheRepositoryNeeds(t *testing.T) {
 	}
 }
 
+func TestIndexPrefersCargoTomlWhenBothProjectFilesExist(t *testing.T) {
+	calls := fakeIndexers(t, "scip-go", "rust-analyzer")
+	repo := t.TempDir()
+	writeFile(t, filepath.Join(repo, "go.mod"), "")
+	writeFile(t, filepath.Join(repo, "Cargo.toml"), "")
+	if code, _, errOut := runIndexCmd("--commit", testCommit, "--repo", repo); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errOut)
+	}
+	if !slices.Equal(*calls, []string{"/fake/bin/rust-analyzer scip ."}) {
+		t.Errorf("ran %q, want rust-analyzer", *calls)
+	}
+}
+
+// When the indexer fails or writes an index adamap refuses, the run fails, no store is written,
+// and the index.scip it wrote is removed.
+func TestIndexCleansUpAfterAFailedIndexer(t *testing.T) {
+	bad := sciptest.Index()
+	bad.Documents[0].RelativePath = "/abs.go"
+	cases := []struct {
+		name  string
+		write func(dir string) error
+		args  []string
+		want  string
+	}{
+		{"indexer exits non-zero", func(dir string) error {
+			writeFile(t, filepath.Join(dir, "index.scip"), "partial")
+			return errors.New("exit status 101")
+		}, nil, "scip-go failed: exit status 101"},
+		{"indexer writes a malformed index", func(dir string) error {
+			return os.WriteFile(filepath.Join(dir, "index.scip"), sciptest.Bytes(t, bad), 0o644)
+		}, nil, "absolute"},
+		{"indexer writes too much", func(dir string) error {
+			return os.WriteFile(filepath.Join(dir, "index.scip"), sciptest.Bytes(t, sciptest.Index()), 0o644)
+		}, []string{"--max-bytes", "10"}, "--max-bytes"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fakeIndexers(t, "scip-go")
+			runIndexer = func(dir, _ string, _ []string, _ io.Writer) error { return c.write(dir) }
+			repo := t.TempDir()
+			writeFile(t, filepath.Join(repo, "go.mod"), "")
+			code, out, errOut := runIndexCmd(append([]string{"--commit", testCommit, "--repo", repo}, c.args...)...)
+			if code != 1 || out != "" || !strings.Contains(errOut, c.want) {
+				t.Fatalf("exit %d, stdout %q, stderr %q; want 1 and %q", code, out, errOut, c.want)
+			}
+			for _, name := range []string{"index.scip", ".adamap"} {
+				if _, err := os.Stat(filepath.Join(repo, name)); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("%s is there after a failed run: %v", name, err)
+				}
+			}
+		})
+	}
+}
+
 func TestIndexNamesAMissingIndexerAndHowToInstallIt(t *testing.T) {
 	cases := map[string][]string{
 		"go.mod":     {"scip-go", "go install github.com/scip-code/scip-go/cmd/scip-go@latest"},
