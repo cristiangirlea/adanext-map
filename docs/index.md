@@ -47,6 +47,9 @@ own output goes to stderr.
 
 For any other language, run its SCIP indexer yourself and pass the output with `--scip`.
 
+An indexer builds the project, and building runs the project's code: `rust-analyzer` runs build
+scripts and procedural macros. Index only repositories whose code you would build.
+
 ## What is checked
 
 A SCIP index is untrusted input. adamap refuses, with an error naming the document and occurrence:
@@ -59,6 +62,8 @@ A SCIP index is untrusted input. adamap refuses, with an error naming the docume
 
 Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice is
 merged into one.
+
+`--max-bytes` bounds the file, not the memory: the decoded index takes several times its size.
 
 ## The store
 
@@ -96,8 +101,9 @@ are only ever added, with `omitempty`, so a store from an earlier adamap still l
 One JSON object:
 
 - `tool`, `project_root`: as in the header.
-- `documents`: sorted by `path`, which is relative to the project root with forward slashes. Each
-  has a `language`, its `locals`, and its `occurrences` sorted by range.
+- `documents`: sorted by `path`, which is relative to the project root as the indexer gave it
+  (SCIP asks for forward slashes). Each has a `language`, its `locals`, and its `occurrences`
+  sorted by range.
 - `symbols`: the global symbols, sorted by `id`.
 
 A symbol has an `id` (the SCIP symbol string), a `display_name` and a `kind` (the SCIP kind's name,

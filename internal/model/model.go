@@ -19,7 +19,8 @@ type Tool struct {
 	Version string `json:"version,omitempty"`
 }
 
-// Document is one source file, its path relative to the project root with forward slashes.
+// Document is one source file, its path relative to the project root as the indexer gave it
+// (SCIP asks for forward slashes).
 type Document struct {
 	Path     string `json:"path"`
 	Language string `json:"language,omitempty"`
