@@ -161,9 +161,11 @@ belongs to the innermost scope that contains the position where the reference st
 
 1. **The enclosing range** of the definition occurrence, when the indexer gave one (the whole function,
    body and doc comment). The start is inside the scope, the end is not.
-2. **Otherwise the fallback**: the span from the start of the definition's name to the start of the next
-   global definition's name in the same document, or to the end of the document for the last one,
-   and clipped to the scope that holds the definition, if there is one.
+2. **Otherwise the fallback**: the span from column 0 of the line of the definition's name to column 0
+   of the line of the next global definition's name in the same document, or to the end of the document
+   for the last one, and clipped to the scope that holds the definition, if there is one. Starting at
+   column 0 keeps what stands left of the name, such as the receiver in Go's `func (s *Server) Handle()`,
+   inside the definition; a second definition on the same line starts at its name.
 
 The fallback is a heuristic. A definition without an enclosing range is taken to own everything up to
 the next definition, so a top-level statement between two functions is attributed to the first, and every

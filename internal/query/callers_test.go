@@ -140,7 +140,7 @@ func TestCallersFallbackStopsAtTheNextDefinitionAndNotBefore(t *testing.T) {
 		occSpec{sym: target, line: 0, col: 0},        // before every definition
 		occSpec{sym: f, line: 2, col: 5, def: true},  // f: from line 2 to where g starts
 		occSpec{sym: target, line: 3, col: 1},        // in f
-		occSpec{sym: target, line: 5, col: 9},        // in f, on the line g starts, left of it
+		occSpec{sym: target, line: 5, col: 9},        // in g: a scope starts at column 0 of its name's line
 		occSpec{sym: g, line: 5, col: 20, def: true}, // g starts on that line, further right
 		occSpec{sym: target, line: 5, col: 25},       // in g
 		occSpec{sym: target, line: 40, col: 0},       // in g: the last definition runs to the end
@@ -155,7 +155,7 @@ func TestCallersFallbackStopsAtTheNextDefinitionAndNotBefore(t *testing.T) {
 	if want := []string{f, g}; !slices.Equal(callerIDs(got.Callers), want) {
 		t.Fatalf("callers = %v, want %v", callerIDs(got.Callers), want)
 	}
-	if !slices.Equal(lines(got.Callers[0].Sites), []int{4, 6}) || !slices.Equal(lines(got.Callers[1].Sites), []int{6, 41}) {
+	if !slices.Equal(lines(got.Callers[0].Sites), []int{4}) || !slices.Equal(lines(got.Callers[1].Sites), []int{6, 6, 41}) {
 		t.Errorf("sites: f %v, g %v", lines(got.Callers[0].Sites), lines(got.Callers[1].Sites))
 	}
 }
@@ -226,5 +226,34 @@ func TestCallersDoesNotUseTheReferencesOwnEnclosingRange(t *testing.T) {
 	}
 	if len(got.Callers) != 0 || got.Unattributed != 1 {
 		t.Errorf("callers = %+v, unattributed %d", got.Callers, got.Unattributed)
+	}
+}
+
+func TestCallersFallbackScopeStartsAtTheStartOfTheNamesLine(t *testing.T) {
+	// Go's `func (s *Server) Handle()`: the reference to Server sits left of the name Handle.
+	const prev, handle, server = "s m p v prev().", "s m p v Server#Handle().", "s m p v Server#"
+	x := oneDoc(
+		occSpec{sym: prev, line: 0, col: 5, def: true},
+		occSpec{sym: server, line: 4, col: 9},
+		occSpec{sym: handle, line: 4, col: 17, def: true},
+	)
+	got, err := x.Callers(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{handle}; !slices.Equal(callerIDs(got.Callers), want) || got.Unattributed != 0 {
+		t.Errorf("callers = %v, unattributed %d, want %v and none", callerIDs(got.Callers), got.Unattributed, want)
+	}
+	// With no definition before it, the reference is not left unattributed either.
+	x = oneDoc(
+		occSpec{sym: server, line: 0, col: 9},
+		occSpec{sym: handle, line: 0, col: 17, def: true},
+	)
+	got, err = x.Callers(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{handle}; !slices.Equal(callerIDs(got.Callers), want) || got.Unattributed != 0 {
+		t.Errorf("first definition: callers = %v, unattributed %d, want %v and none", callerIDs(got.Callers), got.Unattributed, want)
 	}
 }

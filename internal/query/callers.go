@@ -53,8 +53,8 @@ func (s *scope) contains(p pos) bool { return !p.less(s.start) && p.less(s.end) 
 // buildScopes makes the scopes of the global definitions in d, given their occurrence indexes.
 //
 // A definition's scope is the enclosing range of its occurrence. When the indexer gave none, it is
-// the span from the start of the definition's name to the start of the next definition's name in
-// the document (to the end of the document for the last one), clipped to the scope around it if
+// the span from column 0 of the line of the definition's name to column 0 of the line of the next
+// definition's name in the document (to the end of the document for the last one), clipped to the scope around it if
 // there is one. Only global definitions count, as boundaries as well as scopes: a local variable
 // inside a function must not end the function.
 func buildScopes(d *model.Document, defs []int32) []scope {
@@ -66,21 +66,29 @@ func buildScopes(d *model.Document, defs []int32) []scope {
 		return compareRange(d.Occurrences[a].Range, d.Occurrences[b].Range)
 	})
 	scopes := make([]scope, len(byName))
-	// next is the start of the nearest later definition that starts after this one.
+	// A fallback scope starts at column 0 of its name's line, so that what stands left of the name
+	// (a Go receiver, a return type) is inside it. A second definition on that line starts at its name.
+	fallbackStart := func(i int) pos {
+		start := startOf(d.Occurrences[byName[i]].Range)
+		if i > 0 && d.Occurrences[byName[i-1]].Range.StartLine == start.line {
+			return start
+		}
+		return pos{start.line, 0}
+	}
+	// next is where the nearest later definition that starts after this one begins.
 	next := endOfDocument
 	for i := len(byName) - 1; i >= 0; i-- {
 		o := &d.Occurrences[byName[i]]
-		start := startOf(o.Range)
 		if i+1 < len(byName) {
-			if later := startOf(d.Occurrences[byName[i+1]].Range); start.less(later) {
-				next = later
+			if startOf(o.Range).less(startOf(d.Occurrences[byName[i+1]].Range)) {
+				next = fallbackStart(i + 1)
 			}
 		}
 		s := scope{occ: byName[i], parent: -1}
 		if o.Enclosing != nil {
 			s.start, s.end = startOf(*o.Enclosing), endOf(*o.Enclosing)
 		} else {
-			s.start, s.end, s.fallback = start, next, true
+			s.start, s.end, s.fallback = fallbackStart(i), next, true
 		}
 		scopes[i] = s
 	}
