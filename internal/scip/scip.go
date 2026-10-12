@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -87,7 +86,7 @@ func Convert(x *scippb.Index) (*model.Index, error) {
 	byPath := map[string]*document{}
 	for i, d := range x.GetDocuments() {
 		path := d.GetRelativePath()
-		if err := checkPath(path); err != nil {
+		if err := model.CheckPath(path); err != nil {
 			return nil, fmt.Errorf("document %d: %w", i, err)
 		}
 		doc := byPath[path]
@@ -151,24 +150,6 @@ func Convert(x *scippb.Index) (*model.Index, error) {
 	slices.SortFunc(idx.Documents, func(a, b model.Document) int { return strings.Compare(a.Path, b.Path) })
 	idx.Symbols = sorted(globals)
 	return idx, nil
-}
-
-// checkPath refuses a document path that could point outside the project: empty, absolute in any
-// platform's spelling, or with a `..` segment.
-func checkPath(p string) error {
-	switch {
-	case p == "":
-		return fmt.Errorf("no path")
-	case strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) || filepath.IsAbs(p) ||
-		(len(p) >= 2 && p[1] == ':'):
-		return fmt.Errorf("path %q is absolute", p)
-	}
-	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
-		if seg == ".." {
-			return fmt.Errorf("path %q has a .. segment", p)
-		}
-	}
-	return nil
 }
 
 func occurrence(o *scippb.Occurrence) (model.Occurrence, error) {

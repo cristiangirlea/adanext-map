@@ -3,6 +3,12 @@
 // added, with omitempty, and the Role values are never renumbered.
 package model
 
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+)
+
 // Index is one indexed tree at one commit.
 type Index struct {
 	Tool        Tool       `json:"tool"`
@@ -109,4 +115,22 @@ func (x *Index) Counts() Counts {
 		c.Occurrences += len(d.Occurrences)
 	}
 	return c
+}
+
+// CheckPath refuses a document path that could point outside the project: empty, absolute in any
+// platform's spelling, or with a `..` segment.
+func CheckPath(p string) error {
+	switch {
+	case p == "":
+		return fmt.Errorf("no path")
+	case strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) || filepath.IsAbs(p) ||
+		(len(p) >= 2 && p[1] == ':'):
+		return fmt.Errorf("path %q is absolute", p)
+	}
+	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == ".." {
+			return fmt.Errorf("path %q has a .. segment", p)
+		}
+	}
+	return nil
 }

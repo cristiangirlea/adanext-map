@@ -309,3 +309,17 @@ func TestLoadStopsDecompressingAtTheLimit(t *testing.T) {
 		t.Errorf("LoadLimited under the limit: %v", err)
 	}
 }
+
+func TestLoadRefusesADocumentPathOutsideTheProject(t *testing.T) {
+	for _, p := range []string{"/etc/passwd", `C:\x`, "../../x", "a/../../x", ""} {
+		repo := t.TempDir()
+		idx := fixture(t)
+		idx.Documents[0].Path = p // as a hand-edited store would have it; Convert would refuse it
+		if _, err := Write(repo, header(commitA), idx); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), "document 0") {
+			t.Errorf("path %q: Load err = %v, want one naming document 0", p, err)
+		}
+	}
+}

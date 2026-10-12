@@ -201,6 +201,11 @@ func LoadLimited(repo, commit string, limit int64) (Header, *model.Index, error)
 	if err := json.NewDecoder(&limitedReader{r: gz, left: limit, limit: limit}).Decode(&idx); err != nil {
 		return Header{}, nil, fmt.Errorf("%s: %w", filepath.Join(dir, storeFile), err)
 	}
+	for i, d := range idx.Documents {
+		if err := model.CheckPath(d.Path); err != nil {
+			return Header{}, nil, fmt.Errorf("%s: document %d: %w", filepath.Join(dir, storeFile), i, err)
+		}
+	}
 	return h, &idx, nil
 }
 
