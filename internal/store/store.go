@@ -208,8 +208,26 @@ func LoadLimited(repo, commit string, limit int64) (Header, *model.Index, error)
 		if err := model.CheckPath(d.Path); err != nil {
 			return Header{}, nil, fmt.Errorf("%s: document %d: %w", filepath.Join(dir, storeFile), i, err)
 		}
+		for j, s := range d.Locals {
+			if err := checkDefinition(s); err != nil {
+				return Header{}, nil, fmt.Errorf("%s: document %d local %d: %w", filepath.Join(dir, storeFile), i, j, err)
+			}
+		}
+	}
+	for i, s := range idx.Symbols {
+		if err := checkDefinition(s); err != nil {
+			return Header{}, nil, fmt.Errorf("%s: symbol %d: %w", filepath.Join(dir, storeFile), i, err)
+		}
 	}
 	return h, &idx, nil
+}
+
+// checkDefinition checks the path of s's definition, when it has one.
+func checkDefinition(s model.Symbol) error {
+	if s.Definition == nil {
+		return nil
+	}
+	return model.CheckPath(s.Definition.Path)
 }
 
 // maxHeaderBytes is the largest header.json Load reads; a real one is a few hundred bytes.

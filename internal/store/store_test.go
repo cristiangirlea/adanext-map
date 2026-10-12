@@ -393,3 +393,26 @@ func TestLoadRefusesAnOversizedHeader(t *testing.T) {
 		t.Fatalf("Load err = %v, want one saying header.json is larger than the limit", err)
 	}
 }
+
+func TestLoadRefusesASymbolDefinitionPathOutsideTheProject(t *testing.T) {
+	loc := func(p string) *model.Location { return &model.Location{Path: p} }
+	cases := map[string]func(idx *model.Index){
+		"symbol 0": func(idx *model.Index) {
+			idx.Symbols = []model.Symbol{{ID: "s", Definition: loc("../../etc/passwd")}}
+		},
+		"document 0 local 0": func(idx *model.Index) {
+			idx.Documents[0].Locals = []model.Symbol{{ID: "local 0", Definition: loc("/etc/passwd")}}
+		},
+	}
+	for want, change := range cases {
+		repo := t.TempDir()
+		idx := fixture(t)
+		change(idx)
+		if _, err := Write(repo, header(commitA), idx); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Load err = %v, want one naming %s", err, want)
+		}
+	}
+}
