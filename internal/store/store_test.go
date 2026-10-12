@@ -443,6 +443,20 @@ func TestLatestRefusesASymlinkedStoreDirectory(t *testing.T) {
 	}
 }
 
+func TestLatestRefusesACommitFollowedByMoreThanTheLimit(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".adamap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := commitA + strings.Repeat(" ", 200) + "x"
+	if err := os.WriteFile(filepath.Join(repo, ".adamap", "latest"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Latest(repo); err == nil {
+		t.Fatalf("Latest = %q, want an error for a file longer than the limit", c)
+	}
+}
+
 func TestLatestErrorDoesNotQuoteTheWholeFile(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".adamap"), 0o755); err != nil {

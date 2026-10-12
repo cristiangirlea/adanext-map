@@ -307,9 +307,13 @@ func Latest(repo string) (string, error) {
 		return "", fmt.Errorf("no store in %s yet: run `adamap index` (%w)", repo, err)
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxLatestBytes))
+	// One byte past the limit tells a file of exactly the limit from a longer one.
+	data, err := io.ReadAll(io.LimitReader(f, maxLatestBytes+1))
 	if err != nil {
 		return "", err
+	}
+	if len(data) > maxLatestBytes {
+		return "", fmt.Errorf("%s is longer than %d bytes, so it is not a commit: run `adamap index`", path, maxLatestBytes)
 	}
 	c := string(bytes.TrimSpace(data))
 	if err := CheckCommit(c); err != nil {
