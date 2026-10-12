@@ -15,13 +15,15 @@ updates this file in that pull request. Tracking issue: #7.
 
 Later, each as its own issue when its turn comes: scip-typescript; re-indexing on commit (a git
 hook or `adamap watch`); hrn passing the server to every backend (an issue in the harness
-repository); a lab CI runner for this repository (infra#59).
+repository); a fail-closed push guard (#8).
 
 ## Decisions
 
 - 2026-10-13: public from the first commit. Go, for one static binary that reads SCIP natively and
-  builds in seconds on the lab runner. The name scheme `adanext-<what it is>` for this family of
-  tools; the binary is `adamap`.
+  builds in seconds. The name scheme `adanext-<what it is>` for this family of tools; the binary is
+  `adamap`.
+- 2026-10-13: CI on GitHub's standard hosted runners (Linux and Windows), free for a public
+  repository, never the owner's lab: outside contributions stay off their machines, as in harness.
 - 2026-10-13: dependencies are the SCIP Go bindings and the official MCP Go SDK, otherwise the
   standard library. Indexers are external programs.
 - 2026-10-13: the store is keyed by commit, so a question can be asked of a specific commit and

@@ -40,9 +40,9 @@ sh .claude/hooks/go-rules.test.sh
 ```
 
 `-race` needs cgo, which the owner's Windows PC lacks: run `go test -count=3 ./...` there and leave
-`-race` to CI. CI runs on the owner's lab Linux runner (`vars.CI_RUNNER`) for pushes and the
-repository's own pull requests; a fork's pull request runs on GitHub's hosted runner, never on the
-lab. No Windows job on pull requests.
+`-race` to CI. CI runs on GitHub's standard hosted runners, Linux and Windows, free for a public
+repository; the job skips if the repository is ever private, so it cannot spend private minutes.
+Never attach a self-hosted runner or route public contributions to the owner's machines.
 
 ## Rules of this repository
 

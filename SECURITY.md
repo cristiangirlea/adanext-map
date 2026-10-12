@@ -12,6 +12,5 @@ calls and sends nothing anywhere.
 A SCIP index is untrusted input: the reader is to bound sizes and counts and report a malformed
 index instead of acting on it.
 
-CI runs on the maintainer's lab runner for pushes and the repository's own pull requests (on
-GitHub's hosted runner until that runner exists); a fork's pull request runs on GitHub's hosted
-runner, after a maintainer's approval, and never on the lab.
+CI uses standard GitHub-hosted runners. Public contributions must not run on the maintainer's
+desktop or private infrastructure. Tests need no credentials and make no model calls.

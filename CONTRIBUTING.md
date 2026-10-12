@@ -21,10 +21,9 @@ Read [AGENTS.md](AGENTS.md) for the checks, the rules of this repository and the
 conditions before changing code. Tests are to build their SCIP fixtures in code and need no
 indexer, key or network.
 
-CI runs pushes and the repository's own pull requests on the maintainer's lab runner (on GitHub's
-hosted runner until that runner exists); a pull request from a fork runs on GitHub's hosted runner
-and waits for a maintainer's approval first.
-See [SECURITY.md](SECURITY.md).
+CI tests pull requests and pushes to `main` on standard GitHub-hosted Linux and Windows runners,
+free for a public repository; the job skips if the repository is private. No self-hosted runner is
+used. See [SECURITY.md](SECURITY.md).
 
 - **One pull request per slice**, small enough to review, with `PLAN.md` updated in the same PR.
 - **Tests first, seen failing.**

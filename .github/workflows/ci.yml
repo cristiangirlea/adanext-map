@@ -11,11 +11,17 @@ permissions:
 
 jobs:
   test:
-    # The owner's lab runner for pushes and the repository's own pull requests; a fork's pull
-    # request goes to GitHub's hosted runner (free for a public repository) and never to the lab.
-    # While the repository has no CI_RUNNER variable, everything runs on GitHub's runner.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    # GitHub's standard hosted runners are free for a public repository; the job skips if the
+    # repository is ever private, so it can never spend private minutes. Never a self-hosted
+    # runner: public contributions must not run on the owner's machines.
+    if: ${{ github.event.repository.private == false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    # Git Bash on both, so the steps read the same.
     defaults:
       run:
         shell: bash
@@ -28,6 +34,7 @@ jobs:
       - run: go build ./...
       - run: go test -count=1 ./...
       - name: test with the race detector
+        if: matrix.os == 'ubuntu-latest'
         run: go test -race -count=1 ./...
       - name: gofmt
         run: test -z "$(gofmt -l .)"
