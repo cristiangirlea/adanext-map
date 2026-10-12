@@ -1,6 +1,6 @@
 // Command adamap is a code map for AI agents, built slice by slice (PLAN.md): it is to read SCIP
 // indexes into a per-commit store and answer outline, find, refs, callers, impact and a ranked
-// repo map over a CLI and an MCP server. So far it has version, help and index.
+// repo map over a CLI and an MCP server. So far it has version, help, index and map.
 package main
 
 import (
@@ -29,6 +29,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "index":
 		return runIndex(args[1:], stdout, stderr)
+	case "map":
+		return runMap(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		usage(stdout)
 		return 0
@@ -46,8 +48,9 @@ commands:
   version   print the version
   help      print this text
   index     read a SCIP index into the store for a commit (adamap index -h for its flags)
+  map       print the files and symbols that matter most, within a token budget (adamap map -h)
 
-The commands outline, find, refs, callers, impact, map and mcp arrive slice by slice;
+The commands outline, find, refs, callers, impact and mcp arrive slice by slice;
 PLAN.md lists them in order.
 `)
 }
