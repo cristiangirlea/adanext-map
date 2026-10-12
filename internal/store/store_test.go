@@ -170,6 +170,44 @@ func TestLoadRefusesANewerFormatWithoutAVersionSayingANewerAdamap(t *testing.T) 
 	}
 }
 
+func TestLoadRefusesAHeaderOfAnotherCommit(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	rewriteHeader(t, repo, func(h map[string]any) { h["commit"] = commitB })
+	if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), commitB) {
+		t.Fatalf("err = %v, want one naming the commit the header claims", err)
+	}
+}
+
+func TestAStoreWithoutItsHeaderDoesNotLoad(t *testing.T) {
+	// A write cut short after store.json.gz leaves no header.json.
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(repo, ".adamap", commitA, "header.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), "adamap index") {
+		t.Fatalf("err = %v, want one saying to run adamap index", err)
+	}
+}
+
+func TestLatestRefusesAFileThatIsNotACommit(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".adamap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".adamap", "latest"), []byte("../../etc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Latest(repo); err == nil {
+		t.Fatalf("Latest = %q, want an error", c)
+	}
+}
+
 func TestLoadRefusesAHeaderWithoutAFormat(t *testing.T) {
 	repo := t.TempDir()
 	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
