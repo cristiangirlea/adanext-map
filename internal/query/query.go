@@ -183,19 +183,10 @@ func (x *Index) Outline(path string) ([]Symbol, error) {
 	if !ok {
 		return nil, ErrNoDocument
 	}
-	d := &x.src.Documents[di]
-	var refs []occRef
-	for oi := range d.Occurrences {
-		if o := &d.Occurrences[oi]; o.Roles.Has(model.RoleDefinition) && o.Symbol != "" && !isLocal(o.Symbol) {
-			refs = append(refs, occRef{int32(di), int32(oi)})
-		}
-	}
-	slices.SortStableFunc(refs, func(a, b occRef) int {
-		return compareRange(d.Occurrences[a.occ].Range, d.Occurrences[b.occ].Range)
-	})
-	out := make([]Symbol, 0, len(refs))
-	for _, r := range refs {
-		out = append(out, x.viewAt(x.byID[d.Occurrences[r.occ].Symbol], r))
+	defs := x.defsIn(di)
+	out := make([]Symbol, 0, len(defs))
+	for _, oi := range defs {
+		out = append(out, x.viewAt(x.byID[x.src.Documents[di].Occurrences[oi].Symbol], occRef{int32(di), oi}))
 	}
 	return out, nil
 }
