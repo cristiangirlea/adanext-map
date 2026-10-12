@@ -245,3 +245,41 @@ func TestCommitMustBeAFullHash(t *testing.T) {
 		t.Error("Load accepted a commit that is a path")
 	}
 }
+
+func symlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("cannot create a symlink here: %v", err)
+	}
+}
+
+func TestStoreRefusesASymlinkedStoreDirectory(t *testing.T) {
+	repo, outside := t.TempDir(), t.TempDir()
+	symlinkOrSkip(t, outside, filepath.Join(repo, ".adamap"))
+	if _, err := Write(repo, header(commitA), fixture(t)); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("Write err = %v, want a refusal naming the symbolic link", err)
+	}
+	if got := names(t, outside); len(got) != 0 {
+		t.Errorf("Write put %v outside the repository", got)
+	}
+	if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("Load err = %v, want a refusal naming the symbolic link", err)
+	}
+}
+
+func TestStoreRefusesASymlinkedCommitDirectory(t *testing.T) {
+	repo, outside := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".adamap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, outside, filepath.Join(repo, ".adamap", commitA))
+	if _, err := Write(repo, header(commitA), fixture(t)); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("Write err = %v, want a refusal naming the symbolic link", err)
+	}
+	if got := names(t, outside); len(got) != 0 {
+		t.Errorf("Write put %v outside the repository", got)
+	}
+	if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("Load err = %v, want a refusal naming the symbolic link", err)
+	}
+}

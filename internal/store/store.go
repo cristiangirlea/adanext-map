@@ -66,6 +66,9 @@ func Write(repo string, h Header, idx *model.Index) (string, error) {
 	h.Format = FormatVersion
 	h.Counts = idx.Counts()
 	dir := Dir(repo, h.Commit)
+	if err := checkDirs(repo, dir); err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -93,6 +96,25 @@ func Write(repo string, h Header, idx *model.Index) (string, error) {
 		return "", err
 	}
 	return dir, nil
+}
+
+// checkDirs refuses a store directory that is a symbolic link or not a directory: a cloned
+// repository can commit `.adamap` as a link, and writing through it would leave the repository.
+// A directory that does not exist yet is fine.
+func checkDirs(repo, dir string) error {
+	for _, d := range []string{filepath.Join(repo, DirName), dir} {
+		fi, err := os.Lstat(d)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+		case err != nil:
+			return err
+		case fi.Mode()&fs.ModeSymlink != 0:
+			return fmt.Errorf("%s is a symbolic link: adamap will not read or write a store through one", d)
+		case !fi.IsDir():
+			return fmt.Errorf("%s is not a directory", d)
+		}
+	}
+	return nil
 }
 
 func writeBytes(b []byte) func(io.Writer) error {
@@ -130,6 +152,9 @@ func Load(repo, commit string) (Header, *model.Index, error) {
 		return Header{}, nil, err
 	}
 	dir := Dir(repo, commit)
+	if err := checkDirs(repo, dir); err != nil {
+		return Header{}, nil, err
+	}
 	data, err := os.ReadFile(filepath.Join(dir, headerFile))
 	if errors.Is(err, fs.ErrNotExist) {
 		return Header{}, nil, fmt.Errorf("no store for commit %s in %s: run `adamap index`", commit, repo)

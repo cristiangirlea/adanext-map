@@ -77,7 +77,9 @@ merged into one.
 
 Each file is written to a temporary file in the same directory and renamed into place. Writing a
 commit's store removes its `header.json` first and writes it last, so a store whose write was cut
-short has no header and does not load: run `adamap index` again.
+short has no header and does not load: run `adamap index` again. A `.adamap` or `<commit>` directory
+that is a symbolic link is refused, for reading and writing, so a cloned repository cannot point the
+store outside itself.
 
 ### header.json
 
