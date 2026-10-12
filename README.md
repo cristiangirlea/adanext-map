@@ -1,7 +1,7 @@
 # adamap — a code map for AI agents
 
 **Status: being built; nothing to install yet.** [PLAN.md](PLAN.md) lists the slices in the order
-they land, and the only command so far is `adamap version`.
+they land, and the only commands so far are `adamap version` and `adamap help`.
 
 What adamap is for: coding agents need exact code navigation, and today that means keeping a
 language server running per language, or parsing the code approximately. adamap will instead read
@@ -18,8 +18,8 @@ One Go binary. No C compiler, no language server process, no model calls, no tel
 ## Why another one
 
 Tools in this space either keep a language server running per language, parse the code
-approximately, or publish only their own numbers. adamap takes the compiler's own index, built
-once per commit, and will ship its benchmark: `bench/RESULTS.md` is to hold tokens, time and
+approximately, or publish only their own numbers. adamap will take the compiler's own index, built
+once per commit, and ship its benchmark: `bench/RESULTS.md` is to hold tokens, time and
 correctness against no tool, the host's built-in LSP, Serena and CodeGraph, reproducible from this
 repository. Until those numbers exist, this README makes no claim.
 

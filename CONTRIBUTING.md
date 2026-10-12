@@ -18,11 +18,12 @@ This produces `adamap` on Linux and macOS or `adamap.exe` on Windows.
 ## Checks and pull requests
 
 Read [AGENTS.md](AGENTS.md) for the checks, the rules of this repository and the review and merge
-conditions before changing code. Tests build their SCIP fixtures in code and need no indexer, key
-or network.
+conditions before changing code. Tests are to build their SCIP fixtures in code and need no
+indexer, key or network.
 
-CI runs pushes and the repository's own pull requests on the maintainer's lab runner; a pull
-request from a fork runs on GitHub's hosted runner and waits for a maintainer's approval first.
+CI runs pushes and the repository's own pull requests on the maintainer's lab runner (on GitHub's
+hosted runner until that runner exists); a pull request from a fork runs on GitHub's hosted runner
+and waits for a maintainer's approval first.
 See [SECURITY.md](SECURITY.md).
 
 - **One pull request per slice**, small enough to review, with `PLAN.md` updated in the same PR.

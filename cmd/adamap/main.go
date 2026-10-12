@@ -1,5 +1,6 @@
-// Command adamap is a code map for AI agents: exact symbols from SCIP indexes, a ranked repo map
-// and the queries agents ask most, over a CLI and an MCP server.
+// Command adamap is a code map for AI agents, built slice by slice (PLAN.md): it is to read SCIP
+// indexes into a per-commit store and answer outline, find, refs, callers, impact and a ranked
+// repo map over a CLI and an MCP server. So far it has version and help.
 package main
 
 import (
