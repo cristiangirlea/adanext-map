@@ -1,9 +1,13 @@
 # adamap — a code map for AI agents
 
-`adamap` gives coding agents exact code navigation without a running language server. It reads
+**Status: being built; nothing to install yet.** [PLAN.md](PLAN.md) lists the slices in the order
+they land, and the only command so far is `adamap version`.
+
+What adamap is for: coding agents need exact code navigation, and today that means keeping a
+language server running per language, or parsing the code approximately. adamap will instead read
 the index a compiler-grade tool already produces (SCIP, from rust-analyzer, scip-go or
-scip-typescript), keeps it per commit under `.adamap/`, and answers the questions agents ask most
-in milliseconds, as a CLI and as an MCP server:
+scip-typescript), keep it per commit under `.adamap/`, and answer the questions agents ask most,
+as a CLI and as an MCP server:
 
 - `adamap map --tokens 2000` — the files and symbols that matter most, small enough to open a task with
 - `adamap outline <file>` — what a file defines
@@ -11,14 +15,11 @@ in milliseconds, as a CLI and as an MCP server:
 
 One Go binary. No C compiler, no language server process, no model calls, no telemetry.
 
-**Status: being built.** Nothing to install yet; [PLAN.md](PLAN.md) lists the slices in the order
-they land.
-
 ## Why another one
 
 Tools in this space either keep a language server running per language, parse the code
 approximately, or publish only their own numbers. adamap takes the compiler's own index, built
-once per commit, and ships its benchmark: `bench/RESULTS.md` will hold tokens, time and
+once per commit, and will ship its benchmark: `bench/RESULTS.md` is to hold tokens, time and
 correctness against no tool, the host's built-in LSP, Serena and CodeGraph, reproducible from this
 repository. Until those numbers exist, this README makes no claim.
 
