@@ -32,6 +32,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runIndex(args[1:], stdout, stderr)
 	case "outline":
 		return runOutline(args[1:], stdout, stderr)
+	case "find":
+		return runFind(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		usage(stdout)
 		return 0
@@ -50,6 +52,7 @@ commands:
   help      print this text
   index     read a SCIP index into the store for a commit (adamap index -h for its flags)
   outline   list the symbols a file defines
+  find      list the symbols whose name fits
 
 The queries read the store that "adamap index" wrote; each takes --repo, --commit and --json
 (adamap <command> -h). The commands map and mcp arrive slice by slice; PLAN.md lists them in order.

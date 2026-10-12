@@ -68,6 +68,7 @@ func decodeJSON(t *testing.T, out string) map[string]any {
 
 var queryCommands = []struct{ name, arg string }{
 	{"outline", sciptest.PathA},
+	{"find", "A"},
 }
 
 func TestQueryCommandsSayToRunIndexWhenThereIsNoStore(t *testing.T) {
