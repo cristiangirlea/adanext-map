@@ -94,13 +94,18 @@ func TestTextIsPathsThenIndentedSymbols(t *testing.T) {
 
 func TestFitNeverExceedsTheBudget(t *testing.T) {
 	files := Rank(synthetic(120, 8, 30), nil).Files
-	all := Text(files)
+	all, prev := Text(files), 0
 	for budget := 50; budget <= 5000; budget++ {
 		text := Text(Fit(files, budget))
 		got := Tokens(text)
 		if got > budget {
 			t.Fatalf("budget %d: the map takes %d tokens", budget, got)
 		}
+		// A larger budget only adds to the map.
+		if got < prev {
+			t.Fatalf("budget %d: the map takes %d tokens, less than the %d of a smaller budget", budget, got, prev)
+		}
+		prev = got
 		// Short of the whole map, it stops only when the next line would not fit, and no line
 		// here takes more than 50 tokens.
 		if text != all && got <= budget-50 {
