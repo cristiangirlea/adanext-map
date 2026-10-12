@@ -127,6 +127,105 @@ func TestConvertMergesADocumentListedTwice(t *testing.T) {
 	}
 }
 
+func TestConvertReadsTypedRangesBeforePackedOnes(t *testing.T) {
+	x := sciptest.Index()
+	x.Documents[1].Occurrences = []*scippb.Occurrence{
+		{
+			Symbol:              sciptest.Impl,
+			TypedRange:          &scippb.Occurrence_SingleLineRange{SingleLineRange: &scippb.SingleLineRange{Line: 9, StartCharacter: 2, EndCharacter: 5}},
+			TypedEnclosingRange: &scippb.Occurrence_SingleLineEnclosingRange{SingleLineEnclosingRange: &scippb.SingleLineRange{Line: 9, StartCharacter: 0, EndCharacter: 7}},
+		},
+		{
+			Symbol: sciptest.Adder,
+			// Both encodings set: the typed one wins, as SCIP says.
+			Range:          []int32{1, 1, 2},
+			TypedRange:     &scippb.Occurrence_SingleLineRange{SingleLineRange: &scippb.SingleLineRange{Line: 11, StartCharacter: 3, EndCharacter: 6}},
+			EnclosingRange: []int32{1, 0, 3},
+			TypedEnclosingRange: &scippb.Occurrence_MultiLineEnclosingRange{MultiLineEnclosingRange: &scippb.MultiLineRange{
+				StartLine: 10, StartCharacter: 1, EndLine: 12, EndCharacter: 4,
+			}},
+		},
+	}
+	got, err := Convert(x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc1, enc2 := rng(9, 0, 9, 7), rng(10, 1, 12, 4)
+	want := []model.Occurrence{
+		{Range: rng(9, 2, 9, 5), Symbol: sciptest.Impl, Roles: model.RoleReference, Enclosing: &enc1},
+		{Range: rng(11, 3, 11, 6), Symbol: sciptest.Adder, Roles: model.RoleReference, Enclosing: &enc2},
+	}
+	if occs := got.Documents[1].Occurrences; !reflect.DeepEqual(occs, want) {
+		t.Fatalf("occurrences = %+v, want %+v", occs, want)
+	}
+}
+
+func TestConvertCombinesSymbolDescriptions(t *testing.T) {
+	x := sciptest.Index()
+	// impl described again after its first description: the first non-empty value of each field
+	// wins, and the relationships combine; one with no kind set is dropped.
+	x.Documents[1].Symbols = append(x.Documents[1].Symbols, &scippb.SymbolInformation{
+		Symbol:        sciptest.Impl,
+		DisplayName:   "other",
+		Kind:          scippb.SymbolInformation_Class,
+		Documentation: []string{"impl adds."},
+		Relationships: []*scippb.Relationship{
+			{Symbol: sciptest.Adder, IsReference: true},
+			{Symbol: sciptest.Fmt, IsTypeDefinition: true},
+			{Symbol: sciptest.Add},
+		},
+	})
+	// An external local symbol has no document to belong to and is dropped.
+	x.ExternalSymbols = append(x.ExternalSymbols, &scippb.SymbolInformation{Symbol: "local 5"})
+	got, err := Convert(x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var impl model.Symbol
+	for _, s := range got.Symbols {
+		if s.ID == "local 5" {
+			t.Errorf("the external local symbol was kept")
+		}
+		if s.ID == sciptest.Impl {
+			impl = s
+		}
+	}
+	want := model.Symbol{
+		ID: sciptest.Impl, DisplayName: "impl", Kind: "Struct", Doc: "impl adds.",
+		Definition: at("pkg/b.go", rng(4, 5, 4, 9)),
+		Relationships: []model.Relationship{
+			{Symbol: sciptest.Adder, Implementation: true, Reference: true},
+			{Symbol: sciptest.Fmt, TypeDefinition: true},
+		},
+	}
+	if !reflect.DeepEqual(impl, want) {
+		t.Fatalf("impl = %+v, want %+v", impl, want)
+	}
+}
+
+func TestConvertRoles(t *testing.T) {
+	x := sciptest.Index()
+	x.Documents[1].Occurrences = []*scippb.Occurrence{
+		// A second definition of Add: the first one, in a.go, stays its definition.
+		{Range: []int32{1, 0, 3}, Symbol: sciptest.Add, SymbolRoles: int32(scippb.SymbolRole_Definition)},
+		// A forward definition is a declaration, not the definition.
+		{Range: []int32{2, 0, 3}, Symbol: sciptest.Impl, SymbolRoles: int32(scippb.SymbolRole_ForwardDefinition)},
+	}
+	got, err := Convert(x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def := got.Symbols[0].Definition; def == nil || def.Path != "pkg/a.go" {
+		t.Errorf("Add's definition = %+v, want the first, in pkg/a.go", def)
+	}
+	if roles := got.Documents[1].Occurrences[1].Roles; roles != model.RoleReference {
+		t.Errorf("the forward definition's roles = %b, want reference only", roles)
+	}
+	if got.Symbols[3].Definition != nil {
+		t.Errorf("impl has a definition from a forward definition: %+v", got.Symbols[3].Definition)
+	}
+}
+
 func TestConvertRejectsMalformedInput(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -145,6 +244,11 @@ func TestConvertRejectsMalformedInput(t *testing.T) {
 			}}
 		}, "ends before"},
 		{"malformed enclosing range", func(x *scippb.Index) { x.Documents[0].Occurrences[1].EnclosingRange = []int32{1} }, "enclosing"},
+		{"inverted typed enclosing range", func(x *scippb.Index) {
+			x.Documents[0].Occurrences[1].TypedEnclosingRange = &scippb.Occurrence_SingleLineEnclosingRange{
+				SingleLineEnclosingRange: &scippb.SingleLineRange{Line: 2, StartCharacter: 5, EndCharacter: 1},
+			}
+		}, "enclosing"},
 		{"absolute path", func(x *scippb.Index) { x.Documents[0].RelativePath = "/etc/passwd" }, "absolute"},
 		{"drive path", func(x *scippb.Index) { x.Documents[0].RelativePath = `C:\Windows\x.go` }, "absolute"},
 		{"UNC path", func(x *scippb.Index) { x.Documents[0].RelativePath = `\\server\share\x.go` }, "absolute"},
