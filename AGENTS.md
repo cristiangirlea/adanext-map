@@ -83,8 +83,8 @@ lab. No Windows job on pull requests.
 - Commit messages: the area first, lower case, then a plain sentence (`scip: read enclosing ranges
   as the callers' scopes`), one logical change per commit. No emoji, no AI attribution anywhere
   (no `Co-Authored-By`, `Assisted-by` or "Generated with", in commits, PR text, comments or
-  docs). Commits are `Cristian Girlea <cristiangirlea@gmail.com>`: check `git config user.email`
-  first.
+  docs). Commits carry the owner's identity, `cristiangirlea@gmail.com`: check
+  `git config user.email` first.
 - Self-review with `/code-review`. A finding is blocking when it is a defect this branch brings in,
   a missing test for what it changes, a broken rule of this file, or a security hole: fix each as
   its own commit, with the smallest change that closes it, and don't squash. Everything else
