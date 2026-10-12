@@ -416,3 +416,51 @@ func TestLoadRefusesASymbolDefinitionPathOutsideTheProject(t *testing.T) {
 		}
 	}
 }
+
+func TestLatestRefusesASymlinkedLatest(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".adamap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secret, []byte(commitA+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, secret, filepath.Join(repo, ".adamap", "latest"))
+	if c, err := Latest(repo); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("Latest = %q, %v; want a refusal saying it is not a regular file", c, err)
+	}
+}
+
+func TestLatestRefusesASymlinkedStoreDirectory(t *testing.T) {
+	repo, outside := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "latest"), []byte(commitA+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, outside, filepath.Join(repo, ".adamap"))
+	if c, err := Latest(repo); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("Latest = %q, %v; want a refusal naming the symbolic link", c, err)
+	}
+}
+
+func TestLatestErrorDoesNotQuoteTheWholeFile(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".adamap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tail := "SECRET-TAIL-MARKER"
+	content := strings.Repeat("x", 1000) + tail
+	if err := os.WriteFile(filepath.Join(repo, ".adamap", "latest"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Latest(repo)
+	if err == nil {
+		t.Fatal("Latest accepted garbage")
+	}
+	if strings.Contains(err.Error(), tail) || strings.Contains(err.Error(), strings.Repeat("x", 41)) {
+		t.Errorf("err quotes more than the first 40 bytes: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not a commit") {
+		t.Errorf("err = %v, want one saying it is not a commit", err)
+	}
+}

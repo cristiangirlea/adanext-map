@@ -292,13 +292,39 @@ func (l *limitedReader) Read(p []byte) (int, error) {
 
 // Latest is the commit whose store was written last in repo.
 func Latest(repo string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(repo, DirName, latestFile))
+	if err := checkDirs(repo, filepath.Join(repo, DirName)); err != nil {
+		return "", err
+	}
+	path := filepath.Join(repo, DirName, latestFile)
+	if err := checkRegular(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("no store in %s yet: run `adamap index` (%w)", repo, err)
+		}
+		return "", err
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("no store in %s yet: run `adamap index` (%w)", repo, err)
 	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxLatestBytes))
+	if err != nil {
+		return "", err
+	}
 	c := string(bytes.TrimSpace(data))
 	if err := CheckCommit(c); err != nil {
-		return "", fmt.Errorf("%s: %w", filepath.Join(repo, DirName, latestFile), err)
+		shown := c
+		if len(shown) > maxQuotedBytes {
+			shown = shown[:maxQuotedBytes] + "..."
+		}
+		return "", fmt.Errorf("%s holds %q, which is not a commit: run `adamap index`", path, shown)
 	}
 	return c, nil
 }
+
+const (
+	// maxLatestBytes is how much of .adamap/latest Latest reads; a commit and a newline fit in 65.
+	maxLatestBytes = 128
+	// maxQuotedBytes is how much of a bad latest an error quotes.
+	maxQuotedBytes = 40
+)
