@@ -134,20 +134,29 @@ func (x *Index) scopeAt(di int32, p pos) *scope {
 // callerKey identifies a caller by the definition occurrence that holds the reference.
 type callerKey struct{ doc, occ int32 }
 
-// callersOf finds the definitions holding references to id, by place, and counts the references
-// that no definition holds. A reference counts if it is not a definition and not an import.
-func (x *Index) callersOf(id string) (callers []Caller, unattributed int) {
-	byKey := map[callerKey]int{}
+// holders calls f for each reference to id that lies in a definition, with the scope of the
+// innermost one, and returns how many references lie in none. A reference is an occurrence that is
+// not a definition and not an import.
+func (x *Index) holders(id string, f func(r occRef, sc *scope)) (unattributed int) {
 	for _, r := range x.occs[id] {
 		o := &x.src.Documents[r.doc].Occurrences[r.occ]
 		if o.Roles.Has(model.RoleDefinition) || o.Roles.Has(model.RoleImport) {
 			continue
 		}
-		sc := x.scopeAt(r.doc, startOf(o.Range))
-		if sc == nil {
+		if sc := x.scopeAt(r.doc, startOf(o.Range)); sc != nil {
+			f(r, sc)
+		} else {
 			unattributed++
-			continue
 		}
+	}
+	return unattributed
+}
+
+// callersOf finds the definitions holding references to id, by place, and counts the references
+// that no definition holds.
+func (x *Index) callersOf(id string) (callers []Caller, unattributed int) {
+	byKey := map[callerKey]int{}
+	unattributed = x.holders(id, func(r occRef, sc *scope) {
 		key := callerKey{r.doc, sc.occ}
 		i, ok := byKey[key]
 		if !ok {
@@ -157,7 +166,7 @@ func (x *Index) callersOf(id string) (callers []Caller, unattributed int) {
 			callers = append(callers, Caller{Symbol: x.viewAt(x.byID[def], occRef{r.doc, sc.occ})})
 		}
 		callers[i].Sites = append(callers[i].Sites, x.site(r))
-	}
+	})
 	slices.SortFunc(callers, func(a, b Caller) int {
 		return cmp.Or(strings.Compare(a.Symbol.Path, b.Symbol.Path), cmp.Compare(a.Symbol.Line, b.Symbol.Line),
 			strings.Compare(a.Symbol.ID, b.Symbol.ID))

@@ -87,13 +87,13 @@ func (x *Index) impact(target, kind string, seeds []string, depth int) ImpactRes
 	for d := 1; d <= depth && len(frontier) > 0; d++ {
 		var level []Impacted
 		for _, id := range frontier {
-			callers, _ := x.callersOf(id)
-			for _, c := range callers {
-				if !visited[c.Symbol.ID] {
-					visited[c.Symbol.ID] = true
-					level = append(level, Impacted{Symbol: c.Symbol, Depth: d, Via: id})
+			x.holders(id, func(r occRef, sc *scope) {
+				caller := x.src.Documents[r.doc].Occurrences[sc.occ].Symbol
+				if !visited[caller] {
+					visited[caller] = true
+					level = append(level, Impacted{Symbol: x.viewAt(x.byID[caller], occRef{r.doc, sc.occ}), Depth: d, Via: id})
 				}
-			}
+			})
 		}
 		slices.SortFunc(level, func(a, b Impacted) int {
 			return cmp.Or(strings.Compare(a.Symbol.Path, b.Symbol.Path), cmp.Compare(a.Symbol.Line, b.Symbol.Line),
