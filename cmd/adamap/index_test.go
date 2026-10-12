@@ -302,7 +302,14 @@ func TestIndexOutsideARepositoryAsksForCommit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not on PATH")
 	}
-	code, _, errOut := runIndexCmd("--scip", fixtureFile(t), "--repo", t.TempDir())
+	dir := t.TempDir()
+	parent, err := filepath.EvalSymlinks(filepath.Dir(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CEILING_DIRECTORIES", parent) // a temp dir inside a work tree is still no repository
+	t.Setenv("GIT_DIR", "")
+	code, _, errOut := runIndexCmd("--scip", fixtureFile(t), "--repo", dir)
 	if code != 1 || !strings.Contains(errOut, "--commit") {
 		t.Fatalf("exit %d, stderr %q; want 1 and a pointer to --commit", code, errOut)
 	}
