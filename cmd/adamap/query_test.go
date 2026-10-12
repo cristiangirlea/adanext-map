@@ -71,6 +71,7 @@ var queryCommands = []struct{ name, arg string }{
 	{"find", "A"},
 	{"refs", "Rec"},
 	{"callers", "Rec"},
+	{"impact", "Rec"},
 }
 
 func TestQueryCommandsSayToRunIndexWhenThereIsNoStore(t *testing.T) {

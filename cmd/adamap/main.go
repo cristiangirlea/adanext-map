@@ -38,6 +38,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runRefs(args[1:], stdout, stderr)
 	case "callers":
 		return runCallers(args[1:], stdout, stderr)
+	case "impact":
+		return runImpact(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		usage(stdout)
 		return 0
@@ -59,6 +61,7 @@ commands:
   find      list the symbols whose name fits
   refs      list every occurrence of a symbol
   callers   list the symbols that call or use a symbol
+  impact    list what depends on a symbol or a file, transitively
 
 The queries read the store that "adamap index" wrote; each takes --repo, --commit and --json
 (adamap <command> -h). The commands map and mcp arrive slice by slice; PLAN.md lists them in order.
