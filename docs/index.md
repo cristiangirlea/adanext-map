@@ -79,7 +79,8 @@ Each file is written to a temporary file in the same directory and renamed into 
 commit's store removes its `header.json` first and writes it last, so a store whose write was cut
 short has no header and does not load: run `adamap index` again. A `.adamap` or `<commit>` directory
 that is a symbolic link is refused, for reading and writing, so a cloned repository cannot point the
-store outside itself. Loading stops with an error once `store.json.gz` inflates past 4 GiB.
+store outside itself, and so is a `header.json` or `store.json.gz` that is not a regular file; a
+`header.json` over 1 MiB is refused. Loading stops with an error once `store.json.gz` inflates past 4 GiB.
 
 ### header.json
 

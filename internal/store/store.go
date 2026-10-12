@@ -164,7 +164,7 @@ func LoadLimited(repo, commit string, limit int64) (Header, *model.Index, error)
 	if err := checkDirs(repo, dir); err != nil {
 		return Header{}, nil, err
 	}
-	data, err := os.ReadFile(filepath.Join(dir, headerFile))
+	data, err := readHeader(filepath.Join(dir, headerFile))
 	if errors.Is(err, fs.ErrNotExist) {
 		return Header{}, nil, fmt.Errorf("no store for commit %s in %s: run `adamap index`", commit, repo)
 	}
@@ -188,6 +188,9 @@ func LoadLimited(repo, commit string, limit int64) (Header, *model.Index, error)
 	case h.Commit != commit:
 		return Header{}, nil, fmt.Errorf("the store in %s says it is commit %q: rebuild it with `adamap index`", dir, h.Commit)
 	}
+	if err := checkRegular(filepath.Join(dir, storeFile)); err != nil {
+		return Header{}, nil, err
+	}
 	f, err := os.Open(filepath.Join(dir, storeFile))
 	if err != nil {
 		return Header{}, nil, err
@@ -207,6 +210,42 @@ func LoadLimited(repo, commit string, limit int64) (Header, *model.Index, error)
 		}
 	}
 	return h, &idx, nil
+}
+
+// maxHeaderBytes is the largest header.json Load reads; a real one is a few hundred bytes.
+const maxHeaderBytes = 1 << 20
+
+// checkRegular refuses path unless it is a regular file, not a link to one: a cloned repository can
+// commit a store file as a symbolic link to a device or to a file outside itself.
+func checkRegular(path string) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file: adamap will not read a store through a link or a device", path)
+	}
+	return nil
+}
+
+// readHeader reads header.json, at most maxHeaderBytes of it.
+func readHeader(path string) ([]byte, error) {
+	if err := checkRegular(path); err != nil {
+		return nil, err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxHeaderBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxHeaderBytes {
+		return nil, fmt.Errorf("%s is larger than %d bytes: rebuild the store with `adamap index`", path, maxHeaderBytes)
+	}
+	return data, nil
 }
 
 // limitedReader reads at most left bytes of r and fails, rather than reporting EOF, past that.

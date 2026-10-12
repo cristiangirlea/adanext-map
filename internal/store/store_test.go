@@ -348,3 +348,48 @@ func TestWritingACommitAgainReplacesItsStore(t *testing.T) {
 		t.Errorf("store dir holds %v, want %v", got, want)
 	}
 }
+
+func TestLoadRefusesASymlinkedStoreFile(t *testing.T) {
+	for _, name := range []string{"header.json", "store.json.gz"} {
+		repo := t.TempDir()
+		if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(repo, ".adamap", commitA, name)
+		target := filepath.Join(t.TempDir(), "target")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		symlinkOrSkip(t, target, path)
+		if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Errorf("%s: Load err = %v, want a refusal saying it is not a regular file", name, err)
+		}
+	}
+}
+
+func TestLoadRefusesAnOversizedHeader(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(repo, ".adamap", commitA, "header.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Valid JSON, padded with whitespace to just over 1 MiB.
+	padded := append(data, bytes.Repeat([]byte(" "), 1<<20+1-len(data))...)
+	if err := os.WriteFile(path, padded, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("Load err = %v, want one saying header.json is larger than the limit", err)
+	}
+}
