@@ -6,7 +6,8 @@ updates this file in that pull request. Tracking issue: #7.
 
 ## Slices
 
-- [ ] 1. scaffold: AI setup, CI, README, PLAN and licence (#1)
+- [x] 1. scaffold: AI setup, CI, README, PLAN and licence (#1)
+  Done: PR #9, 2026-10-13.
 - [x] 2. scip: read an index and store it per commit (#2)
   Done: PR #?, 2026-10-13.
 - [ ] 3. query: outline, find, refs, callers and impact (#3)
