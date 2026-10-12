@@ -323,3 +323,28 @@ func TestLoadRefusesADocumentPathOutsideTheProject(t *testing.T) {
 		}
 	}
 }
+
+func TestWritingACommitAgainReplacesItsStore(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	second := fixture(t)
+	second.Documents = second.Documents[:1]
+	if _, err := Write(repo, header(commitA), second); err != nil {
+		t.Fatal(err)
+	}
+	h, got, err := Load(repo, commitA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, second) {
+		t.Errorf("Load returned %d documents, want the second write's %d", len(got.Documents), len(second.Documents))
+	}
+	if h.Counts != second.Counts() {
+		t.Errorf("header counts = %+v, want %+v", h.Counts, second.Counts())
+	}
+	if got, want := names(t, filepath.Join(repo, ".adamap", commitA)), []string{"header.json", "store.json.gz"}; !slices.Equal(got, want) {
+		t.Errorf("store dir holds %v, want %v", got, want)
+	}
+}
