@@ -1,7 +1,8 @@
 # adamap — a code map for AI agents
 
 **Status: being built; nothing to install yet.** [PLAN.md](PLAN.md) lists the slices in the order
-they land, and the only commands so far are `adamap version`, `adamap help` and `adamap index`.
+they land, and the only commands so far are `adamap version`, `adamap help`, `adamap index` and
+`adamap map` ([docs/map.md](docs/map.md)).
 
 What adamap is for: coding agents need exact code navigation, and today that means keeping a
 language server running per language, or parsing the code approximately. adamap will instead read
