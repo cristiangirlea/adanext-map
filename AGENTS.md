@@ -35,7 +35,8 @@ go build ./...
 go test -count=1 ./...
 go test -race -count=1 ./...     # CI only; needs cgo
 test -z "$(gofmt -l .)"          # /check: tracked files only
-bash -n .claude/hooks/go-rules.sh
+bash -n .claude/hooks/go-rules.sh && bash -n .claude/hooks/go-rules.test.sh
+sh .claude/hooks/go-rules.test.sh
 ```
 
 `-race` needs cgo, which the owner's Windows PC lacks: run `go test -count=3 ./...` there and leave

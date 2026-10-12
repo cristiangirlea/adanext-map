@@ -10,7 +10,8 @@ go vet ./...
 go build ./...
 go test -count=1 ./...
 test -z "$(git ls-files -co --exclude-standard -- '*.go' | xargs -r gofmt -l)"
-bash -n .claude/hooks/go-rules.sh
+bash -n .claude/hooks/go-rules.sh && bash -n .claude/hooks/go-rules.test.sh
+sh .claude/hooks/go-rules.test.sh
 ```
 
 The gofmt step lists the repository's own Go files, so it does not walk worktrees or a `.adamap/`
