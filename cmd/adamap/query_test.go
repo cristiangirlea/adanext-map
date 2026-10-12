@@ -70,6 +70,7 @@ var queryCommands = []struct{ name, arg string }{
 	{"outline", sciptest.PathA},
 	{"find", "A"},
 	{"refs", "Rec"},
+	{"callers", "Rec"},
 }
 
 func TestQueryCommandsSayToRunIndexWhenThereIsNoStore(t *testing.T) {
