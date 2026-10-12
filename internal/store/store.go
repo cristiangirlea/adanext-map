@@ -145,8 +145,12 @@ func Load(repo, commit string) (Header, *model.Index, error) {
 	case h.Format < 1:
 		return Header{}, nil, fmt.Errorf("%s has no format version: rebuild it with `adamap index`", dir)
 	case h.Format > FormatVersion:
-		return Header{}, nil, fmt.Errorf("the store in %s is format %d, written by adamap %s; this adamap reads format %d: "+
-			"use adamap %s or later, or rebuild it with `adamap index`", dir, h.Format, h.Adamap, FormatVersion, h.Adamap)
+		need := "a newer adamap"
+		if h.Adamap != "" {
+			need = "adamap " + h.Adamap + " or later"
+		}
+		return Header{}, nil, fmt.Errorf("the store in %s is format %d; this adamap reads format %d: "+
+			"use %s, or rebuild it with `adamap index`", dir, h.Format, FormatVersion, need)
 	case h.Commit != commit:
 		return Header{}, nil, fmt.Errorf("the store in %s says it is commit %q: rebuild it with `adamap index`", dir, h.Commit)
 	}

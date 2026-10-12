@@ -158,6 +158,18 @@ func TestLoadRefusesANewerFormatNamingTheAdamapNeeded(t *testing.T) {
 	}
 }
 
+func TestLoadRefusesANewerFormatWithoutAVersionSayingANewerAdamap(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	rewriteHeader(t, repo, func(h map[string]any) { h["format"] = 2; delete(h, "adamap") })
+	_, _, err := Load(repo, commitA)
+	if err == nil || !strings.Contains(err.Error(), "use a newer adamap") {
+		t.Fatalf("err = %v, want one saying to use a newer adamap", err)
+	}
+}
+
 func TestLoadRefusesAHeaderWithoutAFormat(t *testing.T) {
 	repo := t.TempDir()
 	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
