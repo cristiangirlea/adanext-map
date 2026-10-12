@@ -146,8 +146,17 @@ func writeAtomic(dir, name string, write func(io.Writer) error) (err error) {
 	return os.Rename(f.Name(), filepath.Join(dir, name))
 }
 
+// MaxLoadBytes is how much Load decompresses before giving up: a repository can carry a planted
+// store.json.gz that inflates without end.
+const MaxLoadBytes = 4 << 30
+
 // Load reads commit's store from repo.
 func Load(repo, commit string) (Header, *model.Index, error) {
+	return LoadLimited(repo, commit, MaxLoadBytes)
+}
+
+// LoadLimited is Load with a limit on the decompressed bytes it reads.
+func LoadLimited(repo, commit string, limit int64) (Header, *model.Index, error) {
 	if err := CheckCommit(commit); err != nil {
 		return Header{}, nil, err
 	}
@@ -189,10 +198,34 @@ func Load(repo, commit string) (Header, *model.Index, error) {
 		return Header{}, nil, fmt.Errorf("%s: %w", filepath.Join(dir, storeFile), err)
 	}
 	var idx model.Index
-	if err := json.NewDecoder(gz).Decode(&idx); err != nil {
+	if err := json.NewDecoder(&limitedReader{r: gz, left: limit, limit: limit}).Decode(&idx); err != nil {
 		return Header{}, nil, fmt.Errorf("%s: %w", filepath.Join(dir, storeFile), err)
 	}
 	return h, &idx, nil
+}
+
+// limitedReader reads at most left bytes of r and fails, rather than reporting EOF, past that.
+type limitedReader struct {
+	r     io.Reader
+	left  int64
+	limit int64
+}
+
+func (l *limitedReader) Read(p []byte) (int, error) {
+	if l.left <= 0 {
+		// Only more data is an error: a store of exactly the limit is fine.
+		var one [1]byte
+		if n, _ := l.r.Read(one[:]); n > 0 {
+			return 0, fmt.Errorf("decompresses to more than the limit of %d bytes", l.limit)
+		}
+		return 0, io.EOF
+	}
+	if int64(len(p)) > l.left {
+		p = p[:l.left]
+	}
+	n, err := l.r.Read(p)
+	l.left -= int64(n)
+	return n, err
 }
 
 // Latest is the commit whose store was written last in repo.

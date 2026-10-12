@@ -1,6 +1,8 @@
 package store
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -281,5 +283,29 @@ func TestStoreRefusesASymlinkedCommitDirectory(t *testing.T) {
 	}
 	if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), "symbolic link") {
 		t.Fatalf("Load err = %v, want a refusal naming the symbolic link", err)
+	}
+}
+
+func TestLoadStopsDecompressingAtTheLimit(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	// A planted store.json.gz: a few KiB of gzip that inflate to a megabyte of spaces before the JSON.
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	gz.Write(bytes.Repeat([]byte(" "), 1<<20))
+	gz.Write([]byte("{}"))
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".adamap", commitA, "store.json.gz"), buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadLimited(repo, commitA, 1<<10); err == nil || !strings.Contains(err.Error(), "1024 bytes") {
+		t.Fatalf("LoadLimited err = %v, want one naming the 1024 byte limit", err)
+	}
+	if _, _, err := LoadLimited(repo, commitA, 2<<20); err != nil {
+		t.Errorf("LoadLimited under the limit: %v", err)
 	}
 }
