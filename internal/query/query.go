@@ -48,6 +48,8 @@ type Index struct {
 	// document order and then occurrence order.
 	occs map[string][]occRef
 	defs map[string][]occRef
+	// scopes holds, per document, the global definitions that can hold a reference.
+	scopes [][]scope
 }
 
 // entry is a global symbol with the name the queries match it by.
@@ -75,11 +77,13 @@ func New(idx *model.Index) *Index {
 			x.add(s)
 		}
 	}
+	x.scopes = make([][]scope, len(idx.Documents))
 	for di := range idx.Documents {
 		d := &idx.Documents[di]
 		if _, dup := x.docs[d.Path]; !dup {
 			x.docs[d.Path] = di
 		}
+		var docDefs []int32
 		for oi := range d.Occurrences {
 			o := &d.Occurrences[oi]
 			if o.Symbol == "" || isLocal(o.Symbol) {
@@ -92,8 +96,10 @@ func New(idx *model.Index) *Index {
 			x.occs[o.Symbol] = append(x.occs[o.Symbol], r)
 			if o.Roles.Has(model.RoleDefinition) {
 				x.defs[o.Symbol] = append(x.defs[o.Symbol], r)
+				docDefs = append(docDefs, int32(oi))
 			}
 		}
+		x.scopes[di] = buildScopes(d, docDefs)
 	}
 	slices.SortFunc(x.entries, func(a, b *entry) int { return strings.Compare(a.sym.ID, b.sym.ID) })
 	return x
