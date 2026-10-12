@@ -30,4 +30,13 @@ mkdir "$tmp/plain"
 printf 'package main\nfunc main(){}\n' > "$tmp/plain/main.go"
 CLAUDE_PROJECT_DIR="$tmp/plain" sh "$hook" || fail "outside git: expected exit 0"
 
+# 5. A file name with a space is one name: formatted, it passes; unformatted, it is named whole.
+mkdir "$tmp/spaced" && git -C "$tmp/spaced" init -q
+printf 'package main\n\nfunc main() {}\n' > "$tmp/spaced/my file.go"
+CLAUDE_PROJECT_DIR="$tmp/spaced" sh "$hook" || fail "space, formatted: expected exit 0"
+printf 'package main\nfunc main(){}\n' > "$tmp/spaced/my file.go"
+out=$(CLAUDE_PROJECT_DIR="$tmp/spaced" sh "$hook" 2>&1); code=$?
+[ "$code" -eq 2 ] || fail "space, unformatted: exit $code, want 2"
+case "$out" in *"my file.go"*) ;; *) fail "space, unformatted: the output does not name the file whole: $out" ;; esac
+
 echo "go-rules.test: ok"
