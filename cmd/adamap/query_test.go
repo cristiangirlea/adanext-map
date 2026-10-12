@@ -69,6 +69,7 @@ func decodeJSON(t *testing.T, out string) map[string]any {
 var queryCommands = []struct{ name, arg string }{
 	{"outline", sciptest.PathA},
 	{"find", "A"},
+	{"refs", "Rec"},
 }
 
 func TestQueryCommandsSayToRunIndexWhenThereIsNoStore(t *testing.T) {
@@ -166,6 +167,21 @@ func TestQueryCommandsPrintTheirFlagsForHelp(t *testing.T) {
 				t.Errorf("%s -h does not mention %s", c.name, flag)
 			}
 		}
+	}
+}
+
+func TestQueryCommandsTakeFlagsAfterTheArgument(t *testing.T) {
+	repo := queryRepo(t)
+	// Two symbols are called A, so a limit of 1 cuts the list (and says so on stderr).
+	_, before, _ := runCmd("find", "--repo", repo, "--limit", "1", "A")
+	_, after, _ := runCmd("find", "A", "--repo", repo, "--limit", "1")
+	if before != after || strings.Count(before, "\n") != 1 {
+		t.Errorf("flags before %q, after %q", before, after)
+	}
+	// After --, everything is the argument, even a leading dash.
+	code, _, errOut := runCmd("refs", "--repo", repo, "--", "-x")
+	if code != 1 || !strings.Contains(errOut, `"-x"`) {
+		t.Errorf("exit %d, stderr %q", code, errOut)
 	}
 }
 
