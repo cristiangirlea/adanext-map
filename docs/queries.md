@@ -65,6 +65,9 @@ One line per item, starting with where it is: `path:line kind name`.
 - A symbol defined outside the index has no place, and its line starts with `-`; one with no kind has
   `-` there: `- - Remote`.
 - `callers` adds `refs=` and the lines of the references; `impact` adds `depth=`.
+- A path, kind, name or symbol string that holds a control character (such as ESC), a format character
+  (a bidi override, a zero-width space) or invalid UTF-8 is printed in Go quotes (`"a\x1b[2Jb"`), since
+  the store may come from a hostile repository and a terminal acts on them. `--json` keeps the raw value.
 
 ## JSON output
 

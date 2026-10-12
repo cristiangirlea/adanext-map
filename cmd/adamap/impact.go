@@ -53,7 +53,7 @@ func runImpact(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "%s depth=%d\n", i.Symbol.Short(), i.Depth)
 	}
 	if len(res.Impacted) == 0 {
-		c.note("nothing depends on %s within depth %d", target, res.Depth)
+		c.note("nothing depends on %s within depth %d", query.Safe(target), res.Depth)
 	}
 	return 0
 }

@@ -44,7 +44,7 @@ func runCallers(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "%s refs=%s\n", caller.Symbol.Short(), strings.Join(lines, ","))
 	}
 	if len(res.Callers) == 0 {
-		c.note("no callers of %s", res.Symbol.Name)
+		c.note("no callers of %s", query.Safe(res.Symbol.Name))
 	}
 	switch res.Unattributed {
 	case 0:

@@ -42,7 +42,7 @@ func runOutline(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, s.Short())
 	}
 	if len(syms) == 0 {
-		c.note("no symbols defined in %s", p)
+		c.note("no symbols defined in %s", query.Safe(p))
 	}
 	return 0
 }

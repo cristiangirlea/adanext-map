@@ -20,9 +20,9 @@ type FindResult struct {
 func (s Symbol) Short() string {
 	loc := "-"
 	if s.Path != "" {
-		loc = fmt.Sprintf("%s:%d", s.Path, s.Line)
+		loc = fmt.Sprintf("%s:%d", Safe(s.Path), s.Line)
 	}
-	return loc + " " + cmp.Or(s.Kind, "-") + " " + s.Name
+	return loc + " " + Safe(cmp.Or(s.Kind, "-")) + " " + Safe(s.Name)
 }
 
 // AmbiguousError is Resolve's refusal of a name that fits more than one symbol.
@@ -37,7 +37,7 @@ func (e *AmbiguousError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "the name %q fits %d symbols: pass the symbol string of the one you mean", e.Name, e.Total)
 	for _, c := range e.Candidates {
-		fmt.Fprintf(&b, "\n  %s  %s", c.Short(), c.ID)
+		fmt.Fprintf(&b, "\n  %s  %s", c.Short(), Safe(c.ID))
 	}
 	if e.Total > len(e.Candidates) {
 		fmt.Fprintf(&b, "\n  ... and %d more", e.Total-len(e.Candidates))

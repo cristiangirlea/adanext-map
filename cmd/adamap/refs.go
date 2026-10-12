@@ -36,11 +36,11 @@ func runRefs(args []string, stdout, stderr io.Writer) int {
 	}
 	for _, f := range res.Files {
 		for _, s := range f.Refs {
-			fmt.Fprintf(stdout, "%s:%d %s %s\n", f.Path, s.Line, s.Kind, res.Symbol.Name)
+			fmt.Fprintf(stdout, "%s:%d %s %s\n", query.Safe(f.Path), s.Line, query.Safe(s.Kind), query.Safe(res.Symbol.Name))
 		}
 	}
 	if res.Total == 0 {
-		c.note("no occurrences of %s", res.Symbol.Name)
+		c.note("no occurrences of %s", query.Safe(res.Symbol.Name))
 	}
 	return 0
 }
