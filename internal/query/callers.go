@@ -54,9 +54,9 @@ func (s *scope) contains(p pos) bool { return !p.less(s.start) && p.less(s.end) 
 //
 // A definition's scope is the enclosing range of its occurrence. When the indexer gave none, it is
 // the span from column 0 of the line of the definition's name to column 0 of the line of the next
-// definition's name in the document (to the end of the document for the last one), clipped to the scope around it if
-// there is one. Only global definitions count, as boundaries as well as scopes: a local variable
-// inside a function must not end the function.
+// definition's name in the document (to the end of the document for the last one), clipped to the
+// scope around it if there is one. Only global definitions count, as boundaries as well as scopes:
+// a local variable inside a function must not end the function.
 func buildScopes(d *model.Document, defs []int32) []scope {
 	if len(defs) == 0 {
 		return nil
