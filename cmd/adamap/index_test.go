@@ -740,3 +740,55 @@ func TestGitOutputPointsHooksPathAtADirectoryMadeForTheCall(t *testing.T) {
 	}
 }
 
+// git status checks a submodule by starting a git inside it, which reads the submodule's own config
+// (.git/modules/<name>/config), as untrusted as the superproject's and not covered by filtersOff.
+// --ignore-submodules=dirty keeps that child git from starting.
+func TestIndexDoesNotRunFilterDriversNamedBySubmoduleConfig(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	marker := filepath.Join(t.TempDir(), "ran")
+	sub := t.TempDir()
+	git(t, sub, "init", "-q")
+	writeFile(t, filepath.Join(sub, "s.txt"), "one\n")
+	git(t, sub, "add", "s.txt")
+	git(t, sub, "commit", "-q", "-m", "one")
+
+	repo := t.TempDir()
+	git(t, repo, "init", "-q")
+	writeFile(t, filepath.Join(repo, "a.txt"), "one\n")
+	git(t, repo, "add", "a.txt")
+	git(t, repo, "commit", "-q", "-m", "one")
+	// file:// submodule clones are refused by default; allow them for this setup only.
+	git(t, repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", filepath.ToSlash(sub), "sm")
+	git(t, repo, "commit", "-q", "-m", "add submodule")
+
+	smDir := filepath.Join(repo, "sm")
+	git(t, smDir, "config", "filter.mark.clean", "echo x > '"+filepath.ToSlash(marker)+"'; cat")
+	git(t, smDir, "config", "filter.mark.required", "true")
+	writeFile(t, filepath.Join(smDir, ".gitattributes"), "s.txt filter=mark\n")
+	later := time.Now().Add(time.Minute)
+	if err := os.Chtimes(filepath.Join(smDir, "s.txt"), later, later); err != nil {
+		t.Fatal(err)
+	}
+
+	exec.Command("git", "-C", repo, "status", "--porcelain", "--untracked-files=no").Run() // may fail; only the marker matters
+	if _, err := os.Stat(marker); err != nil {
+		t.Skipf("a plain git status does not run a submodule's filter here (%v), so there is nothing to guard against", err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	later = later.Add(time.Minute)
+	if err := os.Chtimes(filepath.Join(smDir, "s.txt"), later, later); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := runIndexCmd("--scip", fixtureFile(t), "--repo", repo)
+	if code != 0 || !strings.HasPrefix(out, "indexed ") {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("adamap index ran the filter a submodule's own config names")
+	}
+}

@@ -147,7 +147,7 @@ func resolveCommit(repo, given string) (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("cannot tell whether %s has changes: %w; pass --commit with its full hash", repo, err)
 	}
-	status, err := gitRun(repo, off, "status", "--porcelain", "--untracked-files=no")
+	status, err := gitRun(repo, off, "status", "--porcelain", "--untracked-files=no", "--ignore-submodules=dirty")
 	if err != nil {
 		return "", false, fmt.Errorf("cannot tell whether %s has changes: %w", repo, err)
 	}
@@ -172,7 +172,9 @@ func gitSafely(hooks string) []string {
 // An empty command is no filter, and required=false keeps git from stopping at the filter it was
 // told not to run. The cost is that a file a driver would change (git-lfs's pointers, say) can show
 // as modified, so the tree can read as dirty (docs/index.md). A driver whose name has an = in it
-// cannot be written as -c name.clean=, which git splits at the first =, so that is an error.
+// cannot be written as -c name.clean=, which git splits at the first =, so that is an error. A
+// submodule's drivers are in its own config, which this does not list, and status would start a git
+// inside it to read them: resolveCommit passes --ignore-submodules=dirty, so none is started.
 func filtersOff(repo string) ([]string, error) {
 	keys, err := gitOutput(repo, "config", "--name-only", "--get-regexp", `^filter\.`)
 	if err != nil {
