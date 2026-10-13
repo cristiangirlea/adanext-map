@@ -156,7 +156,7 @@ func resolveCommit(repo, given string) (string, bool, error) {
 // index. -c overrides the repository's config, and reaches the git that status starts in a
 // submodule. Clean filters are not covered: status runs one to compare a file whose timestamp
 // changed, and no option turns off a filter driver the repository defines (docs/index.md).
-var gitSafely = []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"}
+var gitSafely = []string{"--no-optional-locks", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null"}
 
 // gitOutput is the output of `git args` in repo, run with gitSafely. Every git call goes through it.
 func gitOutput(repo string, args ...string) (string, error) {

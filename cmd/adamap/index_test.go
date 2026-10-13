@@ -558,3 +558,15 @@ func TestIndexDoesNotLazyFetchFromThePromisorRemote(t *testing.T) {
 		t.Error("adamap index ran the uploadpack program the repository names for its promisor remote")
 	}
 }
+
+// An empty value switches core.fsmonitor off on every git version. "false" is read as a boolean
+// only by git 2.35 and later; an earlier git takes it as the name of a hook program to run.
+func TestGitSafelySwitchesFsmonitorOffWithAnEmptyValue(t *testing.T) {
+	args := gitSafely
+	if !slices.Contains(args, "core.fsmonitor=") {
+		t.Errorf("gitSafely = %q; want core.fsmonitor with an empty value", args)
+	}
+	if slices.Contains(args, "core.fsmonitor=false") {
+		t.Errorf("gitSafely = %q; core.fsmonitor=false is a program name to an older git", args)
+	}
+}
