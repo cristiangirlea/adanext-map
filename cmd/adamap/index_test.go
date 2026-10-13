@@ -330,7 +330,7 @@ func TestIndexSkipsDocumentsOutsideTheProjectAndSaysSo(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, errOut)
 	}
-	if !strings.Contains(errOut, "skipped 2 documents outside the project") || !strings.Contains(errOut, `go-build`) {
+	if !strings.Contains(errOut, "skipped 2 documents adamap cannot store (outside the project or not a safe file name)") || !strings.Contains(errOut, `go-build`) {
 		t.Errorf("stderr %q does not say two documents were skipped", errOut)
 	}
 	if !summary.MatchString(out) {
