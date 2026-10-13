@@ -331,6 +331,9 @@ func TestNoCommittedBenchFileNamesAMachinePath(t *testing.T) {
 	needles := []string{"C:/" + "Users/", `C:\` + `Users\`, "E:/" + "__Workdir", `E:\` + `__Workdir`}
 	cmd := exec.Command("git", "ls-files", "-z", "--", ".")
 	cmd.Dir = filepath.Join("..", "..")
+	if err := exec.Command("git", "-C", cmd.Dir, "rev-parse", "--is-inside-work-tree").Run(); err != nil {
+		t.Skip("not in a git work tree git can read here, so the tracked files cannot be listed")
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatal(err)
