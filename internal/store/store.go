@@ -72,10 +72,14 @@ func Write(repo string, h Header, idx *model.Index) (string, error) {
 	if err := checkDirs(repo, dir); err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, DirName), 0o755); err != nil {
 		return "", err
 	}
+	// Before the commit's directory, so a refused .gitignore leaves no empty one behind.
 	if err := ensureGitignore(filepath.Join(repo, DirName)); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 	if err := os.Remove(filepath.Join(dir, headerFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -151,6 +155,10 @@ func createNew(dir, name string, content []byte) error {
 		return err
 	}
 	defer os.Remove(tmp)
+	// CreateTemp makes the file private (0600); a new file here gets an ordinary file's mode.
+	if err := os.Chmod(tmp, 0o644); err != nil {
+		return err
+	}
 	return publishNew(tmp, filepath.Join(dir, name), content)
 }
 
@@ -276,10 +284,7 @@ func load(repo, commit string, limit int64, lim model.Limits) (Header, *model.In
 	if err := lim.Check(h.Counts, 0); err != nil {
 		return Header{}, nil, fmt.Errorf("%s: the store has %w: rebuild it with `adamap index`", filepath.Join(dir, headerFile), err)
 	}
-	if err := checkRegular(filepath.Join(dir, storeFile)); err != nil {
-		return Header{}, nil, err
-	}
-	f, err := os.Open(filepath.Join(dir, storeFile))
+	f, err := openRegular(filepath.Join(dir, storeFile))
 	if err != nil {
 		return Header{}, nil, err
 	}
@@ -321,25 +326,36 @@ func checkDefinition(s model.Symbol) error {
 // maxHeaderBytes is the largest header.json Load reads; a real one is a few hundred bytes.
 const maxHeaderBytes = 1 << 20
 
-// checkRegular refuses path unless it is a regular file, not a link to one: a cloned repository can
-// commit a store file as a symbolic link to a device or to a file outside itself.
-func checkRegular(path string) error {
+// openRegular opens path unless it is not a regular file, or a link to one: a cloned repository can
+// commit a store file as a symbolic link to a device or to a file outside itself. What was opened
+// must also be the file that was checked, as something may replace the path between the two.
+func openRegular(path string) (*os.File, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !fi.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a regular file: adamap will not read a store through a link or a device", path)
+		return nil, fmt.Errorf("%s is not a regular file: adamap will not read a store through a link or a device", path)
 	}
-	return nil
+	f, err := openFile(path)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := f.Stat()
+	if err == nil && !os.SameFile(fi, opened) {
+		err = fmt.Errorf("%s was replaced while it was opened, so what was read is not the file that was checked: "+
+			"run it again", path)
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 // readHeader reads header.json, at most maxHeaderBytes of it.
 func readHeader(path string) ([]byte, error) {
-	if err := checkRegular(path); err != nil {
-		return nil, err
-	}
-	f, err := os.Open(path)
+	f, err := openRegular(path)
 	if err != nil {
 		return nil, err
 	}
@@ -378,21 +394,21 @@ func (l *limitedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// openFile opens a store file; tests replace it to make the open fail or to open another file.
+var openFile = os.Open
+
 // Latest is the commit whose store was written last in repo.
 func Latest(repo string) (string, error) {
 	if err := checkDirs(repo, filepath.Join(repo, DirName)); err != nil {
 		return "", err
 	}
 	path := filepath.Join(repo, DirName, latestFile)
-	if err := checkRegular(path); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return "", fmt.Errorf("no store in %s yet: run `adamap index` (%w)", repo, err)
-		}
-		return "", err
-	}
-	f, err := os.Open(path)
-	if err != nil {
+	f, err := openRegular(path)
+	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("no store in %s yet: run `adamap index` (%w)", repo, err)
+	}
+	if err != nil {
+		return "", err
 	}
 	defer f.Close()
 	// One byte past the limit tells a file of exactly the limit from a longer one.

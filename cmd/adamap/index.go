@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/adanext-map/internal/model"
+	"github.com/cristiangirlea/adanext-map/internal/query"
 	"github.com/cristiangirlea/adanext-map/internal/scip"
 	"github.com/cristiangirlea/adanext-map/internal/store"
 )
@@ -230,11 +231,22 @@ func gitRun(repo string, opts []string, args ...string) (string, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		if msg := strings.TrimSpace(errOut.String()); msg != "" {
-			return "", fmt.Errorf("git %s: %s", args[0], msg)
+			return "", fmt.Errorf("git %s: %s", args[0], safeLines(msg))
 		}
 		return "", fmt.Errorf("git %s: %w", args[0], err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// safeLines is s with each line that holds a control or format character, or invalid UTF-8, quoted
+// by query.Safe, as the MCP server escapes error text. Git echoes ref names and config values, which
+// the repository chooses; a line that is printable already stays as it is.
+func safeLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = query.Safe(l)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // runAndRead runs the indexer repo needs, with repo as its working directory, and reads the index

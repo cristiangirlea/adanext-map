@@ -414,3 +414,21 @@ func TestInstallWritesAndPrintsAPathWithSpacesAndNonASCIIBackAsItWas(t *testing.
 		t.Errorf("the printed TOML reads back as command %q, args %q; want %q and [mcp --repo %q]", command, args, executable(t), repo)
 	}
 }
+
+// The server name in the error comes from a file a cloned repository supplies, so a terminal must
+// not act on an ESC or a bidirectional override in it.
+func TestSetServerQuotesTheServerNameInItsError(t *testing.T) {
+	name := "a\x1b[31m\xe2\x80\xaeb" // ESC, then U+202E (right-to-left override)
+	key, err := json.Marshal(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"mcpServers": {` + string(key) + `: "x"}}`)
+	_, err = setServer(data, name, serverEntry{command: "adamap"})
+	if err == nil {
+		t.Fatal("an entry that is not an object should be refused")
+	}
+	if msg := err.Error(); strings.ContainsAny(msg, "\x1b\xe2\x80\xae") || !strings.Contains(msg, strconv.Quote(name)) {
+		t.Errorf("error %q holds the name raw; want it as %s", msg, strconv.Quote(name))
+	}
+}
