@@ -405,3 +405,33 @@ func TestConvertKeepsAnEmptyPathFatalEvenNextToSkippedOnes(t *testing.T) {
 		t.Fatalf("err = %v, want one saying there is no path", err)
 	}
 }
+
+// An index is untrusted, and its text reaches a terminal in an error: a path holding an escape
+// sequence or a right-to-left override must come out quoted, never raw.
+func TestConvertErrorsQuoteTheDocumentPath(t *testing.T) {
+	const hostile = "a\x1b[31m‮gp.go"
+	cases := []struct {
+		name   string
+		break_ func(x *scippb.Index)
+	}{
+		{"symbol information without a symbol", func(x *scippb.Index) { x.Documents[0].Symbols[0].Symbol = "" }},
+		{"malformed occurrence", func(x *scippb.Index) { x.Documents[0].Occurrences[0].Range = []int32{1, 2} }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			x := sciptest.Index()
+			x.Documents[0].RelativePath = hostile
+			c.break_(x)
+			_, _, err := Convert(x)
+			if err == nil {
+				t.Fatal("no error")
+			}
+			if strings.ContainsAny(err.Error(), "\x1b‮") {
+				t.Fatalf("err holds a raw escape or override: %q", err.Error())
+			}
+			if !strings.Contains(err.Error(), strconv.Quote(hostile)) {
+				t.Fatalf("err = %q, want the path quoted as %s", err, strconv.Quote(hostile))
+			}
+		})
+	}
+}
