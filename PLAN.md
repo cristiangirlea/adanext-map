@@ -44,3 +44,9 @@ repository); a fail-closed push guard (#8).
 - 2026-10-13 (slice 2): a backslash in a document path is always a separator: SCIP specifies `/`
   and indexers on Windows (scip-go 0.2.7) write `\`. The converter turns it into `/` and cleans the
   path (`a/./b.go` and `a//b.go` become `a/b.go`) before checking it, and stores the slash form.
+- 2026-10-13 (slice 2): a document whose path leaves the project (absolute, drive-letter, UNC, or
+  `..` escaping, after normalising) is skipped with its occurrences and symbols instead of failing
+  the index: scip-go on Windows also indexes the test main Go generates in its build cache, outside
+  the repository. `adamap index` says how many on stderr and still writes the store. An empty path,
+  a malformed range or a symbol without a symbol stay fatal, and `store.Load` still refuses such a
+  path, since a store adamap wrote never holds one.
