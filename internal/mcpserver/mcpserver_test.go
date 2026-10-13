@@ -519,6 +519,10 @@ func TestStatusSaysWhetherTheStoreIsCurrent(t *testing.T) {
 			if !strings.Contains(a.text, tc.wantInText) || !strings.Contains(a.text, "0123456789ab") {
 				t.Errorf("status text %q, want %q in it", a.text, tc.wantInText)
 			}
+			// Dirty counts untracked files too, so the text must not narrow it to tracked ones.
+			if strings.Contains(a.text, "tracked files") {
+				t.Errorf("status text %q says tracked files; untracked ones count as well", a.text)
+			}
 			refresh, _ := s["refresh"].(string)
 			if tc.wantRefresh != strings.Contains(refresh, "adamap index --repo") ||
 				tc.wantRefresh != strings.Contains(a.text, "adamap index --repo") {
