@@ -534,14 +534,15 @@ func TestStatusWithoutGit(t *testing.T) {
 	}
 }
 
-// hostileRepo holds a store whose names, kind and path carry a raw ESC, BEL and a bidi override.
+// hostileRepo holds a store whose names and kind carry a raw ESC, BEL and a bidi override and whose
+// path a zero-width space (a control character in a path would not load).
 func hostileRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
 	def := model.Range{StartLine: 3, StartCol: 5, EndLine: 3, EndCol: 9}
 	idx := &model.Index{
 		Documents: []model.Document{
-			{Path: "d\x1b]0;x\x07/f.go", Occurrences: []model.Occurrence{
+			{Path: "d\u200b/f.go", Occurrences: []model.Occurrence{
 				{Range: def, Symbol: "s m p v esc().", Roles: model.RoleDefinition},
 				{Range: model.Range{StartLine: 8, EndLine: 8, EndCol: 4}, Symbol: "s m p v esc().", Roles: model.RoleReference},
 				{Range: model.Range{StartLine: 9, EndLine: 9, EndCol: 4}, Symbol: "s m p v bidi#", Roles: model.RoleDefinition},
@@ -555,7 +556,7 @@ func hostileRepo(t *testing.T) string {
 			{ID: "s m p v bidi#", DisplayName: "dup\u202e", Kind: "Struct"},
 			{ID: "s m p v bidi2#", DisplayName: "dup\u202e", Kind: "Struct"},
 			{ID: "s m p v esc().", DisplayName: "ev\x1b[2Jil", Kind: "Fun\x1bction", Signature: "func ev\x1b[2Jil()",
-				Doc: "doc\x1b[31m", Definition: &model.Location{Path: "d\x1b]0;x\x07/f.go", Range: def}},
+				Doc: "doc\x1b[31m", Definition: &model.Location{Path: "d\u200b/f.go", Range: def}},
 		},
 	}
 	if _, err := store.Write(repo, store.Header{Commit: commitA, Indexer: model.Tool{Name: "x\x1by"}}, idx); err != nil {
@@ -571,7 +572,7 @@ func TestHostileStoreStringsAreEscapedInTextContent(t *testing.T) {
 		args map[string]any
 	}{
 		{"map", nil},
-		{"outline", map[string]any{"file": "d\x1b]0;x\x07/f.go"}},
+		{"outline", map[string]any{"file": "d\u200b/f.go"}},
 		{"find_symbol", map[string]any{"name": "ev"}},
 		{"find_symbol", map[string]any{"name": "dup"}},
 		{"refs", map[string]any{"symbol": "s m p v esc()."}},
@@ -589,8 +590,8 @@ func TestHostileStoreStringsAreEscapedInTextContent(t *testing.T) {
 			t.Errorf("%s %q: no text content", tc.tool, tc.args)
 		}
 	}
-	a := ok(t, cs, "outline", map[string]any{"file": "d\x1b]0;x\x07/f.go"})
-	if !strings.Contains(a.text, `"d\x1b]0;x\a/f.go"`) {
+	a := ok(t, cs, "outline", map[string]any{"file": "d\u200b/f.go"})
+	if !strings.Contains(a.text, `"d\u200b/f.go"`) {
 		t.Errorf("the hostile path should be quoted the CLI's way: %q", a.text)
 	}
 }
