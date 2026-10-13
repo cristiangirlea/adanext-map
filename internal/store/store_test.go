@@ -478,3 +478,17 @@ func TestLatestErrorDoesNotQuoteTheWholeFile(t *testing.T) {
 		t.Errorf("err = %v, want one saying it is not a commit", err)
 	}
 }
+
+func TestLoadRefusesADocumentPathWindowsCannotHold(t *testing.T) {
+	for _, p := range []string{"a.go:x", "pkg/a:x.go", "a\x00b.go", "a\nb.go"} {
+		repo := t.TempDir()
+		idx := fixture(t)
+		idx.Documents[0].Path = p // as a hand-edited store would have it; Convert would skip it
+		if _, err := Write(repo, header(commitA), idx); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), "document 0") {
+			t.Errorf("path %q: Load err = %v, want one naming document 0", p, err)
+		}
+	}
+}

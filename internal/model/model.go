@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // Index is one indexed tree at one commit.
@@ -118,7 +119,8 @@ func (x *Index) Counts() Counts {
 }
 
 // CheckPath refuses a document path that could point outside the project: empty, absolute in any
-// platform's spelling, or with a `..` segment.
+// platform's spelling, or with a `..` segment; or that a file system cannot hold: a NUL or other
+// control character, or a colon (an alternate data stream on Windows).
 func CheckPath(p string) error {
 	switch {
 	case p == "":
@@ -126,6 +128,11 @@ func CheckPath(p string) error {
 	case strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) || filepath.IsAbs(p) ||
 		(len(p) >= 2 && p[1] == ':'):
 		return fmt.Errorf("path %q is absolute", p)
+	}
+	for _, r := range p {
+		if r == ':' || unicode.IsControl(r) {
+			return fmt.Errorf("path %q has a control character or a colon", p)
+		}
 	}
 	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
 		if seg == ".." {

@@ -405,3 +405,19 @@ func TestConvertKeepsAnEmptyPathFatalEvenNextToSkippedOnes(t *testing.T) {
 		t.Fatalf("err = %v, want one saying there is no path", err)
 	}
 }
+
+func TestConvertSkipsAPathWindowsCannotHold(t *testing.T) {
+	paths := []string{"a.go:x", "dir/a:x.go", "a\x00b.go", "a\nb.go", "a\x7fb.go"}
+	x := sciptest.Index()
+	for _, p := range paths {
+		x.Documents = append(x.Documents, &scippb.Document{RelativePath: p})
+	}
+	got, skipped, err := Convert(x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skipped.Count != len(paths) {
+		t.Errorf("skipped %d, want %d", skipped.Count, len(paths))
+	}
+	diff(t, got, wantFixture())
+}

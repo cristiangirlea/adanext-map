@@ -24,3 +24,20 @@ func TestRoleHasEveryRoleAsked(t *testing.T) {
 		t.Errorf("%b has a role it lacks", r)
 	}
 }
+
+func TestCheckPathRefusesACharacterAFileNameCannotHold(t *testing.T) {
+	for _, p := range []string{"a.go:x", "dir/a:x.go", "a:b", "a\x00b.go", "a\nb.go", "a\tb.go", "a\x1fb.go",
+		"a\x7fb.go", "a\u0085b.go", "pkg/\x00"} {
+		if err := CheckPath(p); err == nil {
+			t.Errorf("CheckPath(%q) accepted it", p)
+		}
+	}
+}
+
+func TestCheckPathAcceptsOrdinaryPaths(t *testing.T) {
+	for _, p := range []string{"a.go", "pkg/a.go", `pkg\a.go`, "a b.go", "ünï/çode.go", "a-b_c.d.e", ".hidden"} {
+		if err := CheckPath(p); err != nil {
+			t.Errorf("CheckPath(%q) = %v, want it accepted", p, err)
+		}
+	}
+}
