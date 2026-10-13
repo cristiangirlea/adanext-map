@@ -97,6 +97,16 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	case "fail":
 		os.Exit(3)
+	case "worker-tree": // passes only on the worker's tree: no fix test, a.go as it was
+		if _, err := os.Stat("a_test.go"); err == nil {
+			os.Stdout.WriteString("a_test.go present\n")
+			os.Exit(1)
+		}
+		if data, _ := os.ReadFile("a.go"); string(data) != "package a\n" {
+			os.Stdout.WriteString("a.go is the fix's\n")
+			os.Exit(1)
+		}
+		os.Exit(0)
 	case "check":
 		if _, err := os.Stat("a_test.go"); err != nil {
 			os.Stdout.WriteString("no a_test.go\n")
@@ -758,5 +768,28 @@ func TestACancelledExecutionWritesNoRecord(t *testing.T) {
 	}
 	if text, _ := os.ReadFile(markers[0]); !strings.Contains(string(text), "context canceled") {
 		t.Fatalf("the marker does not say why: %q", text)
+	}
+}
+
+// The fix's files laid over the workspace for a fix-tests check are taken back after it, added
+// ones removed and replaced ones restored: a later check, and a kept workspace, see the worker's
+// tree, never the fix.
+func TestTheFixOverlayIsTakenBackAfterItsCheck(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	self, _ := os.Executable()
+	m.Tasks[1].Checks[0].Paths = []string{"*.go"}
+	m.Tasks[1].Checks = append(m.Tasks[1].Checks, manifest.Check{ID: "worker-tree", Type: manifest.CheckCommand,
+		Command: []string{self, "bench-helper-worker-tree"}, Needs: []string{"go"}})
+	o := options(t, m, src, 8)
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	for _, id := range []string{"t01.none.fake.r1", "t01.adamap.fake.r2"} {
+		r := benchtest.Find(recs, id)
+		if len(r.Checks) != 2 || !r.Checks[0].Passed || !r.Checks[1].Passed {
+			t.Fatalf("%s: checks %+v", id, r.Checks)
+		}
 	}
 }

@@ -398,16 +398,23 @@ func (o *Options) check(ctx context.Context, c Cell, ch manifest.Check, r *recor
 	switch ch.Type {
 	case manifest.CheckCommand, manifest.CheckFixTests:
 		var head string
+		restore := func() error { return nil }
 		if ch.Type == manifest.CheckFixTests {
 			fix := c.Task.Provenance.FixRevision
-			files, err := o.overlay(c, source, fix, ch.Paths)
+			files, undo, err := o.overlay(c, source, fix, ch.Paths)
 			if err != nil {
 				return res, err
 			}
+			restore = undo
 			res.Overlay = fix
 			head = "overlay from " + fix + ": " + strings.Join(files, ", ") + "\n"
 		}
 		p := runProcess(ctx, ch.Command, c.Workspace, env, "", timeout)
+		// The fix's files leave the workspace with the check: a later check, and a kept
+		// workspace, see the worker's tree.
+		if err := restore(); err != nil {
+			return res, fmt.Errorf("taking the fix's files back out of the workspace: %w", err)
+		}
 		if p.err != nil && p.exit == 0 {
 			p.exit = -1
 		}
@@ -427,34 +434,69 @@ func (o *Options) check(ctx context.Context, c Cell, ch manifest.Check, r *recor
 }
 
 // overlay lays the fix's matching files over the workspace, from a grader checkout made outside
-// it after the worker finished.
-func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]string, error) {
+// it after the worker finished, and returns what undoes it: the files it added removed, the ones
+// it replaced as the worker left them.
+func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]string, func() error, error) {
 	// The grader's checkout holds the fix: it never stays behind, --keep or not.
 	root, err := os.MkdirTemp("", "adamap-bench-grader-")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer os.RemoveAll(root)
 	grader := filepath.Join(root, "grader")
 	if err := Checkout(source, fix, grader); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := fetch(grader, source, c.Task.Revision); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	files, err := fixFiles(grader, c.Task.Revision, fix, patterns)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(files) == 0 {
-		return nil, fmt.Errorf("the fix %s changes no file matching %v", fix, patterns)
+		return nil, nil, fmt.Errorf("the fix %s changes no file matching %v", fix, patterns)
+	}
+	type saved struct {
+		data []byte
+		mode os.FileMode
+		had  bool
+	}
+	was := map[string]saved{}
+	undo := func() error {
+		var errs []error
+		for dst, s := range was {
+			if !s.had {
+				if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+					errs = append(errs, err)
+				}
+			} else if err := os.WriteFile(dst, s.data, s.mode); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
 	}
 	for _, f := range files {
-		if err := copyFile(filepath.Join(grader, filepath.FromSlash(f)), filepath.Join(c.Workspace, filepath.FromSlash(f))); err != nil {
-			return nil, err
+		dst := filepath.Join(c.Workspace, filepath.FromSlash(f))
+		switch fi, err := os.Lstat(dst); {
+		case errors.Is(err, os.ErrNotExist):
+			was[dst] = saved{}
+		case err != nil:
+			return nil, nil, errors.Join(err, undo())
+		case !fi.Mode().IsRegular():
+			return nil, nil, errors.Join(fmt.Errorf("the worker left %s as something other than a file: the fix's file cannot be laid over it", f), undo())
+		default:
+			data, err := os.ReadFile(dst)
+			if err != nil {
+				return nil, nil, errors.Join(err, undo())
+			}
+			was[dst] = saved{data: data, mode: fi.Mode().Perm(), had: true}
+		}
+		if err := copyFile(filepath.Join(grader, filepath.FromSlash(f)), dst); err != nil {
+			return nil, nil, errors.Join(err, undo())
 		}
 	}
-	return files, nil
+	return files, undo, nil
 }
 
 type processResult struct {

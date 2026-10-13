@@ -61,7 +61,9 @@ marker to run it again. An interruption (Ctrl-C) writes no record for the run it
 starts no further run. Transcripts and the warm index
 cache go to `--work` (default: a temp directory). Each workspace is a directory of its own in the
 system temp directory, away from `--work`, and is removed after its record unless `--keep` is
-given. The grader's checkout of the fix is always removed.
+given. The grader's checkout of the fix is always removed, and the fix's files a `fix-tests` check
+lays over the workspace are taken back out right after that check (added ones removed, replaced
+ones restored as the worker left them), so a later check and a kept workspace see the worker's tree.
 
 ## The manifest
 
