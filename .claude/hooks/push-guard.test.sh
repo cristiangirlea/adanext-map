@@ -246,6 +246,7 @@ refused 'git status \u0026\u0026 git push origin main'
 allowed 'cat <<A <<B\ngit tag x\nA\ngit push origin main\nB\ngit status'
 allowed 'cat <<A <<B\nx\nB\ngit push origin main\nA\ngit status'
 allowed 'cat <<\"EOF\"\ngit push origin main\nEOF'
+allowed 'eval \"$(echo git status)\"' "$tmp/push/clone"
 allowed 'echo push'
 allowed 'go test ./...'
 allowed 'go vet ./... && go build ./...'

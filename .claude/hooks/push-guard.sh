@@ -275,7 +275,7 @@ check_part() {
         shift
         case $w in
           eval | iex | invoke-expression)
-            case "$*" in *'$'*) mentions "$*$input" && refuse "$w runs text the hook cannot see: $*" ;; esac ;;
+            case "$*" in *'$'*) mentions "$*$cmd" && refuse "$w runs text the hook cannot see: $*" ;; esac ;;
           start-process | saps | start)
             # -ArgumentList 'push origin main' is split as the program will see it.
             t="$*"; IFS=" 	,"; set -- $t; IFS=' ' ;;
