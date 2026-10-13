@@ -51,8 +51,9 @@ shown either: the line of the struct, class or enum that holds them is the one t
 member would take a line of the budget from a symbol that matters more. A file that defines only
 members is left out. References to a member still link the files, so they count in the ranking
 (see below); `adamap find`, `outline` and `refs` still list members. A path holding a control or format
-character (bidi overrides, zero-width characters) is printed quoted, so each line stays one line
-and shows what it holds; the same characters in a name, signature or doc become a space.
+character (bidi overrides, zero-width characters), is not UTF-8, or starts with a space (a symbol
+line starts with two, so such a path would pass for one) is printed quoted, so each line stays one
+line and shows what it holds; the same characters in a name, signature or doc become a space.
 
 ## How it ranks
 

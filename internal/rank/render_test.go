@@ -93,6 +93,17 @@ func TestTextIsPathsThenIndentedSymbols(t *testing.T) {
 	}
 }
 
+func TestTextQuotesAPathThatLooksLikeASymbolLine(t *testing.T) {
+	// A symbol line starts with two spaces: a path that does would read as one under the wrong file.
+	files := []File{{Path: "  func  Fake\n.go", Symbols: []Symbol{{Name: "X", Kind: "Variable"}}},
+		{Path: "  fake.go", Symbols: []Symbol{{Name: "Y", Kind: "Variable"}}},
+		{Path: " one.go", Symbols: []Symbol{{Name: "Z", Kind: "Variable"}}}}
+	want := "\"  func  Fake\\n.go\"\n  var  X\n\"  fake.go\"\n  var  Y\n\" one.go\"\n  var  Z\n"
+	if got := Text(files); got != want {
+		t.Errorf("Text:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestFitNeverExceedsTheBudget(t *testing.T) {
 	files := Rank(synthetic(120, 8, 30), nil).Files
 	all, prev := Text(files), 0

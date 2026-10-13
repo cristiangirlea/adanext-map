@@ -91,10 +91,11 @@ func Text(files []File) string {
 	return b.String()
 }
 
-// fileLine is a path's line, quoted when the path holds a control or format character or is not
-// UTF-8, so one line stays one path and reads as it is.
+// fileLine is a path's line, quoted when the path holds a control or format character, is not
+// UTF-8, or starts with a space (a symbol line starts with two), so one line stays one path and
+// reads as it is.
 func fileLine(path string) string {
-	if !utf8.ValidString(path) || strings.ContainsFunc(path, isHidden) {
+	if !utf8.ValidString(path) || strings.HasPrefix(path, " ") || strings.ContainsFunc(path, isHidden) {
 		path = strconv.Quote(path)
 	}
 	return path + "\n"
