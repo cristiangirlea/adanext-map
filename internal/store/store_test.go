@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -308,6 +309,23 @@ func TestWriteKeepsTheStoreOutOfGit(t *testing.T) {
 	}
 	if c, err := Latest(repo); err != nil || c != commitA {
 		t.Errorf("Latest = %q, %v, want %s", c, err, commitA)
+	}
+}
+
+func TestWriteGivesTheGitignoreTheModeOfAnOrdinaryFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows files have no permission bits to check")
+	}
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(repo, ".adamap", ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o644 {
+		t.Errorf(".adamap/.gitignore has mode %o, want 644", got)
 	}
 }
 

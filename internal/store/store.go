@@ -151,6 +151,10 @@ func createNew(dir, name string, content []byte) error {
 		return err
 	}
 	defer os.Remove(tmp)
+	// CreateTemp makes the file private (0600); a new file here gets an ordinary file's mode.
+	if err := os.Chmod(tmp, 0o644); err != nil {
+		return err
+	}
 	return publishNew(tmp, filepath.Join(dir, name), content)
 }
 
