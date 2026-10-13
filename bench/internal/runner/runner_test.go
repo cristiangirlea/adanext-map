@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cristiangirlea/adanext-map/bench/internal/benchtest"
 	"github.com/cristiangirlea/adanext-map/bench/internal/manifest"
@@ -51,6 +52,17 @@ func TestMain(m *testing.M) {
 			}
 		}
 		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
+	case "agent-fetch": // a worker that fetches the hidden fix
+		cmd := exec.Command("git", "fetch", "-q", "--upload-pack", "git -c uploadpack.allowAnySHA1InWant=true upload-pack",
+			os.Getenv("BENCH_TEST_SOURCE"), os.Getenv("BENCH_TEST_FIX"))
+		if err := cmd.Run(); err != nil {
+			os.Exit(1)
+		}
+		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
+		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
+	case "sleep":
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
 	case "agent-where": // a worker that says where it runs
 		wd, _ := os.Getwd()
 		f, err := os.OpenFile(os.Getenv("BENCH_TEST_WHERE"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -483,6 +495,103 @@ func TestARetryStartsFromACleanTree(t *testing.T) {
 	for _, r := range recs {
 		if len(r.Attempts) != 2 || !r.Attempts[1].Completed() || r.After.Content != record.CleanContent {
 			t.Fatalf("%s: %d attempts, after %s", r.RunID, len(r.Attempts), r.After.Content)
+		}
+	}
+	if p := record.Check(m, recs); len(p) != 0 {
+		t.Fatalf("problems %v", p)
+	}
+}
+
+// A hidden path or a hidden revision in the fresh workspace is a broken task: the execution stops
+// before any worker runs, and no record is written.
+func TestExecuteStopsOnALeakInTheFreshWorkspace(t *testing.T) {
+	src, pre, fix := repo(t)
+	for name, mutate := range map[string]func(m *manifest.Manifest){
+		"a hidden path":     func(m *manifest.Manifest) { m.Tasks[0].Leakage.HiddenPaths = []string{"a.go"} },
+		"a hidden revision": func(m *manifest.Manifest) { m.Tasks[0].Leakage.HiddenRevisions = []string{pre} },
+	} {
+		m := smoke(t, pre, fix)
+		mutate(m)
+		o := options(t, m, src, 8)
+		err := runner.Execute(context.Background(), o)
+		if err == nil || !strings.Contains(err.Error(), "leakage") {
+			t.Fatalf("%s: err %v", name, err)
+		}
+		if recs, _ := record.ReadDir(o.RecordsDir); len(recs) != 0 {
+			t.Fatalf("%s: %d records written", name, len(recs))
+		}
+	}
+}
+
+// A worker that fetches the hidden fix is caught after the run: an isolation violation, so the
+// run is no success.
+func TestExecuteRecordsAFetchedFixAsAnIsolationFailure(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-fetch", "BENCH_TEST_SOURCE=" + src, "BENCH_TEST_FIX=" + fix}
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	r := benchtest.Find(recs, "t01.none.fake.r1")
+	if len(r.Isolation.Violations) == 0 || !strings.Contains(r.Isolation.Violations[0], fix) || record.Success(m, r) {
+		t.Fatalf("isolation %+v, success %v", r.Isolation, record.Success(m, r))
+	}
+}
+
+// An interrupted execution resumes: a run with a record is skipped, a missing one runs.
+func TestExecuteResumesFromTheRecordsItHas(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(o.RecordsDir, "t01.adamap.fake.r2.json")
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+	log := &bytes.Buffer{}
+	o.Log = log
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(log.String(), "recorded already, skipped"); n != 7 {
+		t.Fatalf("%d runs skipped, want 7:\n%s", n, log)
+	}
+	if _, err := os.Stat(gone); err != nil {
+		t.Fatal("the missing run was not run again")
+	}
+}
+
+func TestExecuteStopsWhenTheInjectionFails(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	self, _ := os.Executable()
+	m.Conditions[1].Inject = []string{self, "bench-helper-fail"}
+	err := runner.Execute(context.Background(), options(t, m, src, 8))
+	if err == nil || !strings.Contains(err.Error(), "inject") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+// A check that outlives check_timeout_seconds is stopped and fails; the record stays consistent.
+func TestACheckThatTimesOutFails(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	self, _ := os.Executable()
+	m.Tasks[1].Checks[0].Command = []string{self, "bench-helper-sleep"}
+	m.Execution.CheckTimeoutSeconds = 1
+	o := options(t, m, src, 8)
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	for _, id := range []string{"t01.none.fake.r1", "t01.adamap.fake.r2"} {
+		c := benchtest.Find(recs, id).Checks[0]
+		if c.Passed || c.Exit == nil || *c.Exit != -1 {
+			t.Fatalf("%s: check %+v", id, c)
 		}
 	}
 	if p := record.Check(m, recs); len(p) != 0 {
