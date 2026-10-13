@@ -91,10 +91,10 @@ func Text(files []File) string {
 	return b.String()
 }
 
-// fileLine is a path's line, quoted when the path holds a control character or is not UTF-8, so
-// one line stays one path.
+// fileLine is a path's line, quoted when the path holds a control or format character or is not
+// UTF-8, so one line stays one path and reads as it is.
 func fileLine(path string) string {
-	if !utf8.ValidString(path) || strings.ContainsFunc(path, unicode.IsControl) {
+	if !utf8.ValidString(path) || strings.ContainsFunc(path, isHidden) {
 		path = strconv.Quote(path)
 	}
 	return path + "\n"
@@ -153,11 +153,15 @@ func Detail(s Symbol) string {
 	return clip(name, maxDetail)
 }
 
-// oneLine turns runs of white space and control characters into one space, and invalid UTF-8
+// isHidden is a control character, or a format character (bidi overrides, zero-width): one that
+// changes or hides what a terminal shows.
+func isHidden(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }
+
+// oneLine turns runs of white space, control and format characters into one space, and invalid UTF-8
 // into replacement characters, and trims the ends.
 func oneLine(s string) string {
 	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if isHidden(r) {
 			return ' '
 		}
 		return r

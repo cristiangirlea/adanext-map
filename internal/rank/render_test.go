@@ -188,3 +188,18 @@ func TestDetailOfAHugeSignatureIsFast(t *testing.T) {
 		t.Errorf("Detail = %q, want at most %d bytes ending in ...", got, maxDetail)
 	}
 }
+
+func TestTextNeutralisesFormatCharacters(t *testing.T) {
+	// U+202E reverses what follows it on a terminal, U+200B takes no room: neither may reach the output.
+	files := []File{{Path: "a\u202Eog.sh\u200B", Symbols: []Symbol{
+		{Name: "Run", Kind: "Function", Signature: "func Run(x\u202Ey int)"},
+	}}}
+	text := Text(files)
+	if strings.ContainsAny(text, "\u202E\u200B") {
+		t.Errorf("format characters reach the text: %q", text)
+	}
+	want := "\"a\\u202eog.sh\\u200b\"\n  func  Run(x y int)\n"
+	if text != want {
+		t.Errorf("text %q, want %q", text, want)
+	}
+}
