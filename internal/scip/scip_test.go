@@ -377,7 +377,10 @@ func TestConvertSkipsADocumentOutsideTheProject(t *testing.T) {
 }
 
 func TestConvertSkipsEveryKindOfPathOutsideTheProject(t *testing.T) {
-	paths := []string{"/etc/passwd", `\x.go`, `C:\Windows\x.go`, "C:x.go", `\server\share\x.go`, "../x.go", "pkg/../../x.go", `pkg\..\..\x.go`}
+	paths := []string{"/etc/passwd", `\x.go`, `C:\Windows\x.go`, "C:x.go", `\server\share\x.go`,
+		`\\server\share\x.go`, `\..`, `a\..\..\b`, "../x.go", "pkg/../../x.go", `pkg\..\..\x.go`,
+		// Paths that clean to the project root itself name no file.
+		"pkg/..", ".", `pkg\..`}
 	x := sciptest.Index()
 	for _, p := range paths {
 		x.Documents = append(x.Documents, &scippb.Document{RelativePath: p})
