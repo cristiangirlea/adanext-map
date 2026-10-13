@@ -134,3 +134,39 @@ func CheckPath(p string) error {
 	}
 	return nil
 }
+
+// Limits bound how many items an index may hold. The bytes of a file or a stream do not bound the
+// memory it takes: a few bytes of JSON or protobuf (`{},`) become a whole struct once decoded.
+type Limits struct {
+	Documents     int
+	Symbols       int // global and local, as in Counts
+	Occurrences   int
+	Relationships int // over all symbols
+}
+
+// DefaultLimits are generous: a Rust workspace of 2,000 files measured about 20,000 occurrences per
+// 17 files, 2.4 million in all, so 50 million occurrences is room for some 40,000 such files.
+func DefaultLimits() Limits {
+	return Limits{Documents: 2_000_000, Symbols: 20_000_000, Occurrences: 50_000_000, Relationships: 20_000_000}
+}
+
+// Check returns an error naming the first of c's counts, or of the relationship count rels, that is
+// over its limit.
+func (l Limits) Check(c Counts, rels int) error {
+	switch {
+	case c.Documents > l.Documents:
+		return ErrOverLimit("documents", l.Documents)
+	case c.Symbols > l.Symbols:
+		return ErrOverLimit("symbols", l.Symbols)
+	case c.Occurrences > l.Occurrences:
+		return ErrOverLimit("occurrences", l.Occurrences)
+	case rels > l.Relationships:
+		return ErrOverLimit("relationships", l.Relationships)
+	}
+	return nil
+}
+
+// ErrOverLimit is the error for more than max of what.
+func ErrOverLimit(what string, max int) error {
+	return fmt.Errorf("more than the limit of %d %s", max, what)
+}
