@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // Index is one indexed tree at one commit.
@@ -118,7 +119,9 @@ func (x *Index) Counts() Counts {
 }
 
 // CheckPath refuses a document path that could point outside the project: empty, absolute in any
-// platform's spelling, or with a `..` segment.
+// platform's spelling, or with a `..` segment; or that a file system cannot hold: a NUL or other
+// control character, a colon (an alternate data stream on Windows), or a Windows device name. It
+// checks the same on every OS: a store written on Linux is read on Windows.
 func CheckPath(p string) error {
 	switch {
 	case p == "":
@@ -127,10 +130,37 @@ func CheckPath(p string) error {
 		(len(p) >= 2 && p[1] == ':'):
 		return fmt.Errorf("path %q is absolute", p)
 	}
+	for _, r := range p {
+		if r == ':' || unicode.IsControl(r) {
+			return fmt.Errorf("path %q has a control character or a colon", p)
+		}
+	}
 	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
 		if seg == ".." {
 			return fmt.Errorf("path %q has a .. segment", p)
 		}
+		if isDeviceName(seg) {
+			return fmt.Errorf("path %q names a Windows device", p)
+		}
 	}
 	return nil
+}
+
+// isDeviceName reports whether a path segment is a name Windows reserves for a device, whatever its
+// case or extension: CON, PRN, AUX, NUL, CONIN$, CONOUT$, COM0-COM9 and LPT0-LPT9 (also with the superscript digits
+// ¹ ² ³), as `nul`, `NUL.txt` and `nul .txt`. Trailing dots and spaces do not hide one either.
+func isDeviceName(seg string) bool {
+	base, _, _ := strings.Cut(seg, ".")
+	base = strings.ToUpper(strings.TrimRight(base, ". "))
+	switch base {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		return true
+	}
+	for _, prefix := range []string{"COM", "LPT"} {
+		if digit, ok := strings.CutPrefix(base, prefix); ok && len([]rune(digit)) == 1 &&
+			strings.Contains("0123456789¹²³", digit) {
+			return true
+		}
+	}
+	return false
 }

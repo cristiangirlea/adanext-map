@@ -106,7 +106,7 @@ func runIndex(args []string, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	if skipped.Count > 0 {
-		fmt.Fprintf(stderr, "adamap index: skipped %d documents outside the project (first: %s)\n",
+		fmt.Fprintf(stderr, "adamap index: skipped %d documents adamap cannot store (outside the project or not a safe file name) (first: %s)\n",
 			skipped.Count, strings.Join(skipped.Paths, ", "))
 	}
 	dir, err := store.Write(*repo, store.Header{
@@ -150,8 +150,18 @@ func resolveCommit(repo, given string) (string, bool, error) {
 	return head, status != "", nil
 }
 
+// gitSafely are the options in front of every git command adamap runs. The repository's own
+// .git/config and .git/hooks are written by whoever made it, and git would otherwise run what they
+// name: core.fsmonitor on every status, and the post-index-change hook whenever status rewrites the
+// index. -c overrides the repository's config, and reaches the git that status starts in a
+// submodule. Clean filters are not covered: status runs one to compare a file whose timestamp
+// changed, and no option turns off a filter driver the repository defines (docs/index.md).
+var gitSafely = []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"}
+
+// gitOutput is the output of `git args` in repo, run with gitSafely. Every git call goes through it.
 func gitOutput(repo string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+	cmd := exec.Command("git", slices.Concat([]string{"-C", repo}, gitSafely, args)...)
+	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1") // a missing promisor object is an error, not a fetch
 	var errOut strings.Builder
 	cmd.Stderr = &errOut
 	out, err := cmd.Output()

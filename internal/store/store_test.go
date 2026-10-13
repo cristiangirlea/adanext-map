@@ -5,9 +5,11 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -108,7 +110,7 @@ func TestWriteLeavesNoTempFiles(t *testing.T) {
 	if got, want := names(t, filepath.Join(repo, ".adamap", commitA)), []string{"header.json", "store.json.gz"}; !slices.Equal(got, want) {
 		t.Errorf("store dir holds %v, want %v", got, want)
 	}
-	if got, want := names(t, filepath.Join(repo, ".adamap")), []string{commitA, "latest"}; !slices.Equal(got, want) {
+	if got, want := names(t, filepath.Join(repo, ".adamap")), []string{".gitignore", commitA, "latest"}; !slices.Equal(got, want) {
 		t.Errorf(".adamap holds %v, want %v", got, want)
 	}
 }
@@ -155,8 +157,8 @@ func TestLoadRefusesANewerFormatNamingTheAdamapNeeded(t *testing.T) {
 	}
 	rewriteHeader(t, repo, func(h map[string]any) { h["format"] = 2; h["adamap"] = "0.9.0" })
 	_, _, err := Load(repo, commitA)
-	if err == nil || !strings.Contains(err.Error(), "format 2") || !strings.Contains(err.Error(), "adamap 0.9.0 or later") {
-		t.Fatalf("err = %v, want one naming format 2 and adamap 0.9.0 or later", err)
+	if err == nil || !strings.Contains(err.Error(), "format 2") || !strings.Contains(err.Error(), `adamap "0.9.0" or later`) {
+		t.Fatalf("err = %v, want one naming format 2 and adamap \"0.9.0\" or later", err)
 	}
 }
 
@@ -283,6 +285,133 @@ func TestStoreRefusesASymlinkedCommitDirectory(t *testing.T) {
 	}
 	if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), "symbolic link") {
 		t.Fatalf("Load err = %v, want a refusal naming the symbolic link", err)
+	}
+}
+
+func TestWriteKeepsTheStoreOutOfGit(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, ".adamap", ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "*\n" {
+		t.Errorf(".adamap/.gitignore = %q, want %q", got, "*\n")
+	}
+	// The file does not get in the way of reading the store back.
+	if _, _, err := Load(repo, commitA); err != nil {
+		t.Errorf("Load: %v", err)
+	}
+	if c, err := Latest(repo); err != nil || c != commitA {
+		t.Errorf("Latest = %q, %v, want %s", c, err, commitA)
+	}
+}
+
+func TestWriteLeavesAnExistingGitignoreAlone(t *testing.T) {
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".adamap")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const mine = "# the user's own\n*.tmp\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(mine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != mine {
+		t.Errorf(".adamap/.gitignore = %q, want it left as %q", got, mine)
+	}
+}
+
+func TestWriteRefusesASymlinkedGitignore(t *testing.T) {
+	repo, outside := t.TempDir(), t.TempDir()
+	dir := filepath.Join(repo, ".adamap")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(outside, "target")
+	if err := os.WriteFile(target, []byte("untouched\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, target, filepath.Join(dir, ".gitignore"))
+	if _, err := Write(repo, header(commitA), fixture(t)); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("Write err = %v, want a refusal naming the symbolic link", err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "untouched\n" {
+		t.Errorf("Write changed the link's target to %q", got)
+	}
+}
+
+func TestWriteRefusesAGitignoreThatIsNotAFile(t *testing.T) {
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".adamap")
+	if err := os.MkdirAll(filepath.Join(dir, ".gitignore"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Write(repo, header(commitA), fixture(t))
+	if err == nil || !strings.Contains(err.Error(), "is not a regular file") {
+		t.Fatalf("Write err = %v, want a refusal saying it is not a regular file", err)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(dir, ".gitignore")) {
+		t.Errorf("Write err = %v, want it to name the .gitignore", err)
+	}
+}
+
+func TestPublishNewKeepsAFileThatAppearedFirst(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitignore")
+	tmp := filepath.Join(dir, ".gitignore.1.tmp")
+	if err := os.WriteFile(tmp, []byte("*\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Someone made the file after ensureGitignore looked and before it published.
+	const theirs = "# theirs\n"
+	if err := os.WriteFile(path, []byte(theirs), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishNew(tmp, path, []byte("*\n")); err != nil {
+		t.Fatalf("publishNew over an existing file: %v", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != theirs {
+		t.Errorf("publishNew replaced the file: %q, want %q", got, theirs)
+	}
+}
+
+func TestGitSeesNothingUnderTheStore(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	// No global or system ignore, not even git's default one under XDG_CONFIG_HOME, may hide the
+	// stores: only the .gitignore Write made counts.
+	home := t.TempDir()
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("git", "-C", repo, "status", "--porcelain", "--untracked-files=all").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git status: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Errorf("git status lists:\n%s", out)
 	}
 }
 
@@ -476,5 +605,41 @@ func TestLatestErrorDoesNotQuoteTheWholeFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not a commit") {
 		t.Errorf("err = %v, want one saying it is not a commit", err)
+	}
+}
+
+func TestLoadRefusesADocumentPathWindowsCannotHold(t *testing.T) {
+	for _, p := range []string{"a.go:x", "pkg/a:x.go", "a\x00b.go", "a\nb.go",
+		"nul", "pkg/con.txt", "AUX.go", "com1.", "lpt³"} {
+		repo := t.TempDir()
+		idx := fixture(t)
+		idx.Documents[0].Path = p // as a hand-edited store would have it; Convert would skip it
+		if _, err := Write(repo, header(commitA), idx); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), "document 0") {
+			t.Errorf("path %q: Load err = %v, want one naming document 0", p, err)
+		}
+	}
+}
+
+// A store is untrusted too (a cloned repository can commit one): text from its header must reach
+// the terminal quoted, never raw.
+func TestLoadErrorQuotesTheAdamapVersionOfANewerStore(t *testing.T) {
+	const hostile = "9\x1b[31m‮.0"
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	rewriteHeader(t, repo, func(h map[string]any) { h["format"] = 2; h["adamap"] = hostile })
+	_, _, err := Load(repo, commitA)
+	if err == nil {
+		t.Fatal("no error")
+	}
+	if strings.ContainsAny(err.Error(), "\x1b‮") {
+		t.Fatalf("err holds a raw escape or override: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), strconv.Quote(hostile)) {
+		t.Fatalf("err = %q, want the version quoted as %s", err, strconv.Quote(hostile))
 	}
 }
