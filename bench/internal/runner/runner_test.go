@@ -868,7 +868,8 @@ func TestATimedOutAttemptIsNotTakenForALimit(t *testing.T) {
 	src, pre, fix := repo(t)
 	m := smoke(t, pre, fix)
 	m.Tasks, m.Repeats, m.Budget.MaxRuns = m.Tasks[:1], 1, 2
-	m.Execution.TimeoutSeconds, m.Execution.MaxAttempts = 1, 1
+	// Long enough for the index step under the race detector; the worker hangs until it is killed.
+	m.Execution.TimeoutSeconds, m.Execution.MaxAttempts = 5, 1
 	o := options(t, m, src, 2)
 	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-retry-hang"}
 	if err := runner.Execute(context.Background(), o); err != nil {
