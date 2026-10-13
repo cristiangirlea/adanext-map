@@ -192,9 +192,13 @@ check_cmd() {
   while [ -n "$stk" ]; do sub_end; check_part "$cur"; done
   return 0
 }
-# heredoc_start: after <<, queues the heredoc's word: u or q (unquoted, quoted), - or _ (<<- or <<),
+# heredoc_start: after <<, queues the heredoc's word, if it has one: u or q (unquoted, quoted), - or _ (<<- or <<),
 # then the word without its quotes.
 heredoc_start() {
+  # A heredoc's word starts with a letter, _, a quote or a backslash: $((1<<3)) is arithmetic.
+  hw=${cs#-}
+  hw=${hw#"${hw%%[!\ \	]*}"}
+  case $hw in [A-Za-z_\'\"\\]*) ;; *) return 0 ;; esac
   hd=_
   case $cs in -*) hd=- cs=${cs#-} cur=$cur- ;; esac
   hb=${cs%%[!\ \	]*}
