@@ -441,6 +441,12 @@ func realPath(t *testing.T, p string) string {
 // runs' transcripts and the warm cache; the grader's checkout of the fix never stays, --keep or not.
 func TestTheWorkspaceIsAwayFromTheOtherRunsState(t *testing.T) {
 	src, pre, fix := repo(t)
+	// A temp directory of this test's own, so another run on the machine cannot leave its
+	// workspaces or grader checkouts where this test looks.
+	tmp := t.TempDir()
+	for _, v := range []string{"TMP", "TEMP", "TMPDIR"} {
+		t.Setenv(v, tmp)
+	}
 	for _, keep := range []bool{false, true} {
 		m := smoke(t, pre, fix)
 		o := options(t, m, src, 8)
