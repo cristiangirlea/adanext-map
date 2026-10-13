@@ -2,7 +2,10 @@ package query
 
 import (
 	"errors"
+	"fmt"
+	"math/rand/v2"
 	"slices"
+	"sort"
 	"testing"
 
 	"github.com/cristiangirlea/adanext-map/internal/model"
@@ -255,5 +258,42 @@ func TestCallersFallbackScopeStartsAtTheStartOfTheNamesLine(t *testing.T) {
 	}
 	if want := []string{handle}; !slices.Equal(callerIDs(got.Callers), want) || got.Unattributed != 0 {
 		t.Errorf("first definition: callers = %v, unattributed %d, want %v and none", callerIDs(got.Callers), got.Unattributed, want)
+	}
+}
+
+// TestScopeAtAgreesWithWalkingTheParentsOnOverlappingRanges checks the search along the up chain
+// against the plain walk along the parent links, on random enclosing ranges that nest and overlap.
+func TestScopeAtAgreesWithWalkingTheParentsOnOverlappingRanges(t *testing.T) {
+	rnd := rand.New(rand.NewPCG(1, 2))
+	for round := range 200 {
+		var occs []model.Occurrence
+		for k := range 1 + rnd.IntN(40) {
+			l0, c0 := rnd.IntN(30), rnd.IntN(4)
+			l1, c1 := l0+rnd.IntN(12), rnd.IntN(4)
+			var enclosing *model.Range
+			if rnd.IntN(4) > 0 {
+				enclosing = span(l0, c0, l1, c1)
+			}
+			occs = append(occs, model.Occurrence{
+				Range: rng(l0+rnd.IntN(3), 5, 6), Symbol: fmt.Sprintf("s m p v f%d().", k),
+				Roles: model.RoleDefinition, Enclosing: enclosing,
+			})
+		}
+		x := New(&model.Index{Documents: []model.Document{{Path: "x.go", Occurrences: occs}}})
+		scopes := x.scopes[0]
+		for range 200 {
+			p := pos{rnd.IntN(45), rnd.IntN(8)}
+			var want *scope
+			i := sort.Search(len(scopes), func(i int) bool { return p.less(scopes[i].start) })
+			for j := int32(i) - 1; j >= 0; j = scopes[j].parent {
+				if scopes[j].contains(p) {
+					want = &scopes[j]
+					break
+				}
+			}
+			if got := x.scopeAt(0, p); got != want {
+				t.Fatalf("round %d: scopeAt(%v) = %+v, walking the parents gives %+v", round, p, got, want)
+			}
+		}
 	}
 }
