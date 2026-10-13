@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -82,6 +83,16 @@ func TestMain(m *testing.M) {
 		f.Close()
 		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
 		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
+	case "agent-symlink": // a worker that links the fix's test file, or its directory, out of the workspace
+		out := os.Getenv("BENCH_TEST_OUT")
+		if os.Getenv("BENCH_TEST_MODE") == "dir" {
+			linkDir(out, "tests")
+		} else {
+			os.Mkdir("tests", 0o755)
+			os.Symlink(filepath.Join(out, "x_test.go"), filepath.Join("tests", "x_test.go"))
+		}
+		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
+		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
 	case "agent-hang": // a worker that says it started, then works until stopped
 		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte("started\n"), 0o644)
 		time.Sleep(20 * time.Second)
@@ -116,6 +127,16 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+// linkDir makes name a link to the directory target: a symbolic link, or on Windows without the
+// privilege for one, a junction, which resolves the same way.
+func linkDir(target, name string) error {
+	err := os.Symlink(target, name)
+	if err != nil && runtime.GOOS == "windows" {
+		return exec.Command("cmd", "/c", "mklink", "/J", name, target).Run()
+	}
+	return err
 }
 
 func needGit(t *testing.T) {
@@ -811,5 +832,39 @@ func TestKeepIsRefusedWithAFixTestsCheck(t *testing.T) {
 	}
 	if _, err := os.Stat(o.WorkDir); err == nil {
 		t.Fatal("a workspace was made")
+	}
+}
+
+// A worker that links the fix's test file, or the directory it goes in, to somewhere else must not
+// make the overlay write the fix there: it is refused, and nothing is written outside the workspace.
+func TestTheFixOverlayRefusesALinkOutOfTheWorkspace(t *testing.T) {
+	src, pre, fix := repo(t)
+	// A fix whose test file sits in a directory of its own.
+	gitIn(t, src, "checkout", "-q", "-b", "linked", pre)
+	if err := os.Mkdir(filepath.Join(src, "tests"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(src, "tests", "x_test.go"), "package tests\n")
+	gitIn(t, src, "add", ".")
+	gitIn(t, src, "commit", "-q", "-m", "fix with a directory")
+	fix = gitIn(t, src, "rev-parse", "HEAD")
+	for _, mode := range []string{"file", "dir"} {
+		probe := filepath.Join(t.TempDir(), "probe")
+		if err := os.Symlink(t.TempDir(), probe); err != nil && (mode == "file" || linkDir(t.TempDir(), probe) != nil) {
+			t.Logf("%s: links are not available: %v", mode, err)
+			continue
+		}
+		m := smoke(t, pre, fix)
+		m.Tasks[1].Checks[0].Paths = []string{"tests/*_test.go"}
+		o := options(t, m, src, 8)
+		out := t.TempDir()
+		o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-symlink", "BENCH_TEST_OUT=" + out, "BENCH_TEST_MODE=" + mode}
+		err := runner.Execute(context.Background(), o)
+		if err == nil || !strings.Contains(err.Error(), "fix") {
+			t.Fatalf("%s: err %v", mode, err)
+		}
+		if left, _ := os.ReadDir(out); len(left) != 0 {
+			t.Fatalf("%s: the fix was written outside the workspace: %v", mode, left)
+		}
 	}
 }

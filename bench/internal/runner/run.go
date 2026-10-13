@@ -487,6 +487,9 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 	}
 	for _, f := range files {
 		dst := filepath.Join(c.Workspace, filepath.FromSlash(f))
+		if err := insideWorkspace(c.Workspace, dst); err != nil {
+			return nil, nil, errors.Join(fmt.Errorf("the worker left a link in the way of the fix's file %s: %w", f, err), undo())
+		}
 		switch fi, err := os.Lstat(dst); {
 		case errors.Is(err, os.ErrNotExist):
 			was[dst] = saved{}
@@ -506,6 +509,46 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 		}
 	}
 	return files, undo, nil
+}
+
+// insideWorkspace refuses a destination that a worker's link could send outside the workspace: any
+// existing directory between the workspace and the file that is a link or another kind of reparse
+// point (a Windows junction, which EvalSymlinks does not follow), and a nearest existing parent
+// that resolves outside the workspace. Nothing is created before this passes.
+func insideWorkspace(workspace, dst string) error {
+	root, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(workspace, filepath.Dir(dst))
+	if err != nil {
+		return err
+	}
+	parent := workspace
+	if rel != "." {
+		for _, part := range strings.Split(rel, string(filepath.Separator)) {
+			next := filepath.Join(parent, part)
+			fi, err := os.Lstat(next)
+			if errors.Is(err, os.ErrNotExist) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 || !fi.IsDir() {
+				return fmt.Errorf("%s is a link or not a directory", next)
+			}
+			parent = next
+		}
+	}
+	real, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return err
+	}
+	if r, err := filepath.Rel(root, real); err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%s resolves outside the workspace", parent)
+	}
+	return nil
 }
 
 type processResult struct {
