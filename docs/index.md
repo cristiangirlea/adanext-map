@@ -72,7 +72,20 @@ The checks above (ranges, symbols) apply to the documents that are kept.
 Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice is
 merged into one.
 
-`--max-bytes` bounds the file, not the memory: the decoded index takes several times its size.
+Bytes do not bound memory: a few bytes of protobuf or JSON (`{},`) become a whole struct once decoded,
+so the decoded index takes several times the size of the file and a small file can hold millions of
+items. `--max-bytes` is the bound for the index file, and counts bound what is built from it. Both the
+SCIP index and the store are refused with an error naming the limit when they hold more than 2,000,000
+documents, 20,000,000 symbols (global and local together, as in the header's `counts`), 50,000,000
+occurrences or 20,000,000 relationships (over all symbols). These are generous: a Rust workspace of
+2,000 files measured about 20,000 occurrences per 17 files, some 2.4 million occurrences in all, so
+the defaults leave room for some 40,000 such files. For an index the counts are checked right after the
+protobuf is parsed and before it is converted, so they bound the conversion and the store written from
+it, while `--max-bytes` is what bounds the memory of reading the file. When the store is loaded they are
+enforced as the JSON streams in, one element at a time, and loading stops at the first one over its
+limit instead of after building them all; the counts in `header.json` are checked first, but only as a
+quick refusal, since a hand-edited header proves nothing. The store format is unchanged and stores
+written earlier still load. The limits are not flags.
 
 ## The store
 
