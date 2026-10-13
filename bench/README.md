@@ -41,9 +41,10 @@ A real `run` refuses unless every one of these holds:
 - the manifest has no issue at all;
 - `--i-have-approval-for-N-runs` equals the plan's run count (tasks x conditions x backends x
   repeats), and the budget's `max_runs` covers it;
-- no provider key variable is set (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`,
-  `GEMINI_API_KEY`, `GOOGLE_API_KEY`, the Bedrock, Vertex and Foundry switches, any `*_API_KEY`).
-  Only the names are printed, never the values.
+- no provider key variable is set (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
+  `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, the Bedrock, Vertex and Foundry switches,
+  endpoints and credentials (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, `GOOGLE_APPLICATION_CREDENTIALS`
+  and the like), any `*_API_KEY`). Only the names are printed, never the values.
 
 Records go to `--records`, one `<run id>.json` per run. A run whose record exists is skipped, so an
 interrupted run resumes; the approval still names the whole plan. Transcripts and the warm index

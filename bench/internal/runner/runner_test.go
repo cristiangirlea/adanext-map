@@ -173,12 +173,24 @@ func smoke(t *testing.T, pre, fix string) *manifest.Manifest {
 func options(t *testing.T, m *manifest.Manifest, source string, approval int) runner.Options {
 	self, _ := os.Executable()
 	return runner.Options{
-		Manifest: m, Approval: approval, Environ: os.Environ(),
+		Manifest: m, Approval: approval, Environ: cleanEnviron(),
 		RecordsDir: filepath.Join(t.TempDir(), "records"), WorkDir: filepath.Join(t.TempDir(), "work"),
 		Sources: map[string]string{"local/a": source},
 		Fake:    runner.Fake{Program: []string{self}, Env: []string{"BENCH_TEST_HELPER=agent"}},
 		Log:     &bytes.Buffer{},
 	}
+}
+
+// cleanEnviron is this process's environment without the provider variables a real run refuses,
+// so the tests do not depend on the machine's own.
+func cleanEnviron() []string {
+	var out []string
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); !manifest.IsProviderKeyVar(k) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 func TestExecuteRefusesWithoutMatchingApproval(t *testing.T) {
