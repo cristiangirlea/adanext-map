@@ -150,17 +150,27 @@ func resolveCommit(repo, given string) (string, bool, error) {
 	return head, status != "", nil
 }
 
-// gitSafely are the options in front of every git command adamap runs. The repository's own
-// .git/config and .git/hooks are written by whoever made it, and git would otherwise run what they
-// name: core.fsmonitor on every status, and the post-index-change hook whenever status rewrites the
-// index. -c overrides the repository's config, and reaches the git that status starts in a
-// submodule. Clean filters are not covered: status runs one to compare a file whose timestamp
-// changed, and no option turns off a filter driver the repository defines (docs/index.md).
-var gitSafely = []string{"--no-optional-locks", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null"}
+// gitSafely are the options in front of every git command adamap runs, with hooks an empty
+// directory. The repository's own .git/config and .git/hooks are written by whoever made it, and git
+// would otherwise run what they name: core.fsmonitor on every status, and the post-index-change hook
+// whenever status rewrites the index. -c overrides the repository's config, and reaches the git that
+// status starts in a submodule. An empty core.fsmonitor means off on every git version, where
+// "false" is a hook program's name to one before 2.35. core.hooksPath is a directory made for the
+// call, as /dev/null is no path on Windows. Clean filters are not covered: status runs one to
+// compare a file whose timestamp changed, and no option turns off a filter driver the repository
+// defines (docs/index.md).
+func gitSafely(hooks string) []string {
+	return []string{"--no-optional-locks", "-c", "core.fsmonitor=", "-c", "core.hooksPath=" + filepath.ToSlash(hooks)}
+}
 
 // gitOutput is the output of `git args` in repo, run with gitSafely. Every git call goes through it.
 func gitOutput(repo string, args ...string) (string, error) {
-	cmd := exec.Command("git", slices.Concat([]string{"-C", repo}, gitSafely, args)...)
+	hooks, err := os.MkdirTemp("", "adamap-nohooks-*")
+	if err != nil {
+		return "", fmt.Errorf("git %s: cannot make an empty hooks directory: %w", args[0], err)
+	}
+	defer os.RemoveAll(hooks)
+	cmd := exec.Command("git", slices.Concat([]string{"-C", repo}, gitSafely(hooks), args)...)
 	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1") // a missing promisor object is an error, not a fetch
 	var errOut strings.Builder
 	cmd.Stderr = &errOut

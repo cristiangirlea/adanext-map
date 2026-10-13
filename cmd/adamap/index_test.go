@@ -562,11 +562,78 @@ func TestIndexDoesNotLazyFetchFromThePromisorRemote(t *testing.T) {
 // An empty value switches core.fsmonitor off on every git version. "false" is read as a boolean
 // only by git 2.35 and later; an earlier git takes it as the name of a hook program to run.
 func TestGitSafelySwitchesFsmonitorOffWithAnEmptyValue(t *testing.T) {
-	args := gitSafely
+	args := gitSafely("/hooks")
 	if !slices.Contains(args, "core.fsmonitor=") {
 		t.Errorf("gitSafely = %q; want core.fsmonitor with an empty value", args)
 	}
 	if slices.Contains(args, "core.fsmonitor=false") {
 		t.Errorf("gitSafely = %q; core.fsmonitor=false is a program name to an older git", args)
+	}
+}
+
+// --no-optional-locks keeps status from rewriting the index, so a status never reaches the
+// post-index-change hook and says nothing about core.hooksPath. update-index --refresh takes a real
+// lock, so the hook runs unless gitOutput points core.hooksPath somewhere with no hooks in it.
+func TestGitOutputDoesNotRunTheRepositorysHooks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	repo := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "ran")
+	git(t, repo, "init", "-q")
+	writeFile(t, filepath.Join(repo, "a.txt"), "one\n")
+	git(t, repo, "add", "a.txt")
+	git(t, repo, "commit", "-q", "-m", "one")
+	hooks := filepath.Join(repo, ".git", "hooks") // absent when git has no templates
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := "#!/bin/sh\necho x > '" + filepath.ToSlash(marker) + "'\n"
+	if err := os.WriteFile(filepath.Join(hooks, "post-index-change"), []byte(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	touch := func(d time.Duration) {
+		t.Helper()
+		when := time.Now().Add(d)
+		if err := os.Chtimes(filepath.Join(repo, "a.txt"), when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	touch(time.Minute)
+	git(t, repo, "--no-optional-locks", "update-index", "--refresh")
+	if _, err := os.Stat(marker); err != nil {
+		t.Skipf("a plain git update-index does not run the hook here (%v), so there is nothing to guard against", err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+
+	touch(2 * time.Minute)
+	if _, err := gitOutput(repo, "update-index", "--refresh"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("gitOutput ran the hook the repository names")
+	}
+}
+
+// The empty directory core.hooksPath points at is made for each call and removed after it.
+func TestGitOutputLeavesNoHooksDirectoryBehind(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	repo := t.TempDir()
+	git(t, repo, "init", "-q")
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp) // os.TempDir reads TMPDIR on Unix, TMP and TEMP on Windows
+	t.Setenv("TMP", tmp)
+	t.Setenv("TEMP", tmp)
+
+	if _, err := gitOutput(repo, "rev-parse", "--git-dir"); err != nil {
+		t.Fatal(err)
+	}
+	if left, err := os.ReadDir(tmp); err != nil || len(left) != 0 {
+		t.Errorf("%s holds %v after the call (%v); want it empty", tmp, left, err)
 	}
 }
