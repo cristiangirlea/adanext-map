@@ -107,7 +107,8 @@ func Convert(x *scippb.Index) (*model.Index, Skipped, error) {
 	byPath := map[string]*document{}
 	for i, d := range x.GetDocuments() {
 		path := normalisePath(d.GetRelativePath())
-		if err := model.CheckPath(path); err != nil {
+		// A path that cleans to "." (such as `pkg/..`) is the project root, not a file: skip it too.
+		if err := model.CheckPath(path); err != nil || path == "." {
 			if path == "" {
 				return nil, Skipped{}, fmt.Errorf("document %d: %w", i, err)
 			}
