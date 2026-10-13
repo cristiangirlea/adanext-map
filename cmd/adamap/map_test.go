@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -161,5 +162,21 @@ func TestMapUsageErrors(t *testing.T) {
 	code, out, _ := runMapCmd("-h")
 	if code != 0 || !strings.HasPrefix(out, "usage: adamap map") || !strings.Contains(out, "-tokens") {
 		t.Errorf("-h: exit %d, stdout %q", code, out)
+	}
+}
+
+// failWriter fails every write.
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
+
+func TestMapFailsWhenStdoutCannotBeWritten(t *testing.T) {
+	repo := indexedRepo(t)
+	for _, args := range [][]string{{"--repo", repo}, {"--repo", repo, "--json"}} {
+		var errOut bytes.Buffer
+		code := run(append([]string{"map"}, args...), failWriter{}, &errOut)
+		if code != 1 || !strings.Contains(errOut.String(), "disk full") {
+			t.Errorf("%v: exit %d, stderr %q, want 1 naming the write error", args, code, errOut.String())
+		}
 	}
 }

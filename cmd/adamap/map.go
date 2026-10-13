@@ -109,7 +109,9 @@ func runMap(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "adamap map: nothing fits in %d tokens: raise --tokens\n", *budget)
 	}
 	if !*asJSON {
-		io.WriteString(stdout, text)
+		if _, err := io.WriteString(stdout, text); err != nil {
+			return fail(err)
+		}
 		return 0
 	}
 	out := mapJSON{Commit: c, Tokens: *budget, Estimate: rank.Tokens(text), Matched: r.Matched, Files: []fileJSON{}}
