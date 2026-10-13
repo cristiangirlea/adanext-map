@@ -160,6 +160,7 @@ func conditionStats(m *manifest.Manifest, c manifest.Condition, b manifest.Backe
 			if r.success {
 				s.Successes++
 			}
+			s.LimitRestarts += r.rec.LimitRestarts
 			if len(r.rec.Isolation.Violations) > 0 {
 				s.IsolationFailures++
 			}

@@ -1,6 +1,7 @@
 package reduce_test
 
 import (
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -370,5 +371,33 @@ func TestMarkdownSaysUndefinedIncompleteAndSmoke(t *testing.T) {
 		if !strings.Contains(md, want) {
 			t.Errorf("no %q in:\n%s", want, md)
 		}
+	}
+}
+
+// A run restarted after the plan's limit leaves no other trace than its record's limit_restarts:
+// the reducer totals them per condition and says so in RESULTS.md.
+func TestTheReportTotalsRestartsAfterALimit(t *testing.T) {
+	m := benchtest.Synthetic()
+	recs := benchtest.Records(m)
+	want := 0
+	for i := range recs {
+		if recs[i].Condition == "adamap" && recs[i].Task == "t00" {
+			recs[i].LimitRestarts = 2
+			want += 2
+		}
+	}
+	if want == 0 {
+		t.Fatal("no run to mark")
+	}
+	rep := reduceOK(t, m, recs)
+	if c := cond(t, rep, "adamap"); c.LimitRestarts != want {
+		t.Fatalf("adamap restarts %d, want %d", c.LimitRestarts, want)
+	}
+	if c := cond(t, rep, "none"); c.LimitRestarts != 0 {
+		t.Fatalf("none restarts %d", c.LimitRestarts)
+	}
+	md := rep.Markdown()
+	if !strings.Contains(md, "restarts after a limit") || !strings.Contains(md, fmt.Sprintf("| %d |", want)) {
+		t.Fatalf("no restarts in:\n%s", md)
 	}
 }

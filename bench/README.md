@@ -67,7 +67,10 @@ starts no further run.
 A run that meets the plan's usage limit is not a task failure. The execution stops at once, with
 no retry and no record for that run, and its workspace is removed as usual. Its `.started` marker
 is replaced by `<run id>.limited`, which says when and why. Run the same command again once the
-limit resets: resume starts that run afresh, and its new first attempt removes the note. A limit
+limit resets: resume starts that run afresh, and its new first attempt removes the note, after reading
+from it how many times the run met the limit: the record it finally writes carries that count as
+`limit_restarts`, and the report totals it per condition. A timed-out attempt is never read as a
+limit, whatever its CLI printed last. A limit
 in a second attempt also discards the failed first attempt: the run is started again as a whole.
 A limit is read from the CLI's own account only:
 - a result event with `is_error` whose text names a usage, session, weekly or rate limit, an
@@ -75,7 +78,8 @@ A limit is read from the CLI's own account only:
 - a result, error or not, whose whole answer is Claude Code's usage-limit message
   (`Claude AI usage limit reached|<reset>`, `You've hit your session limit ...`);
 - for an attempt with no result or an error result, an `api_retry` event or an assistant message
-  whose `error` is `rate_limit`, `overloaded` or `billing_error`, unless a later turn got through;
+  whose `error` is `rate_limit`, `overloaded` or `billing_error`, unless a later turn got through,
+  and for an error result only when its text is empty (text naming another error is that error);
 - the stderr of a failed attempt naming the same.
 
 Beyond that whole-answer message, a successful answer is never read for these words.
@@ -194,7 +198,7 @@ missing, undeclared, of another type, on another tree, with a hash that does not
 or whose passed flag disagrees with its output; incomplete counters; wrong cache arithmetic.
 
 The report holds: identities and fixed settings; coverage per cell (a cell is complete when every
-repeat is recorded, supported and has reported usage); success and isolation failures; p50/p95
+repeat is recorded, supported and has reported usage); success, isolation failures and restarts after a limit; p50/p95
 latency; median total tokens with the reported, estimated and unavailable counts; tokens and known
 cost per success, failures included in the numerator (undefined with zero successes, incomplete
 when any run lacks the amount); paired differences against `none` over complete comparable cells

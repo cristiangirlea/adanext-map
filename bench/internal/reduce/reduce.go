@@ -50,7 +50,9 @@ type Condition struct {
 	Successes                int
 	Attempts, FailedAttempts int
 	IsolationFailures        int
-	P50MS, P95MS             float64
+	// LimitRestarts totals the records' restarts after the plan's usage limit.
+	LimitRestarts int
+	P50MS, P95MS  float64
 	// MedianTokens is over measured runs only; Measured and Unmeasured say how many runs that is.
 	MedianTokens         float64
 	Measured, Unmeasured int

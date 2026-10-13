@@ -1073,3 +1073,40 @@ func TestACancelledAttemptStopsBeforeTheGradingSteps(t *testing.T) {
 		t.Fatalf("%d records, markers %v", len(recs), markers)
 	}
 }
+
+// A run restarted after the plan's limit keeps the count in its record: the note it leaves says how
+// many times it was hit, the restart reads it before dropping it, and the record carries it.
+func TestARestartAfterALimitIsCountedInTheRecord(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	where := filepath.Join(t.TempDir(), "where.txt")
+	for i := 0; i < 2; i++ {
+		o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-limit", "BENCH_TEST_WHERE=" + where}
+		if err := runner.Execute(context.Background(), o); !errors.Is(err, runner.ErrPlanLimit) {
+			t.Fatalf("limit %d: err %v", i+1, err)
+		}
+	}
+	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+	if len(limited) != 1 {
+		t.Fatalf("limited %v", limited)
+	}
+	id := strings.TrimSuffix(filepath.Base(limited[0]), ".limited")
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent"}
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	if len(recs) != 8 {
+		t.Fatalf("%d records", len(recs))
+	}
+	for _, r := range recs {
+		want := 0
+		if r.RunID == id {
+			want = 2
+		}
+		if r.LimitRestarts != want {
+			t.Errorf("%s: limit_restarts %d, want %d", r.RunID, r.LimitRestarts, want)
+		}
+	}
+}
