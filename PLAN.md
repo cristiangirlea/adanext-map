@@ -63,8 +63,8 @@ repository); a fail-closed push guard (#8).
   symbols, namespaces and parameters are not shown and add no edges. `internal/rank` is the map's
   own package and does not use `internal/query`.
 - 2026-10-13 (slice 5): the MCP Go SDK is `github.com/modelcontextprotocol/go-sdk` v1.8.0; it brings
-  `google/jsonschema-go`, `segmentio/encoding`, `yosida95/uritemplate`, `golang.org/x/oauth2`,
-  `x/time` and `x/sync`. `internal/mcpserver` takes the CLI's path rule and git as two functions in
+  `google/jsonschema-go`, `segmentio/encoding` and `segmentio/asm`, `yosida95/uritemplate`,
+  `golang.org/x/oauth2`, `x/time`, `x/sync` and `x/sys`. `internal/mcpserver` takes the CLI's path rule and git as two functions in
   its `Config`, so it neither copies nor moves the helpers in `cmd/adamap`. The tool for `find` is
   named `find_symbol`, as the slice asked. A tool answers with the CLI's text, its stderr remarks as
   a last line in parentheses, and the CLI's JSON as structured content; the map's JSON type is
@@ -72,9 +72,10 @@ repository); a fail-closed push guard (#8).
   and impact are not capped, as on the command line. The store is loaded at start and loaded again
   when `.adamap/latest`'s modification time or size changes (checked at each call); `--commit` pins
   it. `status` answers without a store, since saying there is none is its job; the other tools give
-  a tool error. Every line of a text result or error passes through `query.Safe` after the
+  a tool error. `status` does not call a store indexed from a dirty tree at HEAD stale while the
+  tree is still dirty, since indexing again could not clear that; it says it cannot tell. Every line of a text result or error passes through `query.Safe` after the
   per-field escaping. All tools are marked read-only, which hrn approves by itself. `adamap
   install --claude` writes `"type": "stdio"`, `command` and `args` into the `adamap` entry of
-  `.mcp.json` and keeps the entry's other fields and every other key in order; it refuses a link
-  and a file it cannot parse. `--codex` only prints: `~/.codex/config.toml` is outside the
+  `.mcp.json` and keeps the entry's other fields and every other key in order; of a key written
+  twice it reads the last, as JSON readers do. It refuses a link and a file it cannot parse. `--codex` only prints: `~/.codex/config.toml` is outside the
   repository.
