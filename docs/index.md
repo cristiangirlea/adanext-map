@@ -88,6 +88,7 @@ merged into one.
 
 ```text
 <repo>/.adamap/
+  .gitignore                   `*`, so git ignores the stores; written if missing, never replaced
   latest                       the commit written last, one line
   <commit>/
     header.json                what the store holds, plain JSON
