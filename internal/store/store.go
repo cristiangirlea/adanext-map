@@ -167,11 +167,17 @@ func publishNew(tmp, path string, content []byte) error {
 	if openErr != nil {
 		return fmt.Errorf("%w (and %v)", err, openErr)
 	}
-	if _, err := f.Write(content); err != nil {
-		f.Close()
-		return err
+	// The exclusive create made this file, so on a failed write it is ours to remove: left behind,
+	// a short file would pass for the user's own next time.
+	_, werr := f.Write(content)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
 	}
-	return f.Close()
+	if werr != nil {
+		os.Remove(path)
+		return werr
+	}
+	return nil
 }
 
 func writeBytes(b []byte) func(io.Writer) error {
