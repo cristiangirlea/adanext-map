@@ -147,13 +147,13 @@ func CheckPath(p string) error {
 }
 
 // isDeviceName reports whether a path segment is a name Windows reserves for a device, whatever its
-// case or extension: CON, PRN, AUX, NUL, COM0-COM9 and LPT0-LPT9 (also with the superscript digits
+// case or extension: CON, PRN, AUX, NUL, CONIN$, CONOUT$, COM0-COM9 and LPT0-LPT9 (also with the superscript digits
 // ¹ ² ³), as `nul`, `NUL.txt` and `nul .txt`. Trailing dots and spaces do not hide one either.
 func isDeviceName(seg string) bool {
 	base, _, _ := strings.Cut(seg, ".")
 	base = strings.ToUpper(strings.TrimRight(base, ". "))
 	switch base {
-	case "CON", "PRN", "AUX", "NUL":
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
 		return true
 	}
 	for _, prefix := range []string{"COM", "LPT"} {
