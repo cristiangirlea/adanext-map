@@ -139,8 +139,10 @@ func writeMCPJSON(path string, e serverEntry) error {
 }
 
 // readMCPJSON reads the .mcp.json at path and returns it with its permissions. It opens the file
-// once and checks what it opened, so a link swapped in after the caller's Lstat is refused, and it
-// reads no more than maxMCPJSONBytes whatever the file grows to. The file is closed on return, so
+// once and checks what it opened is a regular file (os.Open follows a link swapped in after the
+// caller's Lstat, so only a link to something other than a regular file is refused here; the write
+// replaces the path itself, never a link's target), and it reads no more than maxMCPJSONBytes
+// whatever the file grows to. The file is closed on return, so
 // the rename that replaces it is not blocked.
 func readMCPJSON(path string) ([]byte, fs.FileMode, error) {
 	f, err := os.Open(path)
