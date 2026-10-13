@@ -935,3 +935,30 @@ func TestStatusWithNoStoreAndGitFailingStillAnswers(t *testing.T) {
 		t.Errorf("the refresh command should be offered: %v", s)
 	}
 }
+
+func TestStatusOffersTheRefreshOnceWhenTheStoreAndTheTreeAreDirtyAndANewerStoreFailed(t *testing.T) {
+	repo := t.TempDir()
+	idx, _, err := scip.Convert(sciptest.CallGraph())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Write(repo, store.Header{Commit: commitA, Dirty: true}, idx); err != nil {
+		t.Fatal(err)
+	}
+	cs := connect(t, Config{Repo: repo, Head: func() (string, bool, error) { return commitA, true, nil }})
+	writeStore(t, repo, commitB, sciptest.CallGraph())
+	corruptStore(t, repo, commitB)
+	touchLatest(t, repo, time.Minute)
+	a := ok(t, cs, "status", nil)
+	if n := strings.Count(a.text, "refresh: "); n != 1 || a.structured["newer_store_error"] == nil {
+		t.Errorf("want the failure reported and one refresh line, got %d: %q", n, a.text)
+	}
+}
+
+// corruptStore breaks commit's store.json.gz so that the store no longer loads.
+func corruptStore(t *testing.T, repo, commit string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(store.Dir(repo, commit), "store.json.gz"), []byte("not gzip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

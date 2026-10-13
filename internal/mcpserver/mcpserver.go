@@ -547,7 +547,7 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 			b.WriteString("the store is current\n")
 		}
 		out.Stale = !out.AtHead || out.Dirty != out.StoreDirty
-		if maybe {
+		if maybe && out.NewerStoreError == "" { // with one, the stale branch below gives the command
 			fmt.Fprintf(&b, "refresh: %s\n", out.Refresh)
 		}
 	}
