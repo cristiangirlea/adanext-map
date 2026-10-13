@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,8 +17,8 @@ import (
 	"github.com/cristiangirlea/adanext-map/internal/store"
 )
 
-// indexer is an external program that writes index.scip in its working directory, chosen by the
-// project file at the repository root.
+// indexer is an external program chosen by the project file at the repository root. It runs in the
+// repository and writes its index where --output says, which is never inside the repository.
 type indexer struct {
 	marker  string
 	program string
@@ -175,8 +174,9 @@ func gitOutput(repo string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// runAndRead runs the indexer repo needs, with repo as its working directory, then reads the
-// index.scip it wrote there and deletes it. An index.scip already there is not adamap's to replace.
+// runAndRead runs the indexer repo needs, with repo as its working directory, and reads the index
+// it wrote into a temporary directory of its own, removed on return. Nothing is written in repo, so
+// an index.scip already there is left alone and a run stopped by a signal leaves nothing behind in it.
 func runAndRead(repo string, maxBytes int64, stderr io.Writer) (*model.Index, scip.Skipped, error) {
 	var ix *indexer
 	for i := range indexers {
@@ -194,17 +194,17 @@ func runAndRead(repo string, maxBytes int64, stderr io.Writer) (*model.Index, sc
 		return nil, scip.Skipped{}, fmt.Errorf("%s needs %s (found %s), which is not on PATH: install it with `%s`",
 			repo, ix.program, ix.marker, ix.install)
 	}
-	out := filepath.Join(repo, "index.scip")
-	if _, err := os.Lstat(out); !errors.Is(err, fs.ErrNotExist) {
-		return nil, scip.Skipped{}, fmt.Errorf("%s already exists: pass it with --scip, or move it so %s can write its own", out, ix.program)
+	tmp, err := os.MkdirTemp("", "adamap-index-*")
+	if err != nil {
+		return nil, scip.Skipped{}, fmt.Errorf("cannot make a directory for %s to write its index in: %w", ix.program, err)
 	}
-	defer os.Remove(out)
-	if err := runIndexer(repo, program, ix.args, stderr); err != nil {
-		msg := fmt.Sprintf("%s failed: %v", ix.program, err)
+	defer os.RemoveAll(tmp)
+	out := filepath.Join(tmp, "index.scip")
+	if err := runIndexer(repo, program, append(slices.Clone(ix.args), "--output", out), stderr); err != nil {
 		if ix.program == "rust-analyzer" {
-			msg += "; if rust-analyzer is only rustup's shim, install it with: rustup component add rust-analyzer"
+			return nil, scip.Skipped{}, fmt.Errorf("%s failed: %w; if rust-analyzer is only rustup's shim, install it with: rustup component add rust-analyzer", ix.program, err)
 		}
-		return nil, scip.Skipped{}, errors.New(msg)
+		return nil, scip.Skipped{}, fmt.Errorf("%s failed: %w", ix.program, err)
 	}
 	return scip.ReadFile(out, maxBytes)
 }

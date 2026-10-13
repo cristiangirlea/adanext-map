@@ -626,7 +626,7 @@ func TestLoadRefusesADocumentPathWindowsCannotHold(t *testing.T) {
 // A store is untrusted too (a cloned repository can commit one): text from its header must reach
 // the terminal quoted, never raw.
 func TestLoadErrorQuotesTheAdamapVersionOfANewerStore(t *testing.T) {
-	const hostile = "9\x1b[31m‮.0"
+	const hostile = "9\x1b[31m\u202e.0"
 	repo := t.TempDir()
 	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
 		t.Fatal(err)
@@ -636,7 +636,7 @@ func TestLoadErrorQuotesTheAdamapVersionOfANewerStore(t *testing.T) {
 	if err == nil {
 		t.Fatal("no error")
 	}
-	if strings.ContainsAny(err.Error(), "\x1b‮") {
+	if strings.ContainsAny(err.Error(), "\x1b\u202e") {
 		t.Fatalf("err holds a raw escape or override: %q", err.Error())
 	}
 	if !strings.Contains(err.Error(), strconv.Quote(hostile)) {
