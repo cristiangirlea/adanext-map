@@ -16,7 +16,7 @@ func hostileRepo(t *testing.T) string {
 	repo := t.TempDir()
 	def := model.Range{StartLine: 3, StartCol: 5, EndLine: 3, EndCol: 9}
 	idx := &model.Index{
-		Documents: []model.Document{{Path: "d\u200b/f.go", Occurrences: []model.Occurrence{
+		Documents: []model.Document{{Path: "d\u202e/f.go", Occurrences: []model.Occurrence{
 			{Range: def, Symbol: "s m p v esc().", Roles: model.RoleDefinition},
 			{Range: model.Range{StartLine: 8, EndLine: 8, EndCol: 4}, Symbol: "s m p v esc().", Roles: model.RoleReference},
 			{Range: model.Range{StartLine: 9, EndLine: 9, EndCol: 4}, Symbol: "s m p v bidi#", Roles: model.RoleDefinition},
@@ -26,7 +26,7 @@ func hostileRepo(t *testing.T) string {
 			{ID: "s m p v bidi#", DisplayName: "dup\u202e"},
 			{ID: "s m p v bidi2#", DisplayName: "dup\u202e"},
 			{ID: "s m p v esc().", DisplayName: "ev\x1b[2Jil", Kind: "Fun\x1bction",
-				Definition: &model.Location{Path: "d\u200b/f.go", Range: def}},
+				Definition: &model.Location{Path: "d\u202e/f.go", Range: def}},
 		},
 	}
 	if _, err := store.Write(repo, store.Header{Commit: testCommit}, idx); err != nil {
@@ -48,7 +48,7 @@ func TestTextOutputQuotesStoreStringsThatCouldDriveATerminal(t *testing.T) {
 		{"find", "ev"},
 		{"refs", "s m p v esc()."},
 		{"callers", "s m p v esc()."},
-		{"outline", "d\u200b/f.go"},
+		{"outline", "d\u202e/f.go"},
 		{"impact", "s m p v esc()."},
 	} {
 		code, out, errOut := runCmd(append(args, "--repo", repo)...)
@@ -58,11 +58,11 @@ func TestTextOutputQuotesStoreStringsThatCouldDriveATerminal(t *testing.T) {
 		noRaw(t, args[0]+" stdout", out)
 		noRaw(t, args[0]+" stderr", errOut)
 	}
-	if got := mustRun(t, "find", "ev", "--repo", repo); got != `"d\u200b/f.go":4 "Fun\x1bction" "ev\x1b[2Jil"`+"\n" {
+	if got := mustRun(t, "find", "ev", "--repo", repo); got != `"d\u202e/f.go":4 "Fun\x1bction" "ev\x1b[2Jil"`+"\n" {
 		t.Errorf("find: %q", got)
 	}
-	if got := mustRun(t, "refs", "s m p v esc().", "--repo", repo); got != `"d\u200b/f.go":4 definition "ev\x1b[2Jil"`+"\n"+
-		`"d\u200b/f.go":9 reference "ev\x1b[2Jil"`+"\n" {
+	if got := mustRun(t, "refs", "s m p v esc().", "--repo", repo); got != `"d\u202e/f.go":4 definition "ev\x1b[2Jil"`+"\n"+
+		`"d\u202e/f.go":9 reference "ev\x1b[2Jil"`+"\n" {
 		t.Errorf("refs: %q", got)
 	}
 }
@@ -77,11 +77,16 @@ func TestAmbiguousNameErrorQuotesTheCandidates(t *testing.T) {
 
 func TestJSONOutputKeepsTheRawValues(t *testing.T) {
 	out := mustRun(t, "find", "ev", "--repo", hostileRepo(t), "--json")
-	// encoding/json escapes ESC itself, and decoding gives the stored name back.
-	noRaw(t, "JSON", out)
+	// encoding/json escapes ESC itself but leaves U+202E as it is; decoding gives the stored values back.
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Errorf("JSON holds a raw control character: %q", out)
+	}
 	m := decodeJSON(t, out)
-	syms := m["symbols"].([]any)
-	if name := syms[0].(map[string]any)["name"]; name != "ev\x1b[2Jil" {
-		t.Errorf("name = %q, want the raw stored value", name)
+	sym := m["symbols"].([]any)[0].(map[string]any)
+	if sym["name"] != "ev\x1b[2Jil" {
+		t.Errorf("name = %q, want the raw stored value", sym["name"])
+	}
+	if sym["path"] != "d‮/f.go" {
+		t.Errorf("path = %q, want the raw stored value", sym["path"])
 	}
 }
