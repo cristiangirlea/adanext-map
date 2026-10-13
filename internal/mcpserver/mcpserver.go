@@ -472,6 +472,13 @@ func (s *server) impact(_ context.Context, _ *mcp.CallToolRequest, in impactIn) 
 	if len(res.Impacted) == 0 {
 		note(&b, "nothing depends on %s within depth %d", query.Safe(target), res.Depth)
 	}
+	switch res.Unattributed {
+	case 0:
+	case 1:
+		note(&b, "1 reference lies outside every definition, so it has no caller")
+	default:
+		note(&b, "%d references lie outside every definition, so they have no caller", res.Unattributed)
+	}
 	return text(b.String()), impactOut{meta(snap), res}, nil
 }
 

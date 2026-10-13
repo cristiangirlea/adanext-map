@@ -207,7 +207,10 @@ cycle (a recursive function, two functions that call each other) ends the walk i
 
 JSON: `commit`, `target` (the symbol string or the path), `kind` (`symbol` or `file`), `depth` (the limit
 that was used), `impacted`: a list of `{"symbol": symbol, "depth": n, "via": id}` where `via` is the symbol
-it calls on the way: the target itself at depth 1, otherwise a symbol at depth `n-1`.
+it calls on the way: the target itself at depth 1, otherwise a symbol at depth `n-1`; and `unattributed`,
+the number of references the walk met, to the target or to a symbol whose callers it looked up, that lie
+in no definition, so it could not follow them (left out when 0; as for `callers`, the text mode says so on
+stderr).
 
 The list is not capped. A function the whole code base calls reaches much of it within a few levels, so
 lower `--depth` when only the near neighbours matter.

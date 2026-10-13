@@ -204,7 +204,8 @@ func TestToolsAnswerFromTheStore(t *testing.T) {
 			"calls/a.go:8 Function B refs=10\ncalls/b.go:8 Function Rec refs=11\ncalls/b.go:19 Method A refs=20\n"},
 		{"impact", map[string]any{"target": "C"},
 			"calls/a.go:8 Function B depth=1\ncalls/b.go:8 Function Rec depth=1\ncalls/b.go:19 Method A depth=1\n" +
-				"calls/a.go:2 Function A depth=2\ncalls/b.go:17 Struct Thing depth=2\ncalls/a.go:14 Function D depth=3\n"},
+				"calls/a.go:2 Function A depth=2\ncalls/b.go:17 Struct Thing depth=2\ncalls/a.go:14 Function D depth=3\n" +
+				"(1 reference lies outside every definition, so it has no caller)\n"},
 		{"impact", map[string]any{"target": "C", "depth": 1},
 			"calls/a.go:8 Function B depth=1\ncalls/b.go:8 Function Rec depth=1\ncalls/b.go:19 Method A depth=1\n"},
 		{"refs", map[string]any{"symbol": sciptest.ThingA},
@@ -1025,4 +1026,14 @@ func TestStatusErrorFieldsAreEscaped(t *testing.T) {
 			t.Errorf("newer_store_error = %q, want text with no raw ESC or U+202E", v)
 		}
 	})
+}
+
+func TestImpactStructuredContentCountsTheReferencesOutsideEveryDefinition(t *testing.T) {
+	cs := connect(t, Config{Repo: callGraphRepo(t)})
+	if a := ok(t, cs, "impact", map[string]any{"target": "C"}); a.structured["unattributed"] != 1.0 {
+		t.Errorf("unattributed = %v in %v, want 1", a.structured["unattributed"], a.structured)
+	}
+	if a := ok(t, cs, "impact", map[string]any{"target": "C", "depth": 1}); a.structured["unattributed"] != nil {
+		t.Errorf("unattributed = %v, want it left out when 0", a.structured["unattributed"])
+	}
 }

@@ -23,11 +23,14 @@ type Impacted struct {
 
 // ImpactResult is what depends on a symbol or a file. Kind is "symbol" or "file", Target the symbol
 // string or the path, and Depth the limit that was applied. Impacted is by depth, then by place.
+// Unattributed counts the references the walk met, to the target or to a symbol whose callers it
+// looked up, that lie in no definition (as in CallersResult), so it could not follow them.
 type ImpactResult struct {
-	Target   string     `json:"target"`
-	Kind     string     `json:"kind"`
-	Depth    int        `json:"depth"`
-	Impacted []Impacted `json:"impacted"`
+	Target       string     `json:"target"`
+	Kind         string     `json:"kind"`
+	Depth        int        `json:"depth"`
+	Impacted     []Impacted `json:"impacted"`
+	Unattributed int        `json:"unattributed,omitempty"`
 }
 
 // Impact lists what depends on the symbol id by callers, transitively and breadth-first, down to
@@ -87,7 +90,7 @@ func (x *Index) impact(target, kind string, seeds []string, depth int) ImpactRes
 	for d := 1; d <= depth && len(frontier) > 0; d++ {
 		var level []Impacted
 		for _, id := range frontier {
-			x.holders(id, func(r occRef, sc *scope) {
+			res.Unattributed += x.holders(id, func(r occRef, sc *scope) {
 				caller := x.src.Documents[r.doc].Occurrences[sc.occ].Symbol
 				if !visited[caller] {
 					visited[caller] = true

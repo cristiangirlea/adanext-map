@@ -59,5 +59,12 @@ func runImpact(args []string, stdout, stderr io.Writer) int {
 	if len(res.Impacted) == 0 {
 		c.note("nothing depends on %s within depth %d", query.Safe(target), res.Depth)
 	}
+	switch res.Unattributed {
+	case 0:
+	case 1:
+		c.note("1 reference lies outside every definition, so it has no caller")
+	default:
+		c.note("%d references lie outside every definition, so they have no caller", res.Unattributed)
+	}
 	return 0
 }
