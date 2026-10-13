@@ -14,7 +14,8 @@ updates this file in that pull request. Tracking issue: #7.
   Done: PR #?, 2026-10-13.
 - [x] 4. map: a ranked repo map within a token budget (#4)
   Done: PR #?, 2026-10-13.
-- [ ] 5. mcp: serve the queries to agents (#5)
+- [x] 5. mcp: serve the queries to agents (#5)
+  Done: PR #?, 2026-10-13.
 - [ ] 6. bench: measure against no tool, LSP, Serena and CodeGraph (#6)
 
 Later, each as its own issue when its turn comes: scip-typescript; re-indexing on commit (a git
@@ -61,3 +62,19 @@ repository); a fail-closed push guard (#8).
   large file take the whole budget. Filling stops at the first symbol that does not fit. Local
   symbols, namespaces and parameters are not shown and add no edges. `internal/rank` is the map's
   own package and does not use `internal/query`.
+- 2026-10-13 (slice 5): the MCP Go SDK is `github.com/modelcontextprotocol/go-sdk` v1.8.0; it brings
+  `google/jsonschema-go`, `segmentio/encoding`, `yosida95/uritemplate`, `golang.org/x/oauth2`,
+  `x/time` and `x/sync`. `internal/mcpserver` takes the CLI's path rule and git as two functions in
+  its `Config`, so it neither copies nor moves the helpers in `cmd/adamap`. The tool for `find` is
+  named `find_symbol`, as the slice asked. A tool answers with the CLI's text, its stderr remarks as
+  a last line in parentheses, and the CLI's JSON as structured content; the map's JSON type is
+  declared again in `mcpserver`, since `cmd/adamap`'s cannot be imported. The lists of refs, callers
+  and impact are not capped, as on the command line. The store is loaded at start and loaded again
+  when `.adamap/latest`'s modification time or size changes (checked at each call); `--commit` pins
+  it. `status` answers without a store, since saying there is none is its job; the other tools give
+  a tool error. Every line of a text result or error passes through `query.Safe` after the
+  per-field escaping. All tools are marked read-only, which hrn approves by itself. `adamap
+  install --claude` writes `"type": "stdio"`, `command` and `args` into the `adamap` entry of
+  `.mcp.json` and keeps the entry's other fields and every other key in order; it refuses a link
+  and a file it cannot parse. `--codex` only prints: `~/.codex/config.toml` is outside the
+  repository.
