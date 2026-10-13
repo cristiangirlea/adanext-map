@@ -878,3 +878,20 @@ func TestStatusQuotesARepositoryPathThatHoldsWhatAShellActsOn(t *testing.T) {
 		t.Errorf("the shell reads the path back as %q, want %q", got, abs)
 	}
 }
+
+func TestImpactOfAnAbsolutePathOutsideTheRepositoryIsAToolError(t *testing.T) {
+	repo := callGraphRepo(t)
+	outside := filepath.Join(t.TempDir(), "elsewhere.go") // another directory, so outside repo
+	// The path function of `adamap mcp` refuses a path outside the repository.
+	cs := connect(t, Config{Repo: repo, Path: func(arg string) (string, error) {
+		if filepath.IsAbs(arg) {
+			return "", fmt.Errorf("%s is outside the repository %s", arg, repo)
+		}
+		return arg, nil
+	}})
+	wantToolError(t, cs, "impact", map[string]any{"target": outside}, "elsewhere.go")
+	// With the default path function the path is no document and no symbol either.
+	cs = connect(t, Config{Repo: repo})
+	wantToolError(t, cs, "impact", map[string]any{"target": outside}, "elsewhere.go")
+	wantToolError(t, cs, "outline", map[string]any{"file": outside}, "elsewhere.go")
+}
