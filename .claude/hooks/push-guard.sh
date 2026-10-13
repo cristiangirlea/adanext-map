@@ -4,14 +4,15 @@
 # or --admin, and a mutating gh api call on releases or git refs. Exit 2 blocks the call and shows
 # the one-line reason; everything else exits 0.
 # settings.json's deny rules match spellings, so a new spelling gets through. This reads what the
-# command does, and refuses when it cannot tell. Only git, sed and tr: it runs under Git Bash on
-# Windows and sh on Linux, before every call, so the common path starts no other process.
+# command does, and refuses when it cannot tell. It runs under Git Bash on Windows and sh on Linux,
+# before every call, so a command without a trigger word exits before any other process starts.
+# Past that: sed for JSON escapes, tr for capitals, git to resolve a push or an alias, and a
+# subshell for the hook's body and for each shell, eval, alias and heredoc whose text it checks.
 LC_ALL=C
 export LC_ALL
 set -f
 nl='
 '
-soh=$(printf '\001')
 
 # One line: a pretty-printed input's newlines are only between JSON tokens.
 input=
@@ -578,12 +579,6 @@ main() {
   cmd=$val
   use_lang sh
   json_string tool_name && [ "$val" = PowerShell ] && use_lang ps
-  # Nothing guarded can run without one of these words.
-  case $cmd in
-    *[Gg][Ii][Tt]* | *[Gg][Hh]* | *[Pp][Uu][Ss][Hh]* | *[Tt][Aa][Gg]* | *[Rr][Ee][Ll][Ee][Aa][Ss][Ee]* | \
-      *[Mm][Ee][Rr][Gg][Ee]* | *[Pp][Ww][Ss][Hh]* | *[Pp][Oo][Ww][Ee][Rr][Ss][Hh][Ee][Ll][Ll]* | *\\u*) ;;
-    *) exit 0 ;;
-  esac
   cwd=
   json_string cwd && cwd=$val
   case $cwd$cmd in
@@ -600,6 +595,16 @@ main() {
   exit 0
 }
 
+# Nothing guarded can run without one of these words: the common path ends here, before any other
+# process starts.
+if json_string command; then
+  case $val in
+    *[Gg][Ii][Tt]* | *[Gg][Hh]* | *[Pp][Uu][Ss][Hh]* | *[Tt][Aa][Gg]* | *[Rr][Ee][Ll][Ee][Aa][Ss][Ee]* | \
+      *[Mm][Ee][Rr][Gg][Ee]* | *[Pp][Ww][Ss][Hh]* | *[Pp][Oo][Ww][Ee][Rr][Ss][Hh][Ee][Ll][Ll]* | *\\u*) ;;
+    *) exit 0 ;;
+  esac
+fi
+soh=$(printf '\001')
 # A failure of the hook itself fails closed for the commands it guards, open for the rest.
 (main)
 status=$?
