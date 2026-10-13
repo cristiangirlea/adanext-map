@@ -10,7 +10,8 @@ updates this file in that pull request. Tracking issue: #7.
   Done: PR #9, 2026-10-13.
 - [x] 2. scip: read an index and store it per commit (#2)
   Done: PR #23, 2026-10-13.
-- [ ] 3. query: outline, find, refs, callers and impact (#3)
+- [x] 3. query: outline, find, refs, callers and impact (#3)
+  Done: PR #31, 2026-10-13.
 - [ ] 4. map: a ranked repo map within a token budget (#4)
 - [ ] 5. mcp: serve the queries to agents (#5)
 - [ ] 6. bench: measure against no tool, LSP, Serena and CodeGraph (#6)
@@ -51,3 +52,12 @@ repository); a fail-closed push guard (#8).
   and in a kept document a malformed range or a symbol without a symbol, stay fatal; a path that
   cleans to the project root (`pkg/..`) is skipped too. `store.Load` still refuses such a
   path, since a store adamap wrote never holds one.
+- 2026-10-13 (slice 3): a symbol is addressed by its SCIP symbol string, or by a display name that fits
+  exactly one symbol (equal, else equal ignoring case; a prefix or fragment is `find`'s job), and an
+  ambiguous name is refused with the candidates listed. Local symbols (`local N`) cannot be addressed,
+  since the same ID is another symbol in each document, so no query lists them. A symbol only named by
+  occurrences gets its name from its symbol string. `callers` places a reference in the innermost definition
+  whose enclosing range (on the definition occurrence, not on the reference) contains it; without one, the
+  span to the next global definition, clipped to the scope around it (docs/queries.md). `impact` lists each
+  symbol once at its shallowest depth, never the target, default depth 3, and does not cap the list.
+  Answers are one JSON object per line with `commit` first; lines are one-based; the standard library only.

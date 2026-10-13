@@ -1,7 +1,9 @@
 # adamap — a code map for AI agents
 
 **Status: being built; nothing to install yet.** [PLAN.md](PLAN.md) lists the slices in the order
-they land, and the only commands so far are `adamap version`, `adamap help` and `adamap index`.
+they land. The commands so far are `adamap version`, `adamap help`, `adamap index` and the five
+queries `adamap outline`, `find`, `refs`, `callers` and `impact` ([docs/queries.md](docs/queries.md));
+`map` and `mcp` are still to come.
 
 What adamap is for: coding agents need exact code navigation, and today that means keeping a
 language server running per language, or parsing the code approximately. adamap will instead read
@@ -11,7 +13,7 @@ as a CLI and as an MCP server:
 
 - `adamap map --tokens 2000` — the files and symbols that matter most, small enough to open a task with
 - `adamap outline <file>` — what a file defines
-- `adamap find <name>`, `adamap refs <symbol>`, `adamap callers <symbol>`, `adamap impact <symbol>`
+- `adamap find <name>`, `adamap refs <symbol>`, `adamap callers <symbol>`, `adamap impact <symbol|file>`
 
 One Go binary. No C compiler, no language server process, no model calls, no telemetry.
 
