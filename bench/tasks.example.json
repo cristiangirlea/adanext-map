@@ -1,0 +1,769 @@
+{
+  "format": 1,
+  "tasks": [
+    {
+      "id": "am-rustup-hint",
+      "status": "candidate",
+      "kind": "fix",
+      "repository": {
+        "name": "cristiangirlea/adanext-map",
+        "url": "https://github.com/cristiangirlea/adanext-map.git",
+        "visibility": "public"
+      },
+      "revision": "59d9fe5f4fd1dd311d8d89ee0cba0285d59f4744",
+      "prompt": "When `adamap index` runs rust-analyzer and rust-analyzer fails because its rustup component is not installed, the error says nothing about how to fix that. Make the error suggest installing the component. Keep every existing test passing.",
+      "requires": [
+        "go 1.26.4",
+        "git",
+        "no network for the worker"
+      ],
+      "checks": [
+        {
+          "id": "fix-tests",
+          "type": "fix-tests",
+          "command": [
+            "go",
+            "test",
+            "./cmd/adamap/"
+          ],
+          "needs": [
+            "go",
+            "fix_revision"
+          ]
+        }
+      ],
+      "provenance": {
+        "source": "pr",
+        "ref": "cristiangirlea/adanext-map#51",
+        "title": "index: suggest the rust-analyzer component when it fails",
+        "fix_revision": "30df62b63120042d2362670f8867edb076dd4e94",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "hidden_revisions": [
+          "30df62b63120042d2362670f8867edb076dd4e94"
+        ],
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs."
+      }
+    },
+    {
+      "id": "am-device-names",
+      "status": "candidate",
+      "kind": "fix",
+      "repository": {
+        "name": "cristiangirlea/adanext-map",
+        "url": "https://github.com/cristiangirlea/adanext-map.git",
+        "visibility": "public"
+      },
+      "revision": "fc10ba932912a69897696082fa3d233b340f000c",
+      "prompt": "adamap accepts document paths from an index that name Windows devices (CON, NUL, COM1 and the like), hold control characters, or contain a colon. Refuse such paths. Keep every existing test passing.",
+      "requires": [
+        "go 1.26.4",
+        "git",
+        "no network for the worker"
+      ],
+      "checks": [
+        {
+          "id": "fix-tests",
+          "type": "fix-tests",
+          "command": [
+            "go",
+            "test",
+            "./..."
+          ],
+          "needs": [
+            "go",
+            "fix_revision"
+          ]
+        }
+      ],
+      "provenance": {
+        "source": "pr",
+        "ref": "cristiangirlea/adanext-map#40",
+        "title": "model: refuse device names, control characters and colons in paths",
+        "fix_revision": "c637659ce7a9021ffdbf29e46459eb81c3d7830f",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "hidden_revisions": [
+          "c637659ce7a9021ffdbf29e46459eb81c3d7830f"
+        ],
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs."
+      }
+    },
+    {
+      "id": "am-git-config",
+      "status": "candidate",
+      "kind": "fix",
+      "repository": {
+        "name": "cristiangirlea/adanext-map",
+        "url": "https://github.com/cristiangirlea/adanext-map.git",
+        "visibility": "public"
+      },
+      "revision": "51bc7659b462ae25f58ec72cf6aa65a9b951e6d2",
+      "prompt": "`adamap index` runs git inside the user's repository, and git then runs programs that the repository's own configuration names (core.fsmonitor, its hooks). Make adamap's git commands run none of them. Keep every existing test passing.",
+      "requires": [
+        "go 1.26.4",
+        "git",
+        "no network for the worker"
+      ],
+      "checks": [
+        {
+          "id": "fix-tests",
+          "type": "fix-tests",
+          "command": [
+            "go",
+            "test",
+            "./cmd/adamap/"
+          ],
+          "needs": [
+            "go",
+            "fix_revision"
+          ]
+        }
+      ],
+      "provenance": {
+        "source": "pr",
+        "ref": "cristiangirlea/adanext-map#39",
+        "title": "index: run git without the repository's own programs",
+        "fix_revision": "fc10ba932912a69897696082fa3d233b340f000c",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "hidden_revisions": [
+          "fc10ba932912a69897696082fa3d233b340f000c"
+        ],
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs."
+      }
+    },
+    {
+      "id": "am-escape-errors",
+      "status": "candidate",
+      "kind": "fix",
+      "repository": {
+        "name": "cristiangirlea/adanext-map",
+        "url": "https://github.com/cristiangirlea/adanext-map.git",
+        "visibility": "public"
+      },
+      "revision": "c71e4c2c8ac4d8dfa9254c4e677204adf2dec737",
+      "prompt": "Errors from reading a SCIP index or a store print text taken from the file as it is, control characters included. Quote that text in the error messages. Keep every existing test passing.",
+      "requires": [
+        "go 1.26.4",
+        "git",
+        "no network for the worker"
+      ],
+      "checks": [
+        {
+          "id": "fix-tests",
+          "type": "fix-tests",
+          "command": [
+            "go",
+            "test",
+            "./internal/scip/",
+            "./internal/store/"
+          ],
+          "needs": [
+            "go",
+            "fix_revision"
+          ]
+        }
+      ],
+      "provenance": {
+        "source": "pr",
+        "ref": "cristiangirlea/adanext-map#34",
+        "title": "scip, store: quote index and store text in errors",
+        "fix_revision": "51bc7659b462ae25f58ec72cf6aa65a9b951e6d2",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "hidden_revisions": [
+          "51bc7659b462ae25f58ec72cf6aa65a9b951e6d2"
+        ],
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs."
+      }
+    },
+    {
+      "id": "am-map-no-fields",
+      "status": "candidate",
+      "kind": "fix",
+      "repository": {
+        "name": "cristiangirlea/adanext-map",
+        "url": "https://github.com/cristiangirlea/adanext-map.git",
+        "visibility": "public"
+      },
+      "revision": "9c89e33def82adec41cbe2a801256089b731bab0",
+      "prompt": "`adamap map` spends its token budget on struct fields and ranks test files as high as the code they test. Leave struct fields out of the map and rank test files lower. Keep every existing test passing.",
+      "requires": [
+        "go 1.26.4",
+        "git",
+        "no network for the worker"
+      ],
+      "checks": [
+        {
+          "id": "fix-tests",
+          "type": "fix-tests",
+          "command": [
+            "go",
+            "test",
+            "./internal/rank/"
+          ],
+          "needs": [
+            "go",
+            "fix_revision"
+          ]
+        }
+      ],
+      "provenance": {
+        "source": "pr",
+        "ref": "cristiangirlea/adanext-map#47",
+        "title": "map: leave out struct fields and rank test files lower",
+        "fix_revision": "95d6b817d940d3922af8323e045223d876005c0c",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "hidden_revisions": [
+          "95d6b817d940d3922af8323e045223d876005c0c"
+        ],
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs."
+      }
+    },
+    {
+      "id": "am-load-counts",
+      "status": "candidate",
+      "kind": "fix",
+      "repository": {
+        "name": "cristiangirlea/adanext-map",
+        "url": "https://github.com/cristiangirlea/adanext-map.git",
+        "visibility": "public"
+      },
+      "revision": "95d6b817d940d3922af8323e045223d876005c0c",
+      "prompt": "A small store file can still make adamap allocate without bound when it is loaded, since a few bytes of JSON become a whole struct. Bound what loading a store (and reading an index) may allocate by item counts, not only by bytes. Keep every existing test passing.",
+      "requires": [
+        "go 1.26.4",
+        "git",
+        "no network for the worker"
+      ],
+      "checks": [
+        {
+          "id": "fix-tests",
+          "type": "fix-tests",
+          "command": [
+            "go",
+            "test",
+            "./internal/..."
+          ],
+          "needs": [
+            "go",
+            "fix_revision"
+          ]
+        }
+      ],
+      "provenance": {
+        "source": "pr",
+        "ref": "cristiangirlea/adanext-map#49",
+        "title": "store: bound memory on load by counts, not only bytes",
+        "fix_revision": "6f42756f05fe27dfb4bfb6986d67256eff44a9cc",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "hidden_revisions": [
+          "6f42756f05fe27dfb4bfb6986d67256eff44a9cc"
+        ],
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs."
+      }
+    },
+    {
+      "id": "am-nav-token-estimate",
+      "status": "candidate",
+      "kind": "navigation",
+      "repository": {
+        "name": "cristiangirlea/adanext-map",
+        "url": "https://github.com/cristiangirlea/adanext-map.git",
+        "visibility": "public"
+      },
+      "revision": "2b66fce7a28d5129d030e8693694bb2772d96815",
+      "prompt": "Which function does `adamap map` use to estimate how many tokens the text it prints takes, and in which file is it defined? Answer with the file path and the function name. Do not change any file.",
+      "requires": [
+        "git"
+      ],
+      "checks": [
+        {
+          "id": "answer",
+          "type": "answer",
+          "needs": [
+            "final_answer"
+          ],
+          "expect": {
+            "contains": [
+              "internal/rank/render.go",
+              "Tokens"
+            ]
+          }
+        },
+        {
+          "id": "untouched",
+          "type": "no-changes"
+        }
+      ],
+      "provenance": {
+        "source": "authored",
+        "ref": "written against adanext-map 2b66fce7a28d",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "notes": "No fix exists: the answer is in the source at the revision."
+      }
+    },
+    {
+      "id": "am-nav-store-load",
+      "status": "candidate",
+      "kind": "navigation",
+      "repository": {
+        "name": "cristiangirlea/adanext-map",
+        "url": "https://github.com/cristiangirlea/adanext-map.git",
+        "visibility": "public"
+      },
+      "revision": "2b66fce7a28d5129d030e8693694bb2772d96815",
+      "prompt": "List every non-test Go file that calls store.Load. Answer with their paths, one per line. Do not change any file.",
+      "requires": [
+        "git"
+      ],
+      "checks": [
+        {
+          "id": "answer",
+          "type": "answer",
+          "needs": [
+            "final_answer"
+          ],
+          "expect": {
+            "contains": [
+              "cmd/adamap/map.go",
+              "cmd/adamap/query.go",
+              "internal/mcpserver/stores.go"
+            ]
+          }
+        },
+        {
+          "id": "untouched",
+          "type": "no-changes"
+        },
+        {
+          "id": "review",
+          "type": "review",
+          "criteria": "Lists no file beyond the three that call store.Load."
+        }
+      ],
+      "provenance": {
+        "source": "authored",
+        "ref": "written against adanext-map 2b66fce7a28d",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "notes": "No fix exists: the answer is in the source at the revision."
+      }
+    },
+    {
+      "id": "am-impact-safe",
+      "status": "candidate",
+      "kind": "impact",
+      "repository": {
+        "name": "cristiangirlea/adanext-map",
+        "url": "https://github.com/cristiangirlea/adanext-map.git",
+        "visibility": "public"
+      },
+      "revision": "2b66fce7a28d5129d030e8693694bb2772d96815",
+      "prompt": "If query.Safe changed what it returns, which non-test Go files outside internal/query call it directly and would change? Answer with their paths. Do not change any file.",
+      "requires": [
+        "git"
+      ],
+      "checks": [
+        {
+          "id": "answer",
+          "type": "answer",
+          "needs": [
+            "final_answer"
+          ],
+          "expect": {
+            "contains": [
+              "cmd/adamap/callers.go",
+              "cmd/adamap/impact.go",
+              "cmd/adamap/outline.go",
+              "cmd/adamap/refs.go",
+              "internal/mcpserver/mcpserver.go"
+            ]
+          }
+        },
+        {
+          "id": "untouched",
+          "type": "no-changes"
+        },
+        {
+          "id": "review",
+          "type": "review",
+          "criteria": "Lists no file beyond the five direct callers."
+        }
+      ],
+      "provenance": {
+        "source": "authored",
+        "ref": "written against adanext-map 2b66fce7a28d",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "notes": "No fix exists: the answer is in the source at the revision."
+      }
+    },
+    {
+      "id": "am-impact-pagerank",
+      "status": "candidate",
+      "kind": "impact",
+      "repository": {
+        "name": "cristiangirlea/adanext-map",
+        "url": "https://github.com/cristiangirlea/adanext-map.git",
+        "visibility": "public"
+      },
+      "revision": "2b66fce7a28d5129d030e8693694bb2772d96815",
+      "prompt": "Which non-test functions call rank.PageRank, directly or through one other function? Name each function and its file. Do not change any file.",
+      "requires": [
+        "git"
+      ],
+      "checks": [
+        {
+          "id": "answer",
+          "type": "answer",
+          "needs": [
+            "final_answer"
+          ],
+          "expect": {
+            "contains": [
+              "internal/rank/rank.go",
+              "runMap",
+              "mapTool"
+            ]
+          }
+        },
+        {
+          "id": "untouched",
+          "type": "no-changes"
+        }
+      ],
+      "provenance": {
+        "source": "authored",
+        "ref": "written against adanext-map 2b66fce7a28d",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "notes": "No fix exists: the answer is in the source at the revision."
+      }
+    },
+    {
+      "id": "am-control-licence",
+      "status": "candidate",
+      "kind": "control",
+      "repository": {
+        "name": "cristiangirlea/adanext-map",
+        "url": "https://github.com/cristiangirlea/adanext-map.git",
+        "visibility": "public"
+      },
+      "revision": "2b66fce7a28d5129d030e8693694bb2772d96815",
+      "prompt": "Under which licence is this project published? Answer in one word. Do not change any file.",
+      "requires": [
+        "git"
+      ],
+      "checks": [
+        {
+          "id": "answer",
+          "type": "answer",
+          "needs": [
+            "final_answer"
+          ],
+          "expect": {
+            "contains": [
+              "MIT"
+            ]
+          }
+        },
+        {
+          "id": "untouched",
+          "type": "no-changes"
+        }
+      ],
+      "provenance": {
+        "source": "authored",
+        "ref": "written against adanext-map 2b66fce7a28d",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "notes": "A control task: the answer is in one file, which a code map does not help find."
+      }
+    },
+    {
+      "id": "am-control-go-version",
+      "status": "candidate",
+      "kind": "control",
+      "repository": {
+        "name": "cristiangirlea/adanext-map",
+        "url": "https://github.com/cristiangirlea/adanext-map.git",
+        "visibility": "public"
+      },
+      "revision": "2b66fce7a28d5129d030e8693694bb2772d96815",
+      "prompt": "Which Go version does this module pin in go.mod? Answer with the version only. Do not change any file.",
+      "requires": [
+        "git"
+      ],
+      "checks": [
+        {
+          "id": "answer",
+          "type": "answer",
+          "needs": [
+            "final_answer"
+          ],
+          "expect": {
+            "contains": [
+              "1.26.4"
+            ]
+          }
+        },
+        {
+          "id": "untouched",
+          "type": "no-changes"
+        }
+      ],
+      "provenance": {
+        "source": "authored",
+        "ref": "written against adanext-map 2b66fce7a28d",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "notes": "A control task: the answer is in one file, which a code map does not help find."
+      }
+    },
+    {
+      "id": "hrn-dangling-link",
+      "status": "candidate",
+      "kind": "fix",
+      "repository": {
+        "name": "cristiangirlea/harness",
+        "url": "https://github.com/cristiangirlea/harness.git",
+        "visibility": "private"
+      },
+      "revision": "ae0e711f35f5d4ae7c1ef973b00669c4b85ac634",
+      "prompt": "Fix this issue of the repository: \"tools: judge a dangling symbolic link by its target on Linux and macOS\". Keep every existing test passing.",
+      "requires": [
+        "go 1.26.4",
+        "git",
+        "no network for the worker"
+      ],
+      "checks": [
+        {
+          "id": "fix-tests",
+          "type": "fix-tests",
+          "command": [
+            "go",
+            "test",
+            "./..."
+          ],
+          "needs": [
+            "go",
+            "fix_revision"
+          ]
+        }
+      ],
+      "provenance": {
+        "source": "pr",
+        "ref": "cristiangirlea/harness#100",
+        "title": "tools: judge a dangling symbolic link by its target on Linux and macOS",
+        "fix_revision": "dd9263a06044aec99a098bf812fe7424f0853072",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "hidden_revisions": [
+          "dd9263a06044aec99a098bf812fe7424f0853072"
+        ],
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs. A private repository: only the PR title and the revisions are recorded here; the PR closes harness#47."
+      }
+    },
+    {
+      "id": "hrn-sse-null-block",
+      "status": "candidate",
+      "kind": "fix",
+      "repository": {
+        "name": "cristiangirlea/harness",
+        "url": "https://github.com/cristiangirlea/harness.git",
+        "visibility": "private"
+      },
+      "revision": "22f8170e5438b8b27a6c7419a5eed7154135ce02",
+      "prompt": "Fix this issue of the repository: \"agent: refuse a null content_block instead of panicking on its first delta\". Keep every existing test passing.",
+      "requires": [
+        "go 1.26.4",
+        "git",
+        "no network for the worker"
+      ],
+      "checks": [
+        {
+          "id": "fix-tests",
+          "type": "fix-tests",
+          "command": [
+            "go",
+            "test",
+            "./..."
+          ],
+          "needs": [
+            "go",
+            "fix_revision"
+          ]
+        }
+      ],
+      "provenance": {
+        "source": "pr",
+        "ref": "cristiangirlea/harness#99",
+        "title": "agent: refuse a null content_block instead of panicking on its first delta",
+        "fix_revision": "015b00da4f3948dd497fb55a729b7ed089fb8848",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "hidden_revisions": [
+          "015b00da4f3948dd497fb55a729b7ed089fb8848"
+        ],
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs. A private repository: only the PR title and the revisions are recorded here; the PR closes harness#77."
+      }
+    },
+    {
+      "id": "hrn-wsl-case",
+      "status": "candidate",
+      "kind": "fix",
+      "repository": {
+        "name": "cristiangirlea/harness",
+        "url": "https://github.com/cristiangirlea/harness.git",
+        "visibility": "private"
+      },
+      "revision": "4a4da621c9e0f2b7bd8317a884e7c523c820aa54",
+      "prompt": "Fix this issue of the repository: \"tools: recognise WSL's bash launcher however PATH spells System32\". Keep every existing test passing.",
+      "requires": [
+        "go 1.26.4",
+        "git",
+        "no network for the worker"
+      ],
+      "checks": [
+        {
+          "id": "fix-tests",
+          "type": "fix-tests",
+          "command": [
+            "go",
+            "test",
+            "./..."
+          ],
+          "needs": [
+            "go",
+            "fix_revision"
+          ]
+        }
+      ],
+      "provenance": {
+        "source": "pr",
+        "ref": "cristiangirlea/harness#87",
+        "title": "tools: recognise WSL's bash launcher however PATH spells System32",
+        "fix_revision": "8ea088adb4f93ee2140fcc594d0689f3fb2f3aa1",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "hidden_revisions": [
+          "8ea088adb4f93ee2140fcc594d0689f3fb2f3aa1"
+        ],
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs. A private repository: only the PR title and the revisions are recorded here; the PR closes harness#72."
+      }
+    },
+    {
+      "id": "hrn-batch-rm",
+      "status": "candidate",
+      "kind": "fix",
+      "repository": {
+        "name": "cristiangirlea/harness",
+        "url": "https://github.com/cristiangirlea/harness.git",
+        "visibility": "private"
+      },
+      "revision": "182fcc38ffa8e1c644a35a9c266e023d2f3861d4",
+      "prompt": "Fix this issue of the repository: \"batch rm: finish tasks whose worktree git no longer lists\". Keep every existing test passing.",
+      "requires": [
+        "go 1.26.4",
+        "git",
+        "no network for the worker"
+      ],
+      "checks": [
+        {
+          "id": "fix-tests",
+          "type": "fix-tests",
+          "command": [
+            "go",
+            "test",
+            "./..."
+          ],
+          "needs": [
+            "go",
+            "fix_revision"
+          ]
+        }
+      ],
+      "provenance": {
+        "source": "pr",
+        "ref": "cristiangirlea/harness#28",
+        "title": "batch rm: finish tasks whose worktree git no longer lists",
+        "fix_revision": "7118aa095d71313bf44a75a98c997bc4b364f81c",
+        "selected_by": "bench-framework (agent), for the owner's review",
+        "selected_on": "2026-10-13"
+      },
+      "leakage": {
+        "hide_future": true,
+        "hide_labels": true,
+        "hidden_revisions": [
+          "7118aa095d71313bf44a75a98c997bc4b364f81c"
+        ],
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs. A private repository: only the PR title and the revisions are recorded here."
+      }
+    }
+  ]
+}
