@@ -384,3 +384,11 @@ func TestExecuteUndoesAWorkersCommit(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckoutRefusesASourceReadAsAnOption(t *testing.T) {
+	needGit(t)
+	err := runner.Checkout("--upload-pack=touch pwned", benchtest.Rev(1), filepath.Join(t.TempDir(), "ws"))
+	if err == nil || !strings.Contains(err.Error(), "option") {
+		t.Fatalf("err %v", err)
+	}
+}

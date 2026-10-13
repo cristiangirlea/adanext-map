@@ -40,6 +40,9 @@ func git(dir string, args ...string) (string, error) {
 // fetched shallow by its hash, no remote, no branch or tag, so no later commit (the fix
 // included) is reachable from it.
 func Checkout(source, revision, dir string) error {
+	if strings.HasPrefix(source, "-") {
+		return fmt.Errorf("source %q starts with -, which git would read as an option", source)
+	}
 	if _, err := os.Stat(dir); err == nil {
 		return fmt.Errorf("%s exists: every run starts in a fresh workspace", dir)
 	}

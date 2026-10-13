@@ -233,3 +233,32 @@ func TestASubscriptionLoginSettingIsAllowed(t *testing.T) {
 		t.Fatal(issues)
 	}
 }
+
+// Paths from a manifest stay inside the workspace on every platform, and a repository URL is
+// never read by git as an option.
+func TestPathsStayInsideAndURLsAreNotOptions(t *testing.T) {
+	for _, bad := range []string{"", ".", "..", "../x", "a/../../x", "/abs", "C:/x", `C:\x`, `\server\x`, ".git", ".git/x", "a:b"} {
+		m := benchtest.Pilot()
+		m.Conditions[4].Index.Output = bad
+		if !benchtest.HasIssue(m.Validate(), "conditions[4].index.output", "inside the workspace") {
+			t.Errorf("index output %q accepted", bad)
+		}
+	}
+	for _, bad := range []string{"/etc/passwd", `C:\x`, "../x", "."} {
+		m := benchtest.Pilot()
+		m.Tasks[0].Leakage.HiddenPaths = []string{bad}
+		if !benchtest.HasIssue(m.Validate(), "tasks[0].leakage.hidden_paths[0]", "inside the repository") {
+			t.Errorf("hidden path %q accepted", bad)
+		}
+	}
+	m := benchtest.Pilot()
+	m.Conditions[4].Index.Output = "out/a..b"
+	m.Tasks[0].Leakage.HiddenPaths = []string{"internal/x_test.go"}
+	if issues := m.Validate(); len(issues) != 0 {
+		t.Errorf("good paths refused: %v", issues)
+	}
+	m.Tasks[0].Repository.URL = "--upload-pack=touch x"
+	if !benchtest.HasIssue(m.Validate(), "tasks[0].repository.url", "option") {
+		t.Error("a URL that git would read as an option is accepted")
+	}
+}

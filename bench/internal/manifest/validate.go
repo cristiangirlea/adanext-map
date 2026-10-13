@@ -168,8 +168,8 @@ func (v *validator) conditions(m *Manifest) {
 			if len(c.Index.Command) == 0 {
 				v.add(p+".index.command", "missing")
 			}
-			if c.Index.Output == "" || strings.HasPrefix(c.Index.Output, "/") || strings.Contains(c.Index.Output, "..") {
-				v.add(p+".index.output", fmt.Sprintf("%q: a path inside the workspace", c.Index.Output))
+			if out := path.Clean(c.Index.Output); !Inside(c.Index.Output) || out == ".git" || strings.HasPrefix(out, ".git/") {
+				v.add(p+".index.output", fmt.Sprintf("%q: a path inside the workspace, outside .git", c.Index.Output))
 			}
 			v.noKeysInArgs(p+".index.command", c.Index.Command)
 			v.noKeys(p+".index.settings", c.Index.Settings)
@@ -270,6 +270,8 @@ func (v *validator) task(p string, t Task) {
 	}
 	if t.Repository.URL == "" {
 		v.add(p+".repository.url", "missing")
+	} else if strings.HasPrefix(t.Repository.URL, "-") {
+		v.add(p+".repository.url", "starts with -, which git would read as an option")
 	}
 	if t.Repository.Visibility != "public" && t.Repository.Visibility != "private" {
 		v.add(p+".repository.visibility", fmt.Sprintf("unknown %q: public or private", t.Repository.Visibility))
@@ -336,7 +338,7 @@ func (v *validator) leakage(p string, t Task) {
 		v.add(lp+".hidden_revisions", "must hide the fix revision "+fix)
 	}
 	for j, hp := range l.HiddenPaths {
-		if hp == "" || strings.HasPrefix(hp, "/") || strings.Contains(hp, "..") {
+		if !Inside(hp) {
 			v.add(fmt.Sprintf("%s.hidden_paths[%d]", lp, j), fmt.Sprintf("%q: a path inside the repository", hp))
 		}
 	}
@@ -540,4 +542,15 @@ func (v *validator) noKeysInArgs(path string, args []string) {
 			v.add(fmt.Sprintf("%s[%d]", path, i), "passes a provider API key: the benchmark refuses API keys and runs on subscription plans")
 		}
 	}
+}
+
+// Inside reports whether p, a slash path from a manifest, names something strictly inside the
+// directory it is relative to, on every platform: not empty or the directory itself, not
+// absolute, no drive, colon or backslash, no .. that leaves it.
+func Inside(p string) bool {
+	if p == "" || strings.HasPrefix(p, "/") || strings.ContainsAny(p, `\:`+"\x00") {
+		return false
+	}
+	c := path.Clean(p)
+	return c != "." && c != ".." && !strings.HasPrefix(c, "../")
 }
