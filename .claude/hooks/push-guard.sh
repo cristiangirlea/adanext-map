@@ -170,8 +170,14 @@ check_cmd() {
           cur=$cur$ch
         fi ;;
       d\() case $cur in *'$') cur=$cur$ch; sub_start d ;; *) cur=$cur$ch ;; esac ;;
-      o\() cur=$cur$ch; sub_start o ;;
-      o\)) check_part "$cur"; case $stk in [od]*) sub_end ;; *) cur= ;; esac ;;
+      o\()
+        # A ( straight after another one, as in $(( or ((, opens arithmetic, and so does any ( inside
+        # it: a << there is a shift.
+        case $stk in
+          a*) sub_start a ;;
+          *) if [ "$lastc" = '(' ] && [ -z "$cur" ]; then sub_start a; else cur=$cur$ch; sub_start o; fi ;;
+        esac ;;
+      o\)) check_part "$cur"; case $stk in [oda]*) sub_end ;; *) cur= ;; esac ;;
       o\#)
         case $lastc in
           '' | [\ \	\;\&\|\(\)] | "$nl") case $cs in *"$nl"*) cs=$nl${cs#*"$nl"} ;; *) cs= ;; esac ;;
@@ -181,7 +187,7 @@ check_cmd() {
         cur=$cur$ch
         case $lang$cs in
           sh\<\<*) cur=$cur'<<' cs=${cs#??} ;; # <<<, a here-string
-          sh\<*) cs=${cs#?}; cur=$cur'<'; heredoc_start ;;
+          sh\<*) cs=${cs#?}; cur=$cur'<'; case $stk in a*) ;; *) heredoc_start ;; esac ;;
         esac ;;
       o"$nl") check_part "$cur"; cur=; heredoc_skip ;;
       *) check_part "$cur"; cur= ;;
@@ -228,7 +234,8 @@ heredoc_skip() {
   done
 }
 # sub_start MODE: a substitution or a group begins; MODE (o, d, or O, D for backticks) is the mode to
-# return to, and the command so far is set aside.
+# return to, and the command so far is set aside. MODE a is arithmetic, $(( or ((: back to o at its
+# end, and a << inside it is a shift, not a heredoc.
 sub_start() {
   stk=$1$cur$soh$stk cur= md=o
 }
@@ -236,7 +243,7 @@ sub_start() {
 sub_end() {
   top=${stk%%"$soh"*} stk=${stk#*"$soh"}
   cur=${top#?}
-  case $top in [oO]*) md=o ;; *) md=d ;; esac
+  case $top in [oOa]*) md=o ;; *) md=d ;; esac
 }
 
 # check_part TEXT: one simple command, in words. Wrappers (env, sudo, xargs, Start-Process...) are
