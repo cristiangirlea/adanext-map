@@ -30,6 +30,11 @@ changes, the store is still filed under `HEAD`, but its header says `dirty: true
 line says `(dirty)`. Untracked files do not count. With `--commit`, git is not asked: the index is
 taken to describe that commit, as the caller says.
 
+adamap runs git with `--no-optional-locks` and with `core.fsmonitor` and `core.hooksPath` overridden,
+so the `core.fsmonitor` command and the hooks in the repository's own `.git` do not run. A clean
+filter the repository defines still can, when git compares a file whose timestamp changed: for a
+repository you do not trust, pass `--commit` and git is not run at all.
+
 ## Which indexer
 
 Without `--scip`, adamap looks at the repository root and runs the first indexer that fits, with the

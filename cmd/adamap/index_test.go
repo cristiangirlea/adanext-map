@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	scippb "github.com/scip-code/scip/bindings/go/scip"
 
@@ -345,5 +346,65 @@ func TestIndexSaysNothingWhenNothingIsSkipped(t *testing.T) {
 	_, _, errOut := runIndexCmd("--scip", fixtureFile(t), "--commit", testCommit, "--repo", t.TempDir())
 	if strings.Contains(errOut, "skipped") {
 		t.Errorf("stderr %q mentions a skip", errOut)
+	}
+}
+
+// A repository's own .git/config and .git/hooks are its owner's to write, so indexing one must not
+// run what they name. Each case arms a program that leaves a marker file, checks that a plain git
+// does run it (otherwise the case proves nothing on this git), then indexes and wants no marker.
+func TestIndexDoesNotRunProgramsNamedByTheRepository(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	cases := []struct {
+		name string
+		arm  func(t *testing.T, repo, marker string)
+	}{
+		{"core.fsmonitor", func(t *testing.T, repo, marker string) {
+			// git runs the value through sh, on Windows too (Git for Windows bundles it).
+			git(t, repo, "config", "core.fsmonitor", "echo x > '"+filepath.ToSlash(marker)+"'; false")
+		}},
+		{"post-index-change hook", func(t *testing.T, repo, marker string) {
+			hook := "#!/bin/sh\necho x > '" + filepath.ToSlash(marker) + "'\n"
+			if err := os.WriteFile(filepath.Join(repo, ".git", "hooks", "post-index-change"), []byte(hook), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo := t.TempDir()
+			marker := filepath.Join(t.TempDir(), "ran")
+			git(t, repo, "init", "-q")
+			writeFile(t, filepath.Join(repo, "a.txt"), "one\n")
+			git(t, repo, "add", "a.txt")
+			git(t, repo, "commit", "-q", "-m", "one")
+			c.arm(t, repo, marker)
+			// The hook runs only when status rewrites the index, which it does for a file whose
+			// timestamp changed but whose content did not.
+			later := time.Now().Add(time.Minute)
+			if err := os.Chtimes(filepath.Join(repo, "a.txt"), later, later); err != nil {
+				t.Fatal(err)
+			}
+
+			git(t, repo, "status", "--porcelain")
+			if _, err := os.Stat(marker); err != nil {
+				t.Skipf("a plain git status does not run %s here (%v), so there is nothing to guard against", c.name, err)
+			}
+			if err := os.Remove(marker); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(filepath.Join(repo, "a.txt"), later.Add(time.Minute), later.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+
+			code, out, errOut := runIndexCmd("--scip", fixtureFile(t), "--repo", repo)
+			if code != 0 || !strings.HasPrefix(out, "indexed ") {
+				t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
+			}
+			if _, err := os.Stat(marker); err == nil {
+				t.Errorf("adamap index ran the program the repository names in %s", c.name)
+			}
+		})
 	}
 }
