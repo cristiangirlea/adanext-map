@@ -317,3 +317,25 @@ func TestInstallClaudeReadsTheLastOfADuplicateKey(t *testing.T) {
 	}
 	checkEntry(t, doc.MCPServers["adamap"], repo)
 }
+
+func TestInstallRefusesAPathThatIsNotUTF8(t *testing.T) {
+	repo := t.TempDir()
+	bad := filepath.Join(repo, "bad\xffname")
+	for _, mode := range []string{"--print", "--claude", "--codex"} {
+		code, out, errOut := runCmd("install", mode, "--repo", bad)
+		if code != 1 || out != "" || !strings.Contains(errOut, "UTF-8") || !strings.Contains(errOut, "--repo") {
+			t.Errorf("%s with a repository path that is not UTF-8: exit %d, stdout %q, stderr %q; want exit 1 naming --repo and UTF-8", mode, code, out, errOut)
+		}
+	}
+	noFiles(t, repo)
+
+	// The same for the path of this adamap, which cannot be chosen by the test but can be stood in for.
+	real := osExecutable
+	osExecutable = func() (string, error) { return filepath.Join(repo, "adamap\xff"), nil }
+	defer func() { osExecutable = real }()
+	code, out, errOut := runCmd("install", "--claude", "--repo", repo)
+	if code != 1 || out != "" || !strings.Contains(errOut, "UTF-8") || !strings.Contains(errOut, "adamap") {
+		t.Errorf("an executable path that is not UTF-8: exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	noFiles(t, repo)
+}

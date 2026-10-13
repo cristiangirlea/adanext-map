@@ -132,7 +132,10 @@ build lives in a temporary directory.
 | `--codex` | Prints the block for `~/.codex/config.toml`, and nothing else, so it can be appended. Writes nothing. |
 
 `--repo` (default `.`) names the repository: what the server answers about, and where `.mcp.json`
-goes. Install never writes outside it.
+goes. Install never writes outside it. It refuses, with a message that names the path, when the
+repository path or the path of this adamap is not valid UTF-8: JSON and TOML hold text, and the
+entry would otherwise carry a replacement character in place of the bytes and name a path that
+does not exist.
 
 ### Claude Code
 

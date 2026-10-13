@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // mcpJSONName is Claude Code's project MCP file, at the repository root.
@@ -31,6 +32,32 @@ project's .mcp.json, keeping the other servers there; --codex prints the block f
 	fl.SetOutput(w)
 	fl.PrintDefaults()
 }
+
+// checkUTF8 refuses a path that is not valid UTF-8: JSON and TOML hold text, so writing it would
+// put U+FFFD where its bytes are, and the host would start a server at a path that does not exist.
+func checkUTF8(what, p string) error {
+	if utf8.ValidString(p) {
+		return nil
+	}
+	return fmt.Errorf("%s, %q, is not valid UTF-8, so it cannot be written to a JSON or TOML file: use a path that is", what, p)
+}
+
+// absUTF8 is p made absolute, refused when it is not valid UTF-8 as given or once made absolute (the
+// working directory may be the one). It checks first because on Windows Abs turns a byte that is not
+// UTF-8 into U+FFFD without a word.
+func absUTF8(what, p string) (string, error) {
+	if err := checkUTF8(what, p); err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	return abs, checkUTF8(what, abs)
+}
+
+// osExecutable is where this adamap is; a variable so that a test can stand in for it.
+var osExecutable = os.Executable
 
 // serverEntry is the command a host runs to start the server.
 type serverEntry struct {
@@ -74,19 +101,19 @@ func runInstall(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "adamap install: %v\n", err)
 		return 1
 	}
-	root, err := filepath.Abs(*repo)
+	root, err := absUTF8("--repo", *repo)
 	if err != nil {
 		return fail(err)
 	}
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
 		return fail(fmt.Errorf("--repo %s is not a directory", root))
 	}
-	exe, err := os.Executable()
-	if err == nil {
-		exe, err = filepath.Abs(exe)
-	}
+	exe, err := osExecutable()
 	if err != nil {
 		return fail(fmt.Errorf("cannot tell where this adamap is: %w", err))
+	}
+	if exe, err = absUTF8("the path of this adamap", exe); err != nil {
+		return fail(err)
 	}
 	e := serverEntry{command: exe, args: []string{"mcp", "--repo", root}}
 
