@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
@@ -34,7 +35,25 @@ func holdExclusively(t *testing.T, path string) (release func()) {
 	return release
 }
 
+// requireSharingEnforced skips the test where an open still succeeds while another handle holds the
+// file with no sharing: GitHub's Windows runners do (their account opens with backup privileges, it
+// seems), so no sharing violation can be made there to test the retry against.
+func requireSharingEnforced(t *testing.T) {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "probe")
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	release := holdExclusively(t, p)
+	defer release()
+	if f, err := os.Open(p); err == nil {
+		f.Close()
+		t.Skip("this machine opens a file another handle holds with no sharing, so no sharing violation can be made here")
+	}
+}
+
 func TestLatestReadThatMeetsASharingViolationIsRetried(t *testing.T) {
+	requireSharingEnforced(t)
 	repo := t.TempDir()
 	writeStore(t, repo, commitA, sciptest.Index())
 	s := &stores{repo: repo}
@@ -65,6 +84,7 @@ func TestLatestReadThatMeetsASharingViolationIsRetried(t *testing.T) {
 }
 
 func TestLatestThatStaysHeldIsGivenUpOnAfterAFewAttempts(t *testing.T) {
+	requireSharingEnforced(t)
 	repo := t.TempDir()
 	writeStore(t, repo, commitA, sciptest.Index())
 	s := &stores{repo: repo}
