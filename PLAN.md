@@ -89,3 +89,10 @@ repository); a fail-closed push guard (#8).
   `.mcp.json` and keeps the entry's other fields and every other key in order; of a key written
   twice it reads the last, as JSON readers do. It refuses a link and a file it cannot parse. `--codex` only prints: `~/.codex/config.toml` is outside the
   repository.
+- 2026-10-13 (#8): the push guard is a PreToolUse hook on Bash and PowerShell,
+  `.claude/hooks/push-guard.sh`, in POSIX sh with git, sed and tr only. settings.json's deny rules
+  stay as a first layer. It asks git where a push without a destination goes (`@{push}`,
+  `push.default`, `remote.*.push`), refuses what it cannot see (a variable, a command substitution,
+  xargs, an encoded PowerShell command), and fails closed only for input that mentions a push, a
+  tag, a release, a merge or the API, so a fault in the hook never blocks other commands. Scripts
+  run by name (`sh x.sh`, `-File x.ps1`) are not read.

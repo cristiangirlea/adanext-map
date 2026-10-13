@@ -1,6 +1,6 @@
 ---
 name: check
-description: Run what CI runs on this module (vet, build, tests, gofmt, the hook script) before a PR
+description: Run what CI runs on this module (vet, build, tests, gofmt, the hook scripts) before a PR
 ---
 Run the steps in order from the repository root and stop at the first failure. Report each
 step's result in one line; on a failure, show the error text and fix it before re-running.
@@ -11,7 +11,9 @@ go build ./...
 go test -count=1 ./...
 test -z "$(git ls-files -co --exclude-standard -- '*.go' | xargs -r gofmt -l)"
 bash -n .claude/hooks/go-rules.sh && bash -n .claude/hooks/go-rules.test.sh
+bash -n .claude/hooks/push-guard.sh && bash -n .claude/hooks/push-guard.test.sh
 sh .claude/hooks/go-rules.test.sh
+sh .claude/hooks/push-guard.test.sh
 ```
 
 The gofmt step lists the repository's own Go files, so it does not walk worktrees or a `.adamap/`
