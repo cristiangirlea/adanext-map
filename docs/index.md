@@ -32,8 +32,9 @@ taken to describe that commit, as the caller says.
 
 adamap runs git with `--no-optional-locks` and with `core.fsmonitor` and `core.hooksPath` overridden,
 so the `core.fsmonitor` command and the hooks in the repository's own `.git` do not run. It also
-sets `GIT_NO_LAZY_FETCH=1`, so a partial clone with a missing object fails instead of fetching it
-through the repository's `remote.<name>.uploadpack` or `core.sshCommand`.
+sets `GIT_NO_LAZY_FETCH=1` in git's environment, so a partial clone with a missing object fails
+instead of fetching it through the repository's `remote.<name>.uploadpack` or `core.sshCommand`.
+That variable needs git 2.44 or later; an older git ignores it, and a partial clone can still fetch.
 
 `git status` also runs a clean filter, or starts a process filter, to compare a file whose
 timestamp changed, and those are programs the config names. Before it, adamap lists the configured

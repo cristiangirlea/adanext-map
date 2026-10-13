@@ -208,6 +208,8 @@ func filtersOff(repo string) ([]string, error) {
 }
 
 // gitOutput is the output of `git args` in repo, run with gitSafely. Every git call goes through it.
+// The environment is part of the guard too: GIT_NO_LAZY_FETCH (git 2.44 or later) keeps a partial
+// clone from fetching, and no -c option does that.
 func gitOutput(repo string, args ...string) (string, error) {
 	return gitRun(repo, nil, args...)
 }
