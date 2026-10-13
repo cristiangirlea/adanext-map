@@ -351,6 +351,21 @@ func TestWriteRefusesASymlinkedGitignore(t *testing.T) {
 	}
 }
 
+func TestWriteRefusesAGitignoreThatIsNotAFile(t *testing.T) {
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".adamap")
+	if err := os.MkdirAll(filepath.Join(dir, ".gitignore"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Write(repo, header(commitA), fixture(t))
+	if err == nil || !strings.Contains(err.Error(), "is not a regular file") {
+		t.Fatalf("Write err = %v, want a refusal saying it is not a regular file", err)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(dir, ".gitignore")) {
+		t.Errorf("Write err = %v, want it to name the .gitignore", err)
+	}
+}
+
 func TestPublishNewKeepsAFileThatAppearedFirst(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".gitignore")

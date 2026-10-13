@@ -124,7 +124,7 @@ func checkDirs(repo, dir string) error {
 
 // ensureGitignore gives dir a .gitignore of `*` unless it has one, so the stores show up in no
 // repository's `git status` and cannot be committed by mistake. An existing file is the user's and
-// is left as it is; a link is refused, as git does not read a .gitignore that is one.
+// is left as it is; a link, or anything but a regular file, is refused, as git does not read one.
 func ensureGitignore(dir string) error {
 	path := filepath.Join(dir, gitignoreFile)
 	fi, err := os.Lstat(path)
@@ -135,6 +135,8 @@ func ensureGitignore(dir string) error {
 		return err
 	case fi.Mode()&fs.ModeSymlink != 0:
 		return fmt.Errorf("%s is a symbolic link: adamap will not write a store beside one", path)
+	case !fi.Mode().IsRegular():
+		return fmt.Errorf("%s is not a regular file", path)
 	}
 	return nil
 }
