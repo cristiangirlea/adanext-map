@@ -236,3 +236,50 @@ func TestWordsSplitsAndLowers(t *testing.T) {
 		t.Errorf("Words of nothing: %v, want nil", got)
 	}
 }
+
+// member adds a symbol of kind to the definition of the document at path, and one reference to it
+// from the document at from.
+func member(idx *model.Index, name, kind, path, from string) {
+	memberID := "scip-go gomod example.com/m v1 `example.com/m`/T#" + name + "."
+	idx.Symbols = append(idx.Symbols, model.Symbol{
+		ID: memberID, DisplayName: name, Kind: kind, Definition: &model.Location{Path: path},
+	})
+	for i := range idx.Documents {
+		if idx.Documents[i].Path == from {
+			idx.Documents[i].Occurrences = append(idx.Documents[i].Occurrences,
+				model.Occurrence{Symbol: memberID, Roles: model.RoleReference | model.RoleRead})
+		}
+	}
+}
+
+func TestRankLeavesFieldsAndEnumMembersOutOfTheMapButKeepsTheirEdges(t *testing.T) {
+	for _, kind := range []string{"Field", "StaticField", "StaticDataMember", "EnumMember", "Property", "StaticProperty"} {
+		t.Run(kind, func(t *testing.T) {
+			idx := build(
+				file{path: "types.go", defs: []string{"T"}},
+				file{path: "use.go", refs: []string{"T"}},
+				file{path: "fields.go"},
+			)
+			// use.go reads a member of types.go, and fields.go defines nothing but a member.
+			member(idx, "F", kind, "types.go", "use.go")
+			member(idx, "G", kind, "fields.go", "use.go")
+
+			r := Rank(idx, nil)
+			if got, want := paths(r), []string{"types.go"}; !slices.Equal(got, want) {
+				t.Fatalf("files %v, want %v: fields.go defines only a %s", got, want, kind)
+			}
+			if got := names(r.Files[0]); !slices.Equal(got, []string{"T"}) {
+				t.Errorf("types.go symbols %v, want [T] without the %s", got, kind)
+			}
+			// T's file takes the whole rank; the hidden member does not take a share of it.
+			if s := r.Files[0].Symbols[0]; math.Abs(s.Score-r.Files[0].Rank) > 1e-12 {
+				t.Errorf("T scores %v, want its file's whole rank %v", s.Score, r.Files[0].Rank)
+			}
+			// use.go reads T and F from types.go and G from fields.go: three symbols, two edges.
+			g := newGraph(idx)
+			if got := len(g.out[1]); got != 2 {
+				t.Errorf("use.go has %d edges %v, want 2: members still link files", got, g.out[1])
+			}
+		})
+	}
+}

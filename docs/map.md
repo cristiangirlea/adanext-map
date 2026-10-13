@@ -45,7 +45,12 @@ first: a label for its kind, then its detail.
   ending in `...` when cut.
 
 Files are in rank order. A file that defines nothing the map shows is left out, and so are local
-symbols, namespaces (packages, modules) and parameters. A path holding a control or format
+symbols, namespaces (packages, modules) and parameters. Fields and enum members (the SCIP kinds
+`Field`, `StaticField`, `StaticDataMember`, `EnumMember`, `Property` and `StaticProperty`) are not
+shown either: the line of the struct, class or enum that holds them is the one to read, and a
+member would take a line of the budget from a symbol that matters more. A file that defines only
+members is left out. References to a member still link the files, so they count in the ranking
+(see below); `adamap find`, `outline` and `refs` still list members. A path holding a control or format
 character (bidi overrides, zero-width characters) is printed quoted, so each line stays one line
 and shows what it holds; the same characters in a name, signature or doc become a space.
 
@@ -63,8 +68,9 @@ and shows what it holds; the same characters in a name, signature or doc become 
    one share of the jump for each word its path, or the name of a symbol it defines, contains.
    Those files, and the files they use, move up. The jump is 15% of the rank, so a matched file
    rises but does not always lead. When no file matches, the map is the unpersonalised one.
-4. **Symbols.** A file's rank is shared among the symbols it defines in proportion to the
-   references each gets from other files, plus one. That share is the symbol's score.
+4. **Symbols.** A file's rank is shared among the symbols it shows (not its fields and enum
+   members) in proportion to the references each gets from other files, plus one. That share is
+   the symbol's score.
 
 Ties go to the path, then the symbol name, then the symbol, so the same store always gives the same
 map.

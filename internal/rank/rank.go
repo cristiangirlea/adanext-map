@@ -151,6 +151,16 @@ func mappable(s *model.Symbol) bool {
 	return true
 }
 
+// isMember reports whether kind is a field or an enum member, which the line of the struct or enum
+// that holds it already shows. The map leaves them out, but references to them still link files.
+func isMember(kind string) bool {
+	switch kind {
+	case "Field", "StaticField", "StaticDataMember", "EnumMember", "Property", "StaticProperty":
+		return true
+	}
+	return false
+}
+
 // nameOf is the name in a SCIP symbol's last descriptor: Add in `.../Adder#Add.`, Do in
 // `.../T#Do(+1).`, and a backquoted name without its quotes.
 func nameOf(id string) string {
@@ -220,13 +230,21 @@ func (g *graph) personalise(idx *model.Index, words []string) (personal []float6
 
 // Rank ranks idx's files by PageRank over the reference graph, personalised towards the files
 // that match words (see Words) when any do, and each file's symbols by their references from other
-// files. Files that define no symbol the map shows are left out.
+// files. Fields and enum members (see isMember) are not among a file's symbols and take no share of
+// its rank, but references to them count as edges. Files that define no symbol the map shows are
+// left out.
 func Rank(idx *model.Index, words []string) Ranking {
 	g := newGraph(idx)
 	personal, matched := g.personalise(idx, words)
 	ranks, _ := PageRank(g.out, personal)
 	r := Ranking{Matched: matched}
-	for f, defs := range g.byFile {
+	for f, all := range g.byFile {
+		var defs []int
+		for _, n := range all {
+			if !isMember(g.defs[n].sym.Kind) {
+				defs = append(defs, n)
+			}
+		}
 		if len(defs) == 0 {
 			continue
 		}
