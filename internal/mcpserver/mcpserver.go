@@ -34,7 +34,7 @@ type Config struct {
 	// Path turns a file argument as the model typed it into the index's form: slash-separated and
 	// relative to the repository root. Nil cleans it and turns its separators into slashes.
 	Path func(arg string) (string, error)
-	// Head is the repository's HEAD commit and whether tracked files have uncommitted changes, for
+	// Head is the repository's HEAD commit and whether the tree has uncommitted changes, for
 	// the status tool. Nil means git is not asked.
 	Head func() (commit string, dirty bool, err error)
 }
@@ -220,7 +220,7 @@ type (
 		Indexer    *model.Tool   `json:"indexer,omitempty"`
 		Created    string        `json:"created,omitempty"`
 		Counts     *model.Counts `json:"counts,omitempty"`
-		// Head is the repository's HEAD and Dirty whether tracked files have changes now; GitError
+		// Head is the repository's HEAD and Dirty whether the tree has changes now; GitError
 		// says why they are unknown.
 		Head     string `json:"head,omitempty"`
 		AtHead   bool   `json:"at_head"`
@@ -525,7 +525,7 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 	if known {
 		state := "no uncommitted changes"
 		if out.Dirty {
-			state = "uncommitted changes in tracked files"
+			state = "uncommitted changes"
 		}
 		fmt.Fprintf(&b, "HEAD: %s, %s\n", short(out.Head), state)
 	} else {
