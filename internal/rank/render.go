@@ -140,7 +140,8 @@ func Label(s Symbol) string {
 func Detail(s Symbol) string {
 	name := oneLine(s.Name)
 	if sig := oneLine(s.Signature); sig != "" {
-		sig = dropKeywords(sig, name)
+		// Only the start of a signature is shown; cutting it first bounds the work of dropKeywords.
+		sig = dropKeywords(clipBytes(sig, 4*maxDetail), name)
 		if name != "" && !hasWord(sig, name) {
 			sig = name + " " + sig
 		}
@@ -201,6 +202,17 @@ func hasWord(s, name string) bool {
 }
 
 func isIdent(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+// clipBytes cuts s to at most n bytes, never inside a character.
+func clipBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
 
 // clip cuts s to at most n bytes, ending in "..." when it cuts, and never inside a character.
 func clip(s string, n int) string {

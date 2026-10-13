@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTokensIsBytesOverFourRoundedUp(t *testing.T) {
@@ -168,5 +169,22 @@ func TestFitIsDeterministic(t *testing.T) {
 	b := Text(Fit(Rank(idx, nil).Files, 2000))
 	if a != b || a == "" {
 		t.Fatalf("two maps differ, or are empty:\n%s\n---\n%s", a, b)
+	}
+}
+
+func TestDetailOfAHugeSignatureIsFast(t *testing.T) {
+	// Every leading word is a keyword candidate, and each check scans what follows it.
+	sig := strings.Repeat("a ", 512*1024) + "Name"
+	start := time.Now()
+	got := Detail(Symbol{Name: "Name", Signature: sig})
+	limit := time.Second
+	if raceEnabled {
+		limit *= 10
+	}
+	if d := time.Since(start); d > limit {
+		t.Errorf("Detail took %v on a %d byte signature, want under %v", d, len(sig), limit)
+	}
+	if len(got) > maxDetail || !strings.HasSuffix(got, "...") {
+		t.Errorf("Detail = %q, want at most %d bytes ending in ...", got, maxDetail)
 	}
 }
