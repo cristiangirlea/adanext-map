@@ -176,8 +176,10 @@ belongs to the innermost scope that contains the position where the reference st
 
 The fallback is a heuristic. A definition without an enclosing range is taken to own everything up to
 the next definition, so a top-level statement between two functions is attributed to the first, and every
-global definition (a struct field, say) ends the span of the one before it. An indexer that gives
-enclosing ranges does not have these problems.
+global definition (a struct field, say) ends the span of the one before it. Nesting is the same
+limit: a definition inside another that has no enclosing range (a method in a class) ends the outer
+span at its own name, and what comes after it in the outer one is attributed to the inner one, up to
+the next definition. An indexer that gives enclosing ranges does not have these problems.
 
 Also: the reference occurrence's own enclosing range is ignored (SCIP uses it for the expression around
 the reference, such as the call, not for the function); an occurrence with the import role is not a call;

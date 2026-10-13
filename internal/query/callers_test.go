@@ -385,3 +385,23 @@ func TestCallersFallbackBeforeAnEnclosingRangeThatStartsAheadOfItsName(t *testin
 		t.Errorf("sites: f %v, e %v", lines(got.Callers[0].Sites), lines(got.Callers[1].Sites))
 	}
 }
+
+func TestCallersFallbackDoesNotNestADefinitionInsideOneWithoutAnEnclosingRange(t *testing.T) {
+	// The documented limit (docs/queries.md): with no enclosing ranges there is nothing to say where
+	// Outer ends, so inner's name ends it, and what follows inner is inner's.
+	const outer, inner, target = "s m p v Outer#", "s m p v Outer#inner().", "s m p v target()."
+	x := oneDoc(
+		occSpec{sym: outer, line: 0, col: 5, def: true},
+		occSpec{sym: inner, line: 2, col: 5, def: true},
+		occSpec{sym: target, line: 1, col: 1},  // before inner: in Outer
+		occSpec{sym: target, line: 10, col: 1}, // after inner, still in Outer's body in the source
+	)
+	got, err := x.Callers(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{outer, inner}; !slices.Equal(callerIDs(got.Callers), want) ||
+		!slices.Equal(lines(got.Callers[0].Sites), []int{2}) || !slices.Equal(lines(got.Callers[1].Sites), []int{11}) {
+		t.Errorf("callers = %+v", got.Callers)
+	}
+}
