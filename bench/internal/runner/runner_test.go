@@ -818,6 +818,27 @@ func TestThePlansLimitStopsTheExecutionAndResumeRunsItAgain(t *testing.T) {
 	}
 }
 
+// A run that met the limit and, started again, stops for another reason keeps only its .started
+// marker: the .limited note, which says resume runs it again, goes when it starts again.
+func TestARunStartedAgainAfterALimitDropsItsNote(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-limit", "BENCH_TEST_WHERE=" + filepath.Join(t.TempDir(), "where.txt")}
+	if err := runner.Execute(context.Background(), o); !errors.Is(err, runner.ErrPlanLimit) {
+		t.Fatalf("err %v", err)
+	}
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-billing"}
+	if err := runner.Execute(context.Background(), o); err == nil || !strings.Contains(err.Error(), "apiKeySource") {
+		t.Fatalf("err %v", err)
+	}
+	started, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+	if len(started) != 1 || len(limited) != 0 {
+		t.Fatalf("started %v, limited %v", started, limited)
+	}
+}
+
 // An interruption is not a limit, even when the interrupted CLI had named one: the run keeps its
 // .started marker and gets no .limited note.
 func TestAnInterruptedAttemptIsNotTakenForALimit(t *testing.T) {

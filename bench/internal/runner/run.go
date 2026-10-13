@@ -265,6 +265,10 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 	if err := os.WriteFile(o.startedMarker(run.ID), []byte(note), 0o644); err != nil {
 		return nil, err
 	}
+	// Started again after a limit: the marker now speaks for the run.
+	if err := os.Remove(o.limitedNote(run.ID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	var answer string
 	for n := 1; n <= m.Execution.MaxAttempts; n++ {
 		c.Attempt = n

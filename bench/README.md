@@ -67,8 +67,9 @@ starts no further run.
 A run that meets the plan's usage limit is not a task failure. The execution stops at once, with
 no retry and no record for that run, and its workspace is removed as usual. Its `.started` marker
 is replaced by `<run id>.limited`, which says when and why. Run the same command again once the
-limit resets: resume starts that run afresh, and its record removes the note. A limit is read from
-the CLI's own account only:
+limit resets: resume starts that run afresh, and its new first attempt removes the note. A limit
+in a second attempt also discards the failed first attempt: the run is started again as a whole.
+A limit is read from the CLI's own account only:
 - a result event with `is_error` whose text names a usage, session, weekly or rate limit, an
   overload, or a 429 or 529;
 - for an attempt with no result or an error result, an `api_retry` event or an assistant message
