@@ -195,6 +195,21 @@ func TestFitChoosesBySymbolScoreAndKeepsFileOrder(t *testing.T) {
 	}
 }
 
+func TestFitStopsAtTheFirstSymbolThatDoesNotFit(t *testing.T) {
+	long := strings.Repeat("L", 40)
+	files := []File{{Path: "a.go", Symbols: []Symbol{
+		{Name: "A", Kind: "Variable", Score: 0.5},
+		{Name: long, Kind: "Variable", Score: 0.3},
+		{Name: "C", Kind: "Variable", Score: 0.1},
+	}}}
+	// "a.go\n  var  A\n" is 14 bytes; the long symbol's line takes 49 more, so it misses a budget of
+	// 8 tokens (32 bytes). C's line is 9 bytes and would still fit, but it scores lower than the
+	// symbol that missed: filling stops there, as docs/map.md says, and C is not taken.
+	if got := Text(Fit(files, 8)); got != "a.go\n  var  A\n" {
+		t.Errorf("budget 8: %q, want only A", got)
+	}
+}
+
 func TestFitIsDeterministic(t *testing.T) {
 	idx := synthetic(300, 8, 40)
 	a := Text(Fit(Rank(idx, nil).Files, 2000))
