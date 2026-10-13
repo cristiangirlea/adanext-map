@@ -135,6 +135,11 @@ func TestMain(m *testing.M) {
 		os.Stdout.WriteString(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","isUsingOverage":true},"session_id":"o"}` + "\n")
 		time.Sleep(20 * time.Second)
 		os.Exit(0)
+	case "agent-rejected": // a CLI whose plan refused the request, then waits
+		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"r","apiKeySource":"none"}` + "\n")
+		os.Stdout.WriteString(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1792317600,"isUsingOverage":false},"session_id":"r"}` + "\n")
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
 	case "agent-hang": // a worker that says it started, then works until stopped
 		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte("started\n"), 0o644)
 		time.Sleep(20 * time.Second)
@@ -1147,6 +1152,37 @@ func TestOverageStopsTheExecutionAndKeepsTheMarker(t *testing.T) {
 		t.Fatalf("resume: err %v", err)
 	}
 	if recs, _ := record.ReadDir(o.RecordsDir); len(recs) != 7 {
+		t.Fatalf("resume: %d records", len(recs))
+	}
+}
+
+// A rate_limit_event whose status is "rejected" is the plan refusing the request: the plan's
+// limit. The CLI is stopped, no record is written, the run leaves a .limited note and no marker,
+// and resume runs it again.
+func TestARejectedMeterIsThePlansLimit(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-rejected"}
+	start := time.Now()
+	err := runner.Execute(context.Background(), o)
+	if !errors.Is(err, runner.ErrPlanLimit) || !strings.Contains(err.Error(), "rejected") || !strings.Contains(err.Error(), "again") {
+		t.Fatalf("err %v", err)
+	}
+	if d := time.Since(start); d > 15*time.Second {
+		t.Fatalf("the CLI was not stopped (%s)", d)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	started, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+	if len(recs) != 0 || len(started) != 0 || len(limited) != 1 {
+		t.Fatalf("%d records, started %v, limited %v", len(recs), started, limited)
+	}
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent"}
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if recs, _ := record.ReadDir(o.RecordsDir); len(recs) != 8 {
 		t.Fatalf("resume: %d records", len(recs))
 	}
 }

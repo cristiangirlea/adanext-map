@@ -344,3 +344,23 @@ func TestClaudeWatchRefusesOverage(t *testing.T) {
 		}
 	}
 }
+
+// A rejected meter is the plan's limit, not a refusal for billing; overage in use wins over it.
+func TestClaudeWatchTakesARejectedMeterForThePlansLimit(t *testing.T) {
+	init := `{"type":"system","subtype":"init","apiKeySource":"none"}`
+	rejected := `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"seven_day","resetsAt":1792317600}}`
+	for _, lines := range [][]string{{rejected}, {init, rejected}} {
+		if _, err := watchLines(t, lines); !errors.Is(err, runner.ErrPlanLimit) || errors.Is(err, runner.ErrOverage) || !strings.Contains(err.Error(), "seven_day") {
+			t.Errorf("%q: watch says %v", lines, err)
+		}
+	}
+	both := `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","isUsingOverage":true}}`
+	if _, err := watchLines(t, []string{init, both}); !errors.Is(err, runner.ErrOverage) || errors.Is(err, runner.ErrPlanLimit) {
+		t.Errorf("overage and rejected: watch says %v", err)
+	}
+	for _, status := range []string{"allowed", "allowed_warning"} {
+		if _, err := watchLines(t, []string{init, `{"type":"rate_limit_event","rate_limit_info":{"status":"` + status + `"}}`}); err != nil {
+			t.Errorf("%s: watch says %v", status, err)
+		}
+	}
+}

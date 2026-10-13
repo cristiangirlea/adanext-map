@@ -123,7 +123,8 @@ func (Claude) Command(c Cell) (Invocation, error) {
 // only when the init shows the subscription login (apiKeySource "none"). Any other source, a
 // missing one, or a turn (or any event but a system or rate_limit_event one) before the init stops
 // it; an init that never comes is bounded by the attempt's timeout. Before the init and after it,
-// a rate_limit_event (the plan's meter) that shows overage in use stops it too. It is a backstop,
+// a rate_limit_event (the plan's meter) that shows overage in use stops it too, and one whose
+// status is "rejected" stops it as the plan's limit (ErrPlanLimit). It is a backstop,
 // not a gate: the CLI starts its first request right after writing the init, so at most one
 // request can get through before the process is stopped.
 func subscriptionOnly() func(line []byte) error {
@@ -144,6 +145,15 @@ func subscriptionOnly() func(line []byte) error {
 		if e.Type == "rate_limit_event" {
 			if field := overageInUse(e.Info, false, "rate_limit_info"); field != "" {
 				return fmt.Errorf("the plan's meter shows %w at %s: the CLI was stopped", ErrOverage, field)
+			}
+			if e.Info["status"] == "rejected" {
+				// The plan refused the request: its limit, which resume runs again after.
+				window, _ := e.Info["rateLimitType"].(string)
+				reset := "unknown"
+				if at, ok := e.Info["resetsAt"].(float64); ok && at > 0 {
+					reset = time.Unix(int64(at), 0).Local().Format("2006-01-02 15:04 MST")
+				}
+				return fmt.Errorf("the plan's meter says the request was rejected (window %q, resets %s): %w", window, reset, ErrPlanLimit)
 			}
 		}
 		if seen {
