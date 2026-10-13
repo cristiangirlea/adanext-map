@@ -207,3 +207,24 @@ func TestDecodeSkipsAnUnknownFieldAtTheDepthLimit(t *testing.T) {
 		t.Fatalf("a value nested %d deep: %v", n, err)
 	}
 }
+
+func TestLoadErrorsFromTheStreamReadAsSentences(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := LoadLimited(repo, commitA, 1<<10)
+	if err == nil || strings.Contains(err.Error(), "the store has decompresses") ||
+		!strings.Contains(err.Error(), "store.json.gz: decompresses to more than the limit of 1024 bytes") {
+		t.Errorf("byte limit err = %v, want the file, a colon, then the limit", err)
+	}
+	rewriteHeader(t, repo, func(h map[string]any) {
+		h["counts"] = map[string]any{"documents": 0, "symbols": 0, "occurrences": 0}
+	})
+	lim := model.DefaultLimits()
+	lim.Documents = 1
+	_, _, err = load(repo, commitA, MaxLoadBytes, lim)
+	if err == nil || !strings.Contains(err.Error(), "store.json.gz: the store has more than the limit of 1 documents") {
+		t.Errorf("count limit err = %v, want the file, a colon, then \"the store has more than the limit\"", err)
+	}
+}

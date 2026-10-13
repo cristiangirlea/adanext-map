@@ -25,7 +25,7 @@ func decodeIndex(r io.Reader, lim model.Limits) (*model.Index, error) {
 		case "documents":
 			idx.Documents, err = readArray(d, func(doc *model.Document) error {
 				if d.docs++; d.docs > lim.Documents {
-					return model.ErrOverLimit("documents", lim.Documents)
+					return d.over("documents", lim.Documents)
 				}
 				return d.document(doc)
 			})
@@ -62,7 +62,7 @@ func (d *decoder) document(doc *model.Document) error {
 		case "occurrences":
 			doc.Occurrences, err = readArray(d, func(o *model.Occurrence) error {
 				if d.occs++; d.occs > d.lim.Occurrences {
-					return model.ErrOverLimit("occurrences", d.lim.Occurrences)
+					return d.over("occurrences", d.lim.Occurrences)
 				}
 				return d.dec.Decode(o)
 			})
@@ -75,7 +75,7 @@ func (d *decoder) document(doc *model.Document) error {
 
 func (d *decoder) symbol(s *model.Symbol) error {
 	if d.syms++; d.syms > d.lim.Symbols {
-		return model.ErrOverLimit("symbols", d.lim.Symbols)
+		return d.over("symbols", d.lim.Symbols)
 	}
 	return d.object(func(key string) (err error) {
 		switch key {
@@ -94,7 +94,7 @@ func (d *decoder) symbol(s *model.Symbol) error {
 		case "relationships":
 			s.Relationships, err = readArray(d, func(rel *model.Relationship) error {
 				if d.rels++; d.rels > d.lim.Relationships {
-					return model.ErrOverLimit("relationships", d.lim.Relationships)
+					return d.over("relationships", d.lim.Relationships)
 				}
 				return d.dec.Decode(rel)
 			})
@@ -103,6 +103,11 @@ func (d *decoder) symbol(s *model.Symbol) error {
 		}
 		return err
 	})
+}
+
+// over is the error for passing a count limit, worded as the store's own.
+func (d *decoder) over(what string, max int) error {
+	return fmt.Errorf("the store has %w", model.ErrOverLimit(what, max))
 }
 
 // object walks the JSON object at the decoder's position, calling field with each key; field must

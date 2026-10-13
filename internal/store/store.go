@@ -213,7 +213,7 @@ func load(repo, commit string, limit int64, lim model.Limits) (Header, *model.In
 	}
 	idx, err := decodeIndex(&limitedReader{r: gz, left: limit, limit: limit}, lim)
 	if err != nil {
-		return Header{}, nil, fmt.Errorf("%s: the store has %w", filepath.Join(dir, storeFile), err)
+		return Header{}, nil, fmt.Errorf("%s: %w", filepath.Join(dir, storeFile), err)
 	}
 	for i, d := range idx.Documents {
 		if err := model.CheckPath(d.Path); err != nil {
