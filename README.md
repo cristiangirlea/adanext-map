@@ -1,9 +1,9 @@
 # adamap — a code map for AI agents
 
 **Status: being built; nothing to install yet.** [PLAN.md](PLAN.md) lists the slices in the order
-they land. The commands so far are `adamap version`, `adamap help`, `adamap index` and the five
-queries `adamap outline`, `find`, `refs`, `callers` and `impact` ([docs/queries.md](docs/queries.md));
-`map` and `mcp` are still to come.
+they land. The commands so far are `adamap version`, `adamap help`, `adamap index`, the five
+queries `adamap outline`, `find`, `refs`, `callers` and `impact` ([docs/queries.md](docs/queries.md))
+and `adamap map` ([docs/map.md](docs/map.md)); `mcp` is still to come.
 
 What adamap is for: coding agents need exact code navigation, and today that means keeping a
 language server running per language, or parsing the code approximately. adamap will instead read
