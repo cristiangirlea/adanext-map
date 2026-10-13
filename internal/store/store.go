@@ -130,7 +130,7 @@ func ensureGitignore(dir string) error {
 	fi, err := os.Lstat(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return writeAtomic(dir, gitignoreFile, writeBytes([]byte("*\n")))
+		return createNew(dir, gitignoreFile, []byte("*\n"))
 	case err != nil:
 		return err
 	case fi.Mode()&fs.ModeSymlink != 0:
