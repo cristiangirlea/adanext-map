@@ -15,7 +15,7 @@ updates this file in that pull request. Tracking issue: #7.
 - [x] 4. map: a ranked repo map within a token budget (#4)
   Done: PR #32, 2026-10-13.
 - [x] 5. mcp: serve the queries to agents (#5)
-  Done: PR #?, 2026-10-13.
+  Done: PR #33, 2026-10-13.
 - [ ] 6. bench: measure against no tool, LSP, Serena and CodeGraph (#6)
 
 Later, each as its own issue when its turn comes: scip-typescript; re-indexing on commit (a git
