@@ -116,7 +116,11 @@ The claude adapter runs `claude -p --output-format stream-json --verbose --model
 --permission-mode <mode> --setting-sources user --strict-mcp-config --mcp-config <state>/mcp.json
 --settings <state>/settings.json --allowedTools <fixed tools plus the condition's>
 [--disallowedTools ...] [--append-system-prompt <map>]`. The condition's MCP server is the only one
-the session has, and the task repository's own `.claude/settings.json` is never loaded.
+the session has, and the task repository's own `.claude/settings.json` is never loaded. The runner
+reads the transcript as it streams: unless the `system`/`init` event, which comes before the first
+model call, gives `apiKeySource` `"none"` (the subscription login), the CLI is killed there, no
+record is written and the execution stops. A missing `apiKeySource`, or a turn before the init
+event, counts as API billing.
 
 Not yet controlled, and to settle in the wiring smoke before the pilot: the CLI also reads the
 user's own settings and memory files, and the worker is not sandboxed from the network or from

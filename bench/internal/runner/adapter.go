@@ -31,7 +31,9 @@ type Cell struct {
 }
 
 // Invocation is one attempt's process: the program and arguments, where it runs, what it adds to
-// the scrubbed environment, the prompt on stdin, the timeout, and the files written first.
+// the scrubbed environment, the prompt on stdin, the timeout, and the files written first. Watch,
+// when set, sees each line of stdout as it comes; an error from it kills the process and stops
+// the execution.
 type Invocation struct {
 	Argv    []string
 	Dir     string
@@ -39,6 +41,7 @@ type Invocation struct {
 	Stdin   string
 	Timeout time.Duration
 	Files   map[string]string
+	Watch   func(line []byte) error
 }
 
 // Outcome is what an adapter reads from an attempt's output.
@@ -107,7 +110,38 @@ func (Claude) Command(c Cell) (Invocation, error) {
 		Argv: argv, Dir: c.Workspace, Env: envList(c.Backend.Env, c.Condition.Env), Stdin: c.Task.Prompt,
 		Timeout: time.Duration(c.Execution.TimeoutSeconds) * time.Second,
 		Files:   map[string]string{mcpPath: string(mcp) + "\n", setPath: string(set) + "\n"},
+		Watch:   subscriptionOnly(),
 	}, nil
+}
+
+// subscriptionOnly watches a stream-json transcript for its init event, which comes before the
+// first model call, and lets the session go on only when the init shows the subscription login
+// (apiKeySource "none"). Any other source, a missing one, or a turn before the init stops it.
+func subscriptionOnly() func(line []byte) error {
+	seen := false
+	return func(line []byte) error {
+		var e struct {
+			Type, Subtype string
+			APIKeySource  *string `json:"apiKeySource"`
+		}
+		if seen || json.Unmarshal(line, &e) != nil {
+			return nil
+		}
+		switch {
+		case e.Type == "system" && e.Subtype == "init":
+			if e.APIKeySource == nil {
+				return fmt.Errorf("the CLI's init event gives no apiKeySource, so its login is unknown: refused as possible API billing")
+			}
+			if *e.APIKeySource != "none" {
+				return fmt.Errorf("the CLI's init event gives apiKeySource %q, not the subscription login (\"none\"): refused as API billing", *e.APIKeySource)
+			}
+			seen = true
+			return nil
+		case e.Type == "system":
+			return nil
+		}
+		return fmt.Errorf("a %q event came before the CLI's init event, so its login (apiKeySource) is unknown: refused as possible API billing", e.Type)
+	}
 }
 
 func (Claude) Parse(stdout []byte, b manifest.Backend) Outcome { return parseStreamJSON(stdout, b) }
@@ -277,8 +311,8 @@ func resultText(raw json.RawMessage) string {
 }
 
 // Fake stands in for a coding CLI in tests and synthetic manifests: Program (with Env) is started
-// with the prompt on stdin and must print a stream-json transcript, as FakeAgent does. It is
-// never a model.
+// with the prompt on stdin and must print a stream-json transcript whose init event shows the
+// subscription login, as FakeAgent does. It is never a model.
 type Fake struct {
 	Program []string
 	Env     []string
@@ -292,6 +326,7 @@ func (f Fake) Command(c Cell) (Invocation, error) {
 		Argv: slices.Clone(f.Program), Dir: c.Workspace, Stdin: c.Task.Prompt,
 		Env:     append(slices.Clone(f.Env), envList(c.Backend.Env, c.Condition.Env)...),
 		Timeout: time.Duration(c.Execution.TimeoutSeconds) * time.Second,
+		Watch:   subscriptionOnly(),
 	}, nil
 }
 
@@ -306,7 +341,7 @@ func FakeAgent(stdin io.Reader, stdout io.Writer, attempt, failUntil int) int {
 		data, _ := json.Marshal(v)
 		stdout.Write(append(data, '\n'))
 	}
-	emit(map[string]any{"type": "system", "subtype": "init", "session_id": session, "synthetic": true})
+	emit(map[string]any{"type": "system", "subtype": "init", "session_id": session, "apiKeySource": "none", "synthetic": true})
 	if attempt <= failUntil {
 		return 1
 	}

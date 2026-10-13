@@ -63,6 +63,14 @@ func TestMain(m *testing.M) {
 	case "sleep":
 		time.Sleep(20 * time.Second)
 		os.Exit(0)
+	case "agent-billing": // a CLI that announces API billing, then works on
+		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"b","apiKeySource":"ANTHROPIC_API_KEY"}` + "\n")
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
+	case "agent-nosource": // a CLI whose init event does not say its login
+		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"n"}` + "\n")
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
 	case "agent-where": // a worker that says where it runs
 		wd, _ := os.Getwd()
 		f, err := os.OpenFile(os.Getenv("BENCH_TEST_WHERE"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -614,5 +622,27 @@ func TestACheckThatTimesOutFails(t *testing.T) {
 	}
 	if p := record.Check(m, recs); len(p) != 0 {
 		t.Fatalf("problems %v", p)
+	}
+}
+
+// A CLI that is not on the subscription login is stopped at its init event, before a turn: the
+// process is killed, no record is written, and the execution stops.
+func TestExecuteStopsACLIThatIsNotOnTheSubscriptionLogin(t *testing.T) {
+	src, pre, fix := repo(t)
+	for _, helper := range []string{"agent-billing", "agent-nosource"} {
+		m := smoke(t, pre, fix)
+		o := options(t, m, src, 8)
+		o.Fake.Env = []string{"BENCH_TEST_HELPER=" + helper}
+		start := time.Now()
+		err := runner.Execute(context.Background(), o)
+		if err == nil || !strings.Contains(err.Error(), "apiKeySource") {
+			t.Fatalf("%s: err %v", helper, err)
+		}
+		if d := time.Since(start); d > 15*time.Second {
+			t.Fatalf("%s: the CLI was not stopped (%s)", helper, d)
+		}
+		if recs, _ := record.ReadDir(o.RecordsDir); len(recs) != 0 {
+			t.Fatalf("%s: %d records written", helper, len(recs))
+		}
 	}
 }

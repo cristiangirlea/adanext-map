@@ -163,3 +163,37 @@ func TestClaudeParseWithoutAResultHasNoUsage(t *testing.T) {
 		t.Fatalf("a failed result keeps its usage and says why: %+v", o)
 	}
 }
+
+// The claude invocation watches its stream for the init event: only the subscription login
+// (apiKeySource "none") goes on. Another source, a missing one, or a turn before the init stops it.
+func TestClaudeWatchGoesOnOnlyOnTheSubscriptionLogin(t *testing.T) {
+	m := benchtest.Pilot()
+	cases := []struct {
+		name  string
+		lines []string
+		ok    bool
+	}{
+		{"subscription", []string{`{"type":"system","subtype":"init","apiKeySource":"none"}`, `{"type":"assistant","message":{}}`}, true},
+		{"hooks first", []string{"not json", `{"type":"system","subtype":"hook_started"}`, `{"type":"system","subtype":"init","apiKeySource":"none"}`}, true},
+		{"an api key", []string{`{"type":"system","subtype":"init","apiKeySource":"ANTHROPIC_API_KEY"}`}, false},
+		{"a key helper", []string{`{"type":"system","subtype":"init","apiKeySource":"apiKeyHelper"}`}, false},
+		{"no source", []string{`{"type":"system","subtype":"init","session_id":"s"}`}, false},
+		{"a null source", []string{`{"type":"system","subtype":"init","apiKeySource":null}`}, false},
+		{"a turn before init", []string{`{"type":"assistant","message":{}}`}, false},
+	}
+	for _, c := range cases {
+		inv, err := runner.Claude{}.Command(cell(m, "none"))
+		if err != nil || inv.Watch == nil {
+			t.Fatalf("%s: no watch (%v)", c.name, err)
+		}
+		var got error
+		for _, l := range c.lines {
+			if got = inv.Watch([]byte(l)); got != nil {
+				break
+			}
+		}
+		if (got == nil) != c.ok {
+			t.Fatalf("%s: watch says %v", c.name, got)
+		}
+	}
+}

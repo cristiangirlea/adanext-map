@@ -206,7 +206,7 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 			}
 		}
 		start := time.Now()
-		res := runProcess(ctx, inv.Argv, inv.Dir, append(slices.Concat(env, inv.Env), "ADAMAP_BENCH_ATTEMPT="+strconv.Itoa(n)), inv.Stdin, inv.Timeout)
+		res := runWatched(ctx, inv.Argv, inv.Dir, append(slices.Concat(env, inv.Env), "ADAMAP_BENCH_ATTEMPT="+strconv.Itoa(n)), inv.Stdin, inv.Timeout, inv.Watch)
 		wall := time.Since(start).Milliseconds()
 		transcript := filepath.Join(c.StateDir, fmt.Sprintf("attempt-%d.jsonl", n))
 		if err := os.WriteFile(transcript, res.stdout, 0o644); err != nil {
@@ -214,6 +214,10 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 		}
 		if err := os.WriteFile(filepath.Join(c.StateDir, fmt.Sprintf("attempt-%d.stderr", n)), res.stderr, 0o644); err != nil {
 			return nil, err
+		}
+		if res.refused != nil {
+			// Stopped before its first turn: nothing to record, and every later run would bill the same way.
+			return nil, fmt.Errorf("attempt %d stopped: %w", n, res.refused)
 		}
 		out := ad.Parse(res.stdout, c.Backend)
 		a := record.Attempt{N: n, WallMS: wall, Exit: res.exit, TimedOut: res.timedOut, SessionID: out.SessionID,
@@ -414,11 +418,19 @@ type processResult struct {
 	exit           int
 	timedOut       bool
 	err            error
+	// refused is the watch's error, when it stopped the process.
+	refused error
 }
 
 // runProcess runs argv in dir with exactly env, stdin, and a timeout; a program that cannot start
 // is an error with exit -1.
 func runProcess(ctx context.Context, argv []string, dir string, env []string, stdin string, timeout time.Duration) processResult {
+	return runWatched(ctx, argv, dir, env, stdin, timeout, nil)
+}
+
+// runWatched is runProcess with watch seeing each line of stdout as it comes: the first error
+// from it kills the process and is the result's refused.
+func runWatched(ctx context.Context, argv []string, dir string, env []string, stdin string, timeout time.Duration, watch func([]byte) error) processResult {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
@@ -426,11 +438,14 @@ func runProcess(ctx context.Context, argv []string, dir string, env []string, st
 	cmd.Stdin = strings.NewReader(stdin)
 	cmd.WaitDelay = 10 * time.Second
 	var out, errOut bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errOut
+	lw := &lineWatcher{out: &out, watch: watch, stop: cancel}
+	cmd.Stdout, cmd.Stderr = lw, &errOut
 	err := cmd.Run()
-	res := processResult{stdout: out.Bytes(), stderr: errOut.Bytes()}
+	res := processResult{stdout: out.Bytes(), stderr: errOut.Bytes(), refused: lw.err}
 	var exit *exec.ExitError
 	switch {
+	case lw.err != nil:
+		res.exit, res.err = -1, lw.err
 	case ctx.Err() == context.DeadlineExceeded:
 		res.timedOut, res.exit = true, -1
 		res.err = fmt.Errorf("timed out after %s", timeout)
@@ -440,6 +455,37 @@ func runProcess(ctx context.Context, argv []string, dir string, env []string, st
 		res.exit, res.err = -1, err
 	}
 	return res
+}
+
+// lineWatcher keeps a process's stdout and hands each complete line to watch until watch errs;
+// then it stops the process. exec writes to it from one goroutine and Wait waits for that one.
+type lineWatcher struct {
+	out     *bytes.Buffer
+	watch   func([]byte) error
+	stop    func()
+	partial []byte
+	err     error
+}
+
+func (w *lineWatcher) Write(p []byte) (int, error) {
+	w.out.Write(p)
+	if w.watch == nil || w.err != nil {
+		return len(p), nil
+	}
+	w.partial = append(w.partial, p...)
+	for {
+		i := bytes.IndexByte(w.partial, '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		line := w.partial[:i]
+		w.partial = w.partial[i+1:]
+		if err := w.watch(line); err != nil {
+			w.err = err
+			w.stop()
+			return len(p), nil
+		}
+	}
 }
 
 func firstLine(texts ...[]byte) string {
