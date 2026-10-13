@@ -131,8 +131,9 @@ func runIndex(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// resolveCommit is the given commit, or git's HEAD in repo and whether tracked files have changes
-// since it. A given commit is taken as the caller says, and git is not asked.
+// resolveCommit is the given commit, or git's HEAD in repo and whether files in repo have changes
+// since it: tracked files, and untracked ones that .gitignore does not hide, which an indexer would
+// compile as well. A given commit is taken as the caller says, and git is not asked.
 func resolveCommit(repo, given string) (string, bool, error) {
 	if given != "" {
 		return given, false, nil
@@ -148,7 +149,10 @@ func resolveCommit(repo, given string) (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("cannot tell whether %s has changes: %w; pass --commit with its full hash", repo, err)
 	}
-	status, err := gitRun(repo, off, "status", "--porcelain", "--untracked-files=no", "--ignore-submodules=dirty")
+	// The pathspec keeps the check to repo when it is a subdirectory of the work tree, and leaves out
+	// its own store, which a .gitignore of the owner's can list.
+	status, err := gitRun(repo, off, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=dirty",
+		"--", ".", ":(exclude)"+store.DirName)
 	if err != nil {
 		return "", false, fmt.Errorf("cannot tell whether %s has changes: %w", repo, err)
 	}
