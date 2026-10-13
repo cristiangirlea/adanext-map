@@ -30,6 +30,13 @@ changes, the store is still filed under `HEAD`, but its header says `dirty: true
 line says `(dirty)`. Untracked files do not count. With `--commit`, git is not asked: the index is
 taken to describe that commit, as the caller says.
 
+adamap runs git with `--no-optional-locks` and with `core.fsmonitor` and `core.hooksPath` overridden,
+so the `core.fsmonitor` command and the hooks in the repository's own `.git` do not run. It also
+sets `GIT_NO_LAZY_FETCH=1`, so a partial clone with a missing object fails instead of fetching it
+through the repository's `remote.<name>.uploadpack` or `core.sshCommand`. A clean filter the
+repository defines still can run, when git compares a file whose timestamp changed: for a
+repository you do not trust, pass `--commit` and git is not run at all.
+
 ## Which indexer
 
 Without `--scip`, adamap looks at the repository root and runs the first indexer that fits, with the
@@ -65,8 +72,11 @@ A backslash in a document path is read as `/` (SCIP specifies `/`, but indexers 
 
 A document whose path leaves the project (absolute: `/x`, `C:...`, a UNC path; or with a `..` that
 escapes) or names the project root itself (`pkg/..`) is skipped with its occurrences and symbols,
-unread, and `adamap index` prints `skipped N documents outside the project` on stderr and still
+unread, and `adamap index` prints `skipped N documents adamap cannot store (outside the project or not a safe file name)` on stderr and still
 writes the store. Indexers on Windows list such a document: the test main Go builds in its cache.
+A document path with a NUL or other control character, a `:`, or a Windows device name in any
+segment (`nul`, `con.txt`, `pkg/aux.go`, `COM1`, `lpt¹`, `CONIN$`, `CONOUT$`; any case, trailing dots and spaces ignored)
+is skipped the same way and refused at load, on every OS, so a Linux store is safe on Windows.
 The checks above (ranges, symbols) apply to the documents that are kept.
 
 Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice is
@@ -91,6 +101,7 @@ written earlier still load. The limits are not flags.
 
 ```text
 <repo>/.adamap/
+  .gitignore                   `*`, so git ignores the stores; written if missing, never replaced
   latest                       the commit written last, one line
   <commit>/
     header.json                what the store holds, plain JSON

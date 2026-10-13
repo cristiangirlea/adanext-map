@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,8 @@ const (
 	headerFile = "header.json"
 	storeFile  = "store.json.gz"
 	latestFile = "latest"
+
+	gitignoreFile = ".gitignore"
 )
 
 // Header describes a store. Fields are only added, with omitempty.
@@ -70,6 +73,9 @@ func Write(repo string, h Header, idx *model.Index) (string, error) {
 		return "", err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	if err := ensureGitignore(filepath.Join(repo, DirName)); err != nil {
 		return "", err
 	}
 	if err := os.Remove(filepath.Join(dir, headerFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -117,16 +123,87 @@ func checkDirs(repo, dir string) error {
 	return nil
 }
 
+// ensureGitignore gives dir a .gitignore of `*` unless it has one, so the stores show up in no
+// repository's `git status` and cannot be committed by mistake. An existing file is the user's and
+// is left as it is; a link, or anything but a regular file, is refused, as git does not read one.
+func ensureGitignore(dir string) error {
+	path := filepath.Join(dir, gitignoreFile)
+	fi, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return createNew(dir, gitignoreFile, []byte("*\n"))
+	case err != nil:
+		return err
+	case fi.Mode()&fs.ModeSymlink != 0:
+		return fmt.Errorf("%s is a symbolic link: adamap will not write a store beside one", path)
+	case !fi.Mode().IsRegular():
+		return fmt.Errorf("%s is not a regular file", path)
+	}
+	return nil
+}
+
+// createNew writes content to dir/name only if nothing is there: the file is completed under a
+// temporary name first, so a reader never sees half of it, and then published without replacing
+// whatever appeared at the path since the caller looked.
+func createNew(dir, name string, content []byte) error {
+	tmp, err := writeTemp(dir, name, writeBytes(content))
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	return publishNew(tmp, filepath.Join(dir, name), content)
+}
+
+// publishNew links tmp to path, which fails if path exists; a file already there is the user's and
+// counts as success. A filesystem that cannot link gets the same guarantee from an exclusive create.
+func publishNew(tmp, path string, content []byte) error {
+	err := os.Link(tmp, path)
+	if err == nil || errors.Is(err, fs.ErrExist) {
+		return nil
+	}
+	f, openErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if errors.Is(openErr, fs.ErrExist) {
+		return nil
+	}
+	if openErr != nil {
+		return fmt.Errorf("%w (and %v)", err, openErr)
+	}
+	// The exclusive create made this file, so on a failed write it is ours to remove: left behind,
+	// a short file would pass for the user's own next time.
+	_, werr := f.Write(content)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		os.Remove(path)
+		return werr
+	}
+	return nil
+}
+
 func writeBytes(b []byte) func(io.Writer) error {
 	return func(w io.Writer) error { _, err := w.Write(b); return err }
 }
 
 // writeAtomic writes name in dir through a temporary file in the same directory, renamed into
 // place once complete, so a reader sees the old file or the new one, never half of one.
-func writeAtomic(dir, name string, write func(io.Writer) error) (err error) {
-	f, err := os.CreateTemp(dir, "."+name+".*.tmp")
+func writeAtomic(dir, name string, write func(io.Writer) error) error {
+	tmp, err := writeTemp(dir, name, write)
 	if err != nil {
 		return err
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// writeTemp writes name's content to a synced temporary file in dir and returns its path.
+func writeTemp(dir, name string, write func(io.Writer) error) (tmp string, err error) {
+	f, err := os.CreateTemp(dir, "."+name+".*.tmp")
+	if err != nil {
+		return "", err
 	}
 	defer func() {
 		if err != nil {
@@ -135,15 +212,15 @@ func writeAtomic(dir, name string, write func(io.Writer) error) (err error) {
 		}
 	}()
 	if err = write(f); err != nil {
-		return fmt.Errorf("write %s: %w", name, err)
+		return "", fmt.Errorf("write %s: %w", name, err)
 	}
 	if err = f.Sync(); err != nil {
-		return err
+		return "", err
 	}
 	if err = f.Close(); err != nil {
-		return err
+		return "", err
 	}
-	return os.Rename(f.Name(), filepath.Join(dir, name))
+	return f.Name(), nil
 }
 
 // MaxLoadBytes is how much Load decompresses before giving up: a repository can carry a planted
@@ -187,7 +264,7 @@ func load(repo, commit string, limit int64, lim model.Limits) (Header, *model.In
 	case h.Format > FormatVersion:
 		need := "a newer adamap"
 		if h.Adamap != "" {
-			need = "adamap " + h.Adamap + " or later"
+			need = "adamap " + strconv.Quote(h.Adamap) + " or later"
 		}
 		return Header{}, nil, fmt.Errorf("the store in %s is format %d; this adamap reads format %d: "+
 			"use %s, or rebuild it with `adamap index`", dir, h.Format, FormatVersion, need)
