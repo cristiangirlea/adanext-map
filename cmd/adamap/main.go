@@ -43,6 +43,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runMap(args[1:], stdout, stderr)
 	case "mcp":
 		return runMCP(args[1:], os.Stdin, stdout, stderr)
+	case "install":
+		return runInstall(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		usage(stdout)
 		return 0
@@ -67,6 +69,7 @@ commands:
   impact    list what depends on a symbol or a file, transitively
   map       print the files and symbols that matter most, within a token budget (adamap map -h)
   mcp       serve the map and the queries as MCP tools on stdin and stdout (adamap mcp -h)
+  install   print or write the entry an agent host needs to start adamap mcp (adamap install -h)
 
 The queries and map read the store that "adamap index" wrote; each takes --repo, --commit and
 --json (adamap <command> -h).
