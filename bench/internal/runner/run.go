@@ -282,9 +282,14 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 		}
 		r.Attempts = append(r.Attempts, a)
 		answer = out.Answer
-		if a.Completed() {
+		if a.Completed() || ctx.Err() != nil {
 			break
 		}
+	}
+	// Interrupted during an attempt: leave the tree as it is for whoever looks at it, with no
+	// record and the marker in place.
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	r.Answer, r.AnswerSHA256 = answer, record.SHA256(answer)
 	// A worker that committed moved HEAD: put it back, keeping the tree and the index, so the

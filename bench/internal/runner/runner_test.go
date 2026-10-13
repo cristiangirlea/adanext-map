@@ -93,6 +93,17 @@ func TestMain(m *testing.M) {
 		}
 		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
 		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
+	case "agent-commit-hang": // a worker that commits, says where it runs, then works until stopped
+		os.WriteFile("b.go", []byte("package a\n\nfunc B() {}\n"), 0o644)
+		for _, args := range [][]string{{"add", "b.go"}, {"-c", "user.name=w", "-c", "user.email=w@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "worker"}} {
+			if err := exec.Command("git", args...).Run(); err != nil {
+				os.Exit(1)
+			}
+		}
+		wd, _ := os.Getwd()
+		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte(wd+"\n"), 0o644)
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
 	case "agent-hang": // a worker that says it started, then works until stopped
 		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte("started\n"), 0o644)
 		time.Sleep(20 * time.Second)
@@ -866,5 +877,45 @@ func TestTheFixOverlayRefusesALinkOutOfTheWorkspace(t *testing.T) {
 		if left, _ := os.ReadDir(out); len(left) != 0 {
 			t.Fatalf("%s: the fix was written outside the workspace: %v", mode, left)
 		}
+	}
+}
+
+// An execution cancelled during an attempt stops there: the steps after the attempts (putting a
+// committed HEAD back, the fingerprint, the checks) do not touch a tree the interruption cut short.
+func TestACancelledAttemptStopsBeforeTheGradingSteps(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	m.Tasks[1].Checks[0].Type = manifest.CheckCommand // --keep refuses a fix-tests check
+	o := options(t, m, src, 8)
+	o.Keep = true
+	where := filepath.Join(t.TempDir(), "where.txt")
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-commit-hang", "BENCH_TEST_WHERE=" + where}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for ctx.Err() == nil {
+			if _, err := os.Stat(where); err == nil {
+				cancel()
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	if err := runner.Execute(ctx, o); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err %v", err)
+	}
+	data, err := os.ReadFile(where)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := strings.TrimSpace(strings.SplitN(string(data), "\n", 2)[0])
+	defer os.RemoveAll(filepath.Dir(ws))
+	if head := gitIn(t, ws, "rev-parse", "HEAD"); head == pre {
+		t.Fatal("HEAD was put back after the attempt was cancelled")
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	markers, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+	if len(recs) != 0 || len(markers) != 1 {
+		t.Fatalf("%d records, markers %v", len(recs), markers)
 	}
 }
