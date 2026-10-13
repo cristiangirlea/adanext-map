@@ -91,6 +91,9 @@ func Execute(ctx context.Context, o Options) error {
 	env := scrub(o.Environ)
 	var started []string
 	for _, run := range m.Plan() {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("stopped before run %s: %w", run.ID, err)
+		}
 		if _, err := os.Stat(filepath.Join(o.RecordsDir, run.ID+".json")); err == nil {
 			fmt.Fprintf(o.Log, "run %s: recorded already, skipped\n", run.ID)
 			continue
@@ -191,6 +194,10 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 		if res.exit != 0 || res.err != nil {
 			r.Unsupported = fmt.Sprintf("probe %q failed (exit %d): %s", strings.Join(c.Condition.Probe, " "), res.exit, firstLine(res.stderr, res.stdout))
 			r.After = r.Source
+			// An interrupted probe says nothing about support: no record.
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			return r, nil
 		}
 	}
@@ -300,6 +307,11 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 			return nil, fmt.Errorf("check %s: %w", ch.ID, err)
 		}
 		r.Checks = append(r.Checks, res)
+	}
+	// An interrupted run's attempts and checks failed for the interruption, not for the worker:
+	// no record, so it is not taken for a result. Its marker stays.
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return r, nil
 }

@@ -3,6 +3,7 @@ package runner_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,6 +82,10 @@ func TestMain(m *testing.M) {
 		f.Close()
 		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
 		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
+	case "agent-hang": // a worker that says it started, then works until stopped
+		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte("started\n"), 0o644)
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
 	case "index":
 		if err := os.MkdirAll(".idx", 0o755); err != nil {
 			os.Exit(1)
@@ -703,5 +708,55 @@ func TestResumeDoesNotStartARunThatStartedAgain(t *testing.T) {
 	}
 	if markers, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started")); len(markers) != 0 {
 		t.Fatalf("markers left %v", markers)
+	}
+}
+
+// An interrupted execution (Ctrl-C cancels the context) writes no record for a run it did not
+// finish: before the first run nothing at all, and during a run only the marker, which says why.
+func TestACancelledExecutionWritesNoRecord(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runner.Execute(ctx, o)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err %v", err)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	markers, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+	if len(recs) != 0 || len(markers) != 0 {
+		t.Fatalf("cancelled before the first run: %d records, markers %v", len(recs), markers)
+	}
+
+	o = options(t, m, src, 8)
+	where := filepath.Join(t.TempDir(), "where.txt")
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-hang", "BENCH_TEST_WHERE=" + where}
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for ctx.Err() == nil {
+			if _, err := os.Stat(where); err == nil {
+				cancel()
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	start := time.Now()
+	err = runner.Execute(ctx, o)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err %v", err)
+	}
+	if d := time.Since(start); d > 15*time.Second {
+		t.Fatalf("the agent was not stopped (%s)", d)
+	}
+	recs, _ = record.ReadDir(o.RecordsDir)
+	markers, _ = filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+	if len(recs) != 0 || len(markers) != 1 {
+		t.Fatalf("cancelled during a run: %d records, markers %v", len(recs), markers)
+	}
+	if text, _ := os.ReadFile(markers[0]); !strings.Contains(string(text), "context canceled") {
+		t.Fatalf("the marker does not say why: %q", text)
 	}
 }
