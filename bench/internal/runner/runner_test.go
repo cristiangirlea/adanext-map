@@ -1236,3 +1236,69 @@ func TestARecordKeepsThePlansMeter(t *testing.T) {
 		t.Fatalf("the records do not keep their own run's reading: %v", seen)
 	}
 }
+
+// Before each run the runner reads the plan's meter as the execution's runs left it (the records
+// included): a window at or above the plan reserve that has not reset yet stops the execution
+// cleanly, with no record and no marker for the run it did not start. Resume stops there again
+// until the window resets, then goes on.
+func TestThePlanReserveStopsBeforeTheNextRun(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	resets := time.Now().Add(time.Hour).Unix()
+	o.Fake.Env = meterEnv(t, 0.3, resets)
+	count := strings.TrimPrefix(o.Fake.Env[1], "BENCH_TEST_COUNT=")
+	err := runner.Execute(context.Background(), o)
+	local := time.Unix(resets, 0).Local().Format("2006-01-02 15:04")
+	if !errors.Is(err, runner.ErrPlanReserve) || !strings.Contains(err.Error(), "five_hour") || !strings.Contains(err.Error(), "90%") ||
+		!strings.Contains(err.Error(), "80%") || !strings.Contains(err.Error(), local) {
+		t.Fatalf("err %v", err)
+	}
+	stopped := func(when string, want int) {
+		t.Helper()
+		recs, _ := record.ReadDir(o.RecordsDir)
+		started, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+		limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+		if len(recs) != want || len(started) != 0 || len(limited) != 0 {
+			t.Fatalf("%s: %d records, started %v, limited %v", when, len(recs), started, limited)
+		}
+	}
+	// 0.3, 0.6, 0.9: the third run's reading stops the fourth.
+	stopped("first", 3)
+	if err := runner.Execute(context.Background(), o); !errors.Is(err, runner.ErrPlanReserve) {
+		t.Fatalf("resume before the reset: err %v", err)
+	}
+	stopped("resume before the reset", 3)
+	if n, _ := os.ReadFile(count); string(n) != "3" {
+		t.Fatalf("a session was started before the reset: count %q", n)
+	}
+	o.Now = func() time.Time { return time.Unix(resets+60, 0) }
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatalf("resume after the reset: %v", err)
+	}
+	stopped("resume after the reset", 8)
+}
+
+// A reading at the reserve whose window has reset already does not stop anything; the manifest's
+// own reserve is the one in force.
+func TestThePlanReserveIgnoresAResetWindowAndFollowsTheManifest(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Fake.Env = meterEnv(t, 0.3, time.Now().Add(-time.Minute).Unix())
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatalf("a reset window: %v", err)
+	}
+	m = smoke(t, pre, fix)
+	half := 0.5
+	m.Execution.PlanReserve = &half
+	o = options(t, m, src, 8)
+	o.Fake.Env = meterEnv(t, 0.2, time.Now().Add(time.Hour).Unix())
+	err := runner.Execute(context.Background(), o)
+	if !errors.Is(err, runner.ErrPlanReserve) || !strings.Contains(err.Error(), "60%") || !strings.Contains(err.Error(), "50%") {
+		t.Fatalf("reserve 0.5: err %v", err)
+	}
+	if recs, _ := record.ReadDir(o.RecordsDir); len(recs) != 3 {
+		t.Fatalf("reserve 0.5: %d records", len(recs))
+	}
+}
