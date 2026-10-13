@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -52,6 +53,43 @@ func TestTheExampleManifestHasOnlyOwnerBlockers(t *testing.T) {
 	}
 	code, out, _ := call(nil, "run", "--manifest", "../../manifest.example.json", "--dry-run")
 	if code != 0 || !strings.Contains(out, "240 planned runs") {
+		t.Fatalf("dry run: exit %d, %.300q", code, out)
+	}
+}
+
+// The pilot's manifest has no issue at all, and its tasks are the example's candidates as they
+// were, approved by the owner: only the status and the approval note differ.
+func TestThePilotManifestIsReadyAndHoldsTheApprovedCandidates(t *testing.T) {
+	m, err := manifest.Load("../../pilot-1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issues := m.Validate(); len(issues) != 0 {
+		t.Fatalf("issues %v", issues)
+	}
+	if m.Scale != "pilot" || m.PlannedRuns() != 240 || m.Budget.MaxRuns != 240 {
+		t.Fatalf("scale %s, %d planned runs, budget %d", m.Scale, m.PlannedRuns(), m.Budget.MaxRuns)
+	}
+	ex, err := manifest.Load("../../manifest.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Tasks) != len(ex.Tasks) {
+		t.Fatalf("%d tasks, the example has %d", len(m.Tasks), len(ex.Tasks))
+	}
+	for i, task := range m.Tasks {
+		want := ex.Tasks[i]
+		if task.Status != "approved" || !strings.HasPrefix(task.Provenance.SelectedBy, want.Provenance.SelectedBy+"; approved by the owner on 2026-10-13") {
+			t.Errorf("%s: status %q, selected by %q", task.ID, task.Status, task.Provenance.SelectedBy)
+		}
+		want.Status, want.Provenance.SelectedBy = task.Status, task.Provenance.SelectedBy
+		if !reflect.DeepEqual(task, want) {
+			t.Errorf("%s differs from the example's candidate beyond its approval", task.ID)
+		}
+	}
+	code, out, _ := call(nil, "run", "--manifest", "../../pilot-1.json", "--dry-run")
+	if code != 0 || !strings.Contains(out, "240 planned runs") || !strings.Contains(out, "manifest: valid") ||
+		!strings.Contains(out, "run 240 ") {
 		t.Fatalf("dry run: exit %d, %.300q", code, out)
 	}
 }

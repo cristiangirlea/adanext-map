@@ -1,0 +1,101 @@
+{
+  "format": 1,
+  "name": "pilot-1",
+  "scale": "pilot",
+  "conditions": [
+    {
+      "id": "none",
+      "kind": "none",
+      "description": "No navigation tool beyond the fixed host tools; the host's LSP tool is denied and the Go LSP plugin disabled.",
+      "settings": {"enabledPlugins": "{\"gopls-lsp@claude-plugins-official\": false}"},
+      "deny": ["LSP"]
+    },
+    {
+      "id": "lsp",
+      "kind": "host-lsp",
+      "description": "Claude Code's built-in LSP tool, given gopls by Anthropic's gopls-lsp plugin, enabled for this condition only. The plugin is installed once at user scope (claude plugin install gopls-lsp@claude-plugins-official); the probe checks gopls only, so the wiring smoke confirms the LSP tool is in the session.",
+      "components": [
+        {"name": "gopls", "version": "v0.23.0", "source": "golang.org/x/tools/gopls"},
+        {"name": "gopls-lsp@claude-plugins-official", "version": "1.0.0", "source": "Claude Code's official marketplace (claude-plugins-official), plugins/gopls-lsp"}
+      ],
+      "settings": {"enabledPlugins": "{\"gopls-lsp@claude-plugins-official\": true}"},
+      "tools": ["LSP"],
+      "probe": ["gopls", "version"]
+    },
+    {
+      "id": "serena",
+      "kind": "serena",
+      "description": "Serena over MCP in its claude-code context, its project found from the workspace, its Go language server gopls. serena project index writes the project file and the symbol cache to .serena first. The dashboard and the log window stay closed.",
+      "components": [
+        {"name": "serena-agent", "version": "1.7.0", "source": "PyPI serena-agent, installed with uv tool install serena-agent==1.7.0"},
+        {"name": "gopls", "version": "v0.23.0", "source": "golang.org/x/tools/gopls"}
+      ],
+      "mcp": {"name": "serena", "command": "serena", "args": ["start-mcp-server", "--context", "claude-code", "--project-from-cwd",
+        "--enable-web-dashboard", "false", "--open-web-dashboard", "false", "--enable-gui-log-window", "false"]},
+      "index": {"command": ["serena", "project", "index", ".", "--ls", "go", "--log-level", "WARNING"], "output": ".serena"},
+      "probe": ["serena", "--version"],
+      "settings": {"enabledPlugins": "{\"gopls-lsp@claude-plugins-official\": false}"},
+      "deny": ["LSP"]
+    },
+    {
+      "id": "codegraph",
+      "kind": "codegraph",
+      "description": "CodeGraph over MCP (serve --mcp, its own Claude Code config), the index built by codegraph init into .codegraph (codegraph index refuses a tree that was never initialised). Started through node and the package's own shim: the npm .cmd wrapper is not on PATH here, and Claude Code cannot start a .cmd file without a shell. Telemetry off.",
+      "components": [
+        {"name": "@colbymchenry/codegraph", "version": "1.6.2", "source": "npm, installed globally with npm install -g @colbymchenry/codegraph@1.6.2"},
+        {"name": "node", "version": "v22.16.0", "source": "nodejs.org"}
+      ],
+      "mcp": {"name": "codegraph", "command": "node", "args": ["C:/Users/crist/AppData/Roaming/npm/node_modules/@colbymchenry/codegraph/npm-shim.js", "serve", "--mcp"]},
+      "index": {"command": ["node", "C:/Users/crist/AppData/Roaming/npm/node_modules/@colbymchenry/codegraph/npm-shim.js", "init", "-y", "."], "output": ".codegraph"},
+      "probe": ["node", "C:/Users/crist/AppData/Roaming/npm/node_modules/@colbymchenry/codegraph/npm-shim.js", "--version"],
+      "env": {"CODEGRAPH_TELEMETRY": "0"},
+      "settings": {"enabledPlugins": "{\"gopls-lsp@claude-plugins-official\": false}"},
+      "deny": ["LSP"]
+    },
+    {
+      "id": "adamap",
+      "kind": "adamap",
+      "description": "adamap's queries over MCP (adamap mcp), the store built by adamap index with scip-go before the run (mode queries: no map injected). adamap is built at the pinned commit: go install github.com/cristiangirlea/adanext-map/cmd/adamap@c93f98e1f07f91045691c8055e2c3a1ea1651ca2.",
+      "components": [
+        {"name": "adamap", "version": "c93f98e1f07f91045691c8055e2c3a1ea1651ca2", "source": "github.com/cristiangirlea/adanext-map/cmd/adamap at that commit (Version 0.0.1-dev)"},
+        {"name": "scip-go", "version": "v0.2.7", "source": "github.com/scip-code/scip-go/cmd/scip-go"}
+      ],
+      "mode": "queries",
+      "mcp": {"name": "adamap", "command": "adamap", "args": ["mcp"]},
+      "index": {"command": ["adamap", "index"], "output": ".adamap"},
+      "probe": ["adamap", "version"],
+      "settings": {"enabledPlugins": "{\"gopls-lsp@claude-plugins-official\": false}"},
+      "deny": ["LSP"]
+    }
+  ],
+  "backends": [
+    {
+      "id": "claude",
+      "cli": "claude",
+      "version": "2.1.284",
+      "model": "claude-sonnet-5-5",
+      "plan": "subscription",
+      "env": {"DISABLE_AUTOUPDATER": "1"}
+    }
+  ],
+  "tasks_file": "pilot-1.tasks.json",
+  "repeats": 3,
+  "order": {"scheme": "latin-square", "seed": 20261013},
+  "cache": "warm",
+  "execution": {
+    "timeout_seconds": 1800,
+    "max_attempts": 2,
+    "permission_mode": "acceptEdits",
+    "tools": ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
+    "context_edit": "none (Harness#116 owns provider context editing)",
+    "check_timeout_seconds": 900
+  },
+  "budget": {"max_runs": 240},
+  "adoption": {
+    "candidate": "adamap",
+    "baseline": "none",
+    "min_token_reduction": 0.10,
+    "max_latency_ratio": 1.25,
+    "min_tasks": 10
+  }
+}

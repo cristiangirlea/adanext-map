@@ -128,3 +128,16 @@ repository); a fail-closed push guard (#8).
   scopes with strictly growing ends (skip pointers) instead of walking every nesting level.
   `impact` given an absolute path outside the repository that is no symbol either answers with the
   path error. `Safe` relies on `strconv.IsPrint` alone, which already refuses format characters.
+- 2026-10-13 (#67, the pilot's preparation): a run that meets the plan's usage limit, or a
+  rate-limit or overload error the CLI stopped retrying, stops the execution with no record and
+  no retry. It leaves `<run id>.limited` instead of the `.started` marker, so resume runs it again.
+  Claude Code documents only the `api_retry` event's error categories, not a usage-limit shape in
+  stream-json. So the limit is read conservatively, from error results, those categories and a
+  failed attempt's stderr, never from a successful answer. `pilot-1.json` and
+  `pilot-1.tasks.json` are the pilot: the 16 candidates approved by the owner, identities pinned as
+  installed here, 240 runs. The example's `codegraph index .` fails on a fresh tree, so CodeGraph
+  is prepared with `init -y` and served with `serve --mcp`. It is started through node and its
+  package's shim, since the npm wrapper is a `.cmd` file off PATH. The LSP condition gets gopls
+  from Anthropic's `gopls-lsp` plugin, enabled through each condition's `enabledPlugins` setting.
+  The owner installs that plugin and adamap at the pinned commit before the wiring smoke.
+  `max_latency_ratio` stays 1.25.

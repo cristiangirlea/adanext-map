@@ -6,8 +6,9 @@ manifest, a runner that drives coding CLIs on their subscription plans, the resu
 reducer that writes `bench/RESULTS.md`.
 
 **Status: the framework exists; no measured results exist yet.** No real agent run has happened.
-The pilot needs the owner to pin every identity in the manifest, approve the tasks, and approve the
-run budget. Until then there is no `bench/RESULTS.md`, and the README makes no claim.
+`pilot-1.json` pins every identity, its 16 tasks are approved, and the owner chose its 240 runs
+(issue #67). It waits for the wiring smoke and the run, below. Until then there is no
+`bench/RESULTS.md`, and the README makes no claim.
 
 adamap itself never calls a model. The runner starts the CLIs the manifest names, refuses to start
 when a provider API key is set, and never moves to API access. It runs without hrn.
@@ -220,15 +221,49 @@ never calls a model. A synthetic manifest runs only the fake backend, its record
 says SYNTHETIC in the title, at the top, in every section heading and at the end, and `reduce`
 refuses to write it to a file named `RESULTS.md`.
 
-## Before the pilot
+## The pilot
 
-- Pin every `UNPINNED` identity in `manifest.example.json`: the CLI version, the model, gopls,
-  Serena and its commit, CodeGraph and its commands, adamap's commit and scip-go.
-- Review the candidate tasks in `tasks.example.json`: their prompts, revisions and checks. Set
-  each one kept to `approved`. The harness tasks need `--source cristiangirlea/harness=<a local
-  clone>` when the repository is private.
-- Confirm `max_latency_ratio` (1.25 in the example) before any run: it is pre-registered.
-- Run a wiring smoke (`"scale": "smoke"`, one task, one repeat) with its own approval, and settle
-  the isolation points above.
-- The full pilot, as the example manifest stands: 16 tasks x 5 conditions x 1 backend x 3 repeats =
-  240 runs, each up to 2 attempts.
+`pilot-1.json` is the pilot. Its tasks are in `pilot-1.tasks.json`: the 16 candidates of
+`tasks.example.json`, approved by the owner on 2026-10-13. It pins these identities, as installed
+on the owner's Windows PC:
+
+| Condition | Identities |
+|---|---|
+| all | Claude Code 2.1.284 (auto-update off for the runs), model `claude-sonnet-5-5` |
+| `none` | the host tools only; the LSP tool is denied |
+| `lsp` | the `gopls-lsp@claude-plugins-official` 1.0.0 plugin, gopls v0.23.0 |
+| `serena` | serena-agent 1.7.0, gopls v0.23.0; `--context claude-code --project-from-cwd` |
+| `codegraph` | @colbymchenry/codegraph 1.6.2 through node v22.16.0 |
+| `adamap` | adamap at `c93f98e1f07f91045691c8055e2c3a1ea1651ca2`, scip-go v0.2.7; mode `queries` |
+
+Each condition has its own index command, MCP server and tools. The timeout, attempts,
+permission mode and the fixed tool set are the same for every condition.
+
+The plan is 16 tasks x 5 conditions x 1 backend x 3 repeats = **240 runs**, each up to 2 attempts.
+The conditions are counterbalanced by a Latin square (seed 20261013). The cache is warm: repeat 1
+of each cell builds its index, and repeats 2 and 3 reuse it.
+
+Before the wiring smoke, the owner:
+
+- installs the LSP plugin: `claude plugin install gopls-lsp@claude-plugins-official`. It is
+  enabled for the `lsp` condition only (`enabledPlugins` in each condition's settings). Its probe
+  checks gopls alone, so the smoke must confirm that the `LSP` tool is in the session's init
+  event.
+- installs adamap at the pinned commit:
+  `go install github.com/cristiangirlea/adanext-map/cmd/adamap@c93f98e1f07f91045691c8055e2c3a1ea1651ca2`.
+  Otherwise every `adamap` run is recorded as *unsupported*, and resume does not rerun a recorded
+  run.
+- runs a wiring smoke: a copy of `pilot-1.json` with `"scale": "smoke"`, one task, one repeat and
+  its own approval. It checks the points under "What a run does", and that Serena opens no
+  dashboard and CodeGraph leaves no daemon running.
+
+The real run must start from a terminal outside Claude Code. A Claude Code session sets
+`ANTHROPIC_BASE_URL`, and the runner refuses any provider variable, as designed. From the
+repository root, in PowerShell:
+
+```powershell
+go run ./bench/cmd/adamap-bench run --manifest bench/pilot-1.json --records bench/records/pilot-1 --source cristiangirlea/harness=E:/__Workdir/personal/harness --i-have-approval-for-N-runs 240
+```
+
+`--source` fetches the four harness tasks from the local clone, which holds their revisions. If it
+stops at the plan's usage limit, run the same command again once the limit resets: it resumes.
