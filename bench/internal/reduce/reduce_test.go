@@ -284,6 +284,23 @@ func TestAdoptionRule(t *testing.T) {
 			m.Adoption.MinTasks = 11
 			return r
 		}, "inconclusive", "11"},
+		// 0/0 is NaN, and a NaN compares false both ways: no data must never read as a pass.
+		{"no tokens to compare", func(m *manifest.Manifest, r []record.Record) []record.Record {
+			for i := range r {
+				u := &r[i].Attempts[0].Usage
+				u.Input, u.CacheCreation, u.CacheRead, u.Output = benchtest.Int64(0), benchtest.Int64(0), benchtest.Int64(0), benchtest.Int64(0)
+			}
+			return r
+		}, "inconclusive", "no relative comparison"},
+		{"no time to compare", func(m *manifest.Manifest, r []record.Record) []record.Record {
+			for i := range r {
+				r[i].Attempts[0].WallMS = 0
+				if r[i].Index != nil && r[i].Index.BuildMS != nil {
+					r[i].Index.BuildMS = benchtest.Int64(0)
+				}
+			}
+			return r
+		}, "inconclusive", "no relative comparison"},
 		{"a smoke", func(m *manifest.Manifest, r []record.Record) []record.Record {
 			m.Scale = "smoke"
 			return r

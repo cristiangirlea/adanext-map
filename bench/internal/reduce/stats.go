@@ -482,6 +482,15 @@ func adopt(m *manifest.Manifest, b manifest.Backend, rep *Report, cellRuns map[s
 			}
 		}
 	}
+	mc, mb := Median(cTok), Median(bTok)
+	lc, lb := Percentile(cLat, 50), Percentile(bLat, 50)
+	// A relative drop needs a baseline above zero; 0/0 would be NaN, which compares false both
+	// ways and would read as a pass.
+	if !(mb > 0) || !(lb > 0) {
+		v.Outcome = "inconclusive"
+		v.Reasons = []string{fmt.Sprintf("the baseline's median tokens (%.0f) or p50 latency (%.1fs) is not above zero: no relative comparison", mb, lb/1000)}
+		return v
+	}
 	pass := true
 	if cSucc >= bSucc {
 		v.Reasons = append(v.Reasons, fmt.Sprintf("success: %d of %d runs, the baseline %d: equal or better", cSucc, len(cTok), bSucc))
@@ -489,18 +498,16 @@ func adopt(m *manifest.Manifest, b manifest.Backend, rep *Report, cellRuns map[s
 		pass = false
 		v.Reasons = append(v.Reasons, fmt.Sprintf("success: %d of %d runs is below the baseline's %d", cSucc, len(cTok), bSucc))
 	}
-	mc, mb := Median(cTok), Median(bTok)
 	drop := 1 - mc/mb
 	word := "meets"
-	if drop < a.MinTokenReduction {
+	if !(drop >= a.MinTokenReduction) {
 		pass, word = false, "misses"
 	}
 	v.Reasons = append(v.Reasons, fmt.Sprintf("tokens: median total model tokens %.0f against %.0f, %.1f%% lower, which %s the rule's at least %.0f%%",
 		mc, mb, 100*drop, word, 100*a.MinTokenReduction))
-	lc, lb := Percentile(cLat, 50), Percentile(bLat, 50)
 	lr := lc / lb
 	word = "within"
-	if lr > a.MaxLatencyRatio {
+	if !(lr <= a.MaxLatencyRatio) {
 		pass, word = false, "beyond"
 	}
 	v.Reasons = append(v.Reasons, fmt.Sprintf("latency: p50 %.1fs against %.1fs with preparation amortized at the observed reuse, ratio %.2f, %s the registered bound %.2f",
