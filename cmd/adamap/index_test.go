@@ -637,3 +637,89 @@ func TestGitOutputLeavesNoHooksDirectoryBehind(t *testing.T) {
 		t.Errorf("%s holds %v after the call (%v); want it empty", tmp, left, err)
 	}
 }
+
+// git status runs a clean filter, or starts a process filter, to compare a file whose timestamp
+// changed, and the driver is the repository's own config. Each case names a driver whose program
+// leaves a marker, checks that a plain status runs it, then indexes and wants no marker.
+func TestIndexDoesNotRunFilterDriversNamedByTheRepository(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	cases := []struct {
+		name string
+		arm  func(t *testing.T, repo, program string)
+	}{
+		{"clean", func(t *testing.T, repo, program string) {
+			git(t, repo, "config", "filter.mark.clean", program+"; cat")
+			git(t, repo, "config", "filter.mark.required", "true") // a failing filter would stop git, not just be skipped
+		}},
+		{"process", func(t *testing.T, repo, program string) {
+			git(t, repo, "config", "filter.mark.process", program+"; false")
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo := t.TempDir()
+			marker := filepath.Join(t.TempDir(), "ran")
+			git(t, repo, "init", "-q")
+			writeFile(t, filepath.Join(repo, "a.txt"), "one\n")
+			git(t, repo, "add", "a.txt")
+			git(t, repo, "commit", "-q", "-m", "one")
+			writeFile(t, filepath.Join(repo, ".gitattributes"), "a.txt filter=mark\n")
+			c.arm(t, repo, "echo x > '"+filepath.ToSlash(marker)+"'")
+			touch := func(d time.Duration) {
+				t.Helper()
+				when := time.Now().Add(d)
+				if err := os.Chtimes(filepath.Join(repo, "a.txt"), when, when); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			touch(time.Minute)
+			exec.Command("git", "-C", repo, "status", "--porcelain", "--untracked-files=no").Run() // may fail; only the marker matters
+			if _, err := os.Stat(marker); err != nil {
+				t.Skipf("a plain git status does not run a %s filter here (%v), so there is nothing to guard against", c.name, err)
+			}
+			if err := os.Remove(marker); err != nil {
+				t.Fatal(err)
+			}
+			touch(2 * time.Minute)
+
+			code, out, errOut := runIndexCmd("--scip", fixtureFile(t), "--repo", repo)
+			if code != 0 || !strings.HasPrefix(out, "indexed ") {
+				t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
+			}
+			if _, err := os.Stat(marker); err == nil {
+				t.Errorf("adamap index ran the %s filter the repository names", c.name)
+			}
+		})
+	}
+}
+
+// A driver name with an = in it cannot be written as -c name.clean=, which git splits at the
+// first =: adamap cannot switch that driver off, so it does not run git status for it.
+func TestIndexRefusesAFilterDriverItCannotSwitchOff(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	repo := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "ran")
+	git(t, repo, "init", "-q")
+	writeFile(t, filepath.Join(repo, "a.txt"), "one\n")
+	git(t, repo, "add", "a.txt")
+	git(t, repo, "commit", "-q", "-m", "one")
+	writeFile(t, filepath.Join(repo, ".gitattributes"), "a.txt filter=a=b\n")
+	git(t, repo, "config", "filter.a=b.clean", "echo x > '"+filepath.ToSlash(marker)+"'; cat")
+	later := time.Now().Add(time.Minute)
+	if err := os.Chtimes(filepath.Join(repo, "a.txt"), later, later); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, errOut := runIndexCmd("--scip", fixtureFile(t), "--repo", repo)
+	if code != 1 || !strings.Contains(errOut, `"a=b"`) || !strings.Contains(errOut, "--commit") {
+		t.Errorf("exit %d, stderr %q; want 1, the driver's name and a pointer to --commit", code, errOut)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("adamap index ran the filter whose name it cannot switch off")
+	}
+}

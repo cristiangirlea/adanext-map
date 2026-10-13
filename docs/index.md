@@ -33,9 +33,16 @@ taken to describe that commit, as the caller says.
 adamap runs git with `--no-optional-locks` and with `core.fsmonitor` and `core.hooksPath` overridden,
 so the `core.fsmonitor` command and the hooks in the repository's own `.git` do not run. It also
 sets `GIT_NO_LAZY_FETCH=1`, so a partial clone with a missing object fails instead of fetching it
-through the repository's `remote.<name>.uploadpack` or `core.sshCommand`. A clean filter the
-repository defines still can run, when git compares a file whose timestamp changed: for a
-repository you do not trust, pass `--commit` and git is not run at all.
+through the repository's `remote.<name>.uploadpack` or `core.sshCommand`.
+
+`git status` also runs a clean filter, or starts a process filter, to compare a file whose
+timestamp changed, and those are programs the config names. Before it, adamap lists the configured
+drivers (`git config --get-regexp ^filter\.`, which runs no program) and switches each off with
+empty `clean`, `smudge` and `process` commands and `required=false`. The cost: a file a driver
+would change, such as a git-lfs pointer, can show as modified, so a tree can read as dirty (and the
+store's header say `dirty: true`) when `git status` run by hand says it is clean. A driver whose
+name has an `=` in it cannot be switched off this way, and then `adamap index` stops and asks for
+`--commit`. For a repository you do not trust, pass `--commit` and git is not run at all.
 
 ## Which indexer
 

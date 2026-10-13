@@ -143,7 +143,11 @@ func resolveCommit(repo, given string) (string, bool, error) {
 	if err := store.CheckCommit(head); err != nil {
 		return "", false, err
 	}
-	status, err := gitOutput(repo, "status", "--porcelain", "--untracked-files=no")
+	off, err := filtersOff(repo)
+	if err != nil {
+		return "", false, fmt.Errorf("cannot tell whether %s has changes: %w; pass --commit with its full hash", repo, err)
+	}
+	status, err := gitRun(repo, off, "status", "--porcelain", "--untracked-files=no")
 	if err != nil {
 		return "", false, fmt.Errorf("cannot tell whether %s has changes: %w", repo, err)
 	}
@@ -156,21 +160,66 @@ func resolveCommit(repo, given string) (string, bool, error) {
 // whenever status rewrites the index. -c overrides the repository's config, and reaches the git that
 // status starts in a submodule. An empty core.fsmonitor means off on every git version, where
 // "false" is a hook program's name to one before 2.35. core.hooksPath is a directory made for the
-// call, as /dev/null is no path on Windows. Clean filters are not covered: status runs one to
-// compare a file whose timestamp changed, and no option turns off a filter driver the repository
-// defines (docs/index.md).
+// call, as /dev/null is no path on Windows. Filter drivers are switched off by filtersOff, for the
+// one command that runs them.
 func gitSafely(hooks string) []string {
 	return []string{"--no-optional-locks", "-c", "core.fsmonitor=", "-c", "core.hooksPath=" + filepath.ToSlash(hooks)}
 }
 
+// filtersOff are the -c options that switch off every filter driver configured for repo, in the
+// system, global and repository config alike. git status runs a clean filter, or starts a process
+// filter, to compare a file whose timestamp changed, and the driver is a program the config names.
+// An empty command is no filter, and required=false keeps git from stopping at the filter it was
+// told not to run. The cost is that a file a driver would change (git-lfs's pointers, say) can show
+// as modified, so the tree can read as dirty (docs/index.md). A driver whose name has an = in it
+// cannot be written as -c name.clean=, which git splits at the first =, so that is an error.
+func filtersOff(repo string) ([]string, error) {
+	keys, err := gitOutput(repo, "config", "--name-only", "--get-regexp", `^filter\.`)
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 { // no filter is configured
+			return nil, nil
+		}
+		return nil, err
+	}
+	var names []string
+	for _, key := range strings.Split(keys, "\n") {
+		rest := strings.TrimPrefix(key, "filter.")
+		dot := strings.LastIndex(rest, ".")
+		if dot < 1 { // filter.<name>.<variable>; a key with no name has no driver
+			continue
+		}
+		name := rest[:dot]
+		if strings.Contains(name, "=") {
+			return nil, fmt.Errorf("the filter driver %q has an = in its name, so adamap cannot switch it off", name)
+		}
+		if !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	var off []string
+	for _, name := range names {
+		for _, v := range []string{"clean", "smudge", "process"} {
+			off = append(off, "-c", "filter."+name+"."+v+"=")
+		}
+		off = append(off, "-c", "filter."+name+".required=false")
+	}
+	return off, nil
+}
+
 // gitOutput is the output of `git args` in repo, run with gitSafely. Every git call goes through it.
 func gitOutput(repo string, args ...string) (string, error) {
+	return gitRun(repo, nil, args...)
+}
+
+// gitRun is gitOutput with more -c options after gitSafely's, in front of the command.
+func gitRun(repo string, opts []string, args ...string) (string, error) {
 	hooks, err := os.MkdirTemp("", "adamap-nohooks-*")
 	if err != nil {
 		return "", fmt.Errorf("git %s: cannot make an empty hooks directory: %w", args[0], err)
 	}
 	defer os.RemoveAll(hooks)
-	cmd := exec.Command("git", slices.Concat([]string{"-C", repo}, gitSafely(hooks), args)...)
+	cmd := exec.Command("git", slices.Concat([]string{"-C", repo}, gitSafely(hooks), opts, args)...)
 	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1") // a missing promisor object is an error, not a fetch
 	var errOut strings.Builder
 	cmd.Stderr = &errOut
