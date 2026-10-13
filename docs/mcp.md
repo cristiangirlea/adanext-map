@@ -88,8 +88,9 @@ path of letters, digits and `_-./:` (and `\` on Windows) is left bare, as in the
 `status` is the only tool that runs git, once per call, and it does so with `--commit` too: a
 pinned server still reports HEAD and whether the tree has changes, and tells you to restart it
 without `--commit` when the store is not HEAD's. git runs as `adamap index` runs it (no
-`core.fsmonitor` command, no hooks, no filter programs, no lazy fetch: [index.md](index.md)), so a
-tree with files that a filter driver would change can read as dirty. If you do not want git run at
+`core.fsmonitor` command, no hooks, no filter programs from the repository's config or a
+submodule's, no lazy fetch: [index.md](index.md)), so a tree with files that a filter driver would
+change can read as dirty, and edits inside a submodule do not make it dirty. If you do not want git run at
 all, do not call `status`.
 
 A store is stale when it does not describe the working tree: it is for a commit other than HEAD,

@@ -43,7 +43,15 @@ empty `clean`, `smudge` and `process` commands and `required=false`. The cost: a
 would change, such as a git-lfs pointer, can show as modified, so a tree can read as dirty (and the
 store's header say `dirty: true`) when `git status` run by hand says it is clean. A driver whose
 name has an `=` in it cannot be switched off this way, and then `adamap index` stops and asks for
-`--commit`. For a repository you do not trust, pass `--commit` and git is not run at all.
+`--commit`.
+
+The drivers of a submodule are in the submodule's own config, which adamap does not list, and
+`git status` would start a git inside the submodule to read them. adamap passes
+`--ignore-submodules=dirty`, so git compares only the commit a submodule has checked out with the
+one the superproject records and starts no git in it. The cost: uncommitted edits inside a submodule
+no longer make the tree dirty (a different checked-out commit still does).
+
+For a repository you do not trust, pass `--commit` and git is not run at all.
 
 ## Which indexer
 
