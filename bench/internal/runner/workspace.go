@@ -79,6 +79,20 @@ func fetch(dir, source, revision string) error {
 	return err
 }
 
+// reset puts the workspace back on revision as a fresh checkout has it, tracked and untracked
+// files alike, keeping the paths under keep (a condition's index).
+func reset(dir, revision string, keep []string) error {
+	if _, err := git(dir, "reset", "-q", "--hard", revision); err != nil {
+		return err
+	}
+	args := []string{"clean", "-q", "-ffdx"}
+	for _, k := range keep {
+		args = append(args, "-e", "/"+strings.TrimSuffix(path.Clean(filepath.ToSlash(k)), "/"))
+	}
+	_, err := git(dir, args...)
+	return err
+}
+
 // Reachable reports whether rev names a commit present in the repository at dir.
 func Reachable(dir, rev string) bool {
 	_, err := git(dir, "cat-file", "-e", rev+"^{commit}")

@@ -38,6 +38,19 @@ func TestMain(m *testing.M) {
 		}
 		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
 		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
+	case "agent-junk": // a worker whose first attempt leaves a file behind and fails
+		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
+		if attempt == 1 {
+			os.WriteFile("junk.txt", []byte("half done\n"), 0o644)
+			os.WriteFile("a.go", []byte("package broken\n"), 0o644)
+			os.Exit(1)
+		}
+		if p := os.Getenv("BENCH_TEST_EXPECT"); p != "" {
+			if _, err := os.Stat(p); err != nil {
+				os.Exit(1) // the condition's index is gone
+			}
+		}
+		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
 	case "agent-where": // a worker that says where it runs
 		wd, _ := os.Getwd()
 		f, err := os.OpenFile(os.Getenv("BENCH_TEST_WHERE"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -452,5 +465,27 @@ func TestTheWorkspaceIsAwayFromTheOtherRunsState(t *testing.T) {
 		if matches, _ := filepath.Glob(filepath.Join(os.TempDir(), "adamap-bench-grader-*")); len(matches) > 0 {
 			t.Fatalf("keep %v: grader checkouts left behind: %v", keep, matches)
 		}
+	}
+}
+
+// Each attempt is a fresh session on the task's revision: a retry does not inherit what the
+// failed attempt left in the tree, and the condition's index stays.
+func TestARetryStartsFromACleanTree(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-junk"}
+	m.Conditions[1].Env = map[string]string{"BENCH_TEST_EXPECT": ".idx"}
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	for _, r := range recs {
+		if len(r.Attempts) != 2 || !r.Attempts[1].Completed() || r.After.Content != record.CleanContent {
+			t.Fatalf("%s: %d attempts, after %s", r.RunID, len(r.Attempts), r.After.Content)
+		}
+	}
+	if p := record.Check(m, recs); len(p) != 0 {
+		t.Fatalf("problems %v", p)
 	}
 }

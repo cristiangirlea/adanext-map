@@ -189,6 +189,13 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 	var answer string
 	for n := 1; n <= m.Execution.MaxAttempts; n++ {
 		c.Attempt = n
+		if n > 1 {
+			// A retry is a fresh session on the task's revision: drop what the failed attempt
+			// left, the condition's index excepted.
+			if err := reset(c.Workspace, r.Source.Commit, exclude); err != nil {
+				return nil, err
+			}
+		}
 		inv, err := ad.Command(c)
 		if err != nil {
 			return nil, err
