@@ -6,8 +6,8 @@ Do not put credentials or private code in public issues.
 The boundaries every slice keeps as it lands (PLAN.md says which have): adamap reads a SCIP index
 and the repository it describes, and writes only under `.adamap/` in that repository (and, with
 `adamap install` when asked, the host's MCP configuration in the current project). `adamap mcp`
-speaks over stdio to the host that started it and opens no network port. adamap makes no network
-calls and sends nothing anywhere.
+speaks over stdio to the host that started it and opens no network port. adamap itself makes no
+network calls and sends nothing anywhere; its indexers may download the project's dependencies.
 
 A SCIP index is untrusted input: the reader is to bound sizes and counts and report a malformed
 index instead of acting on it.
