@@ -915,3 +915,23 @@ func TestAWronglyTypedArgumentIsAToolError(t *testing.T) {
 		wantToolError(t, cs, tc.tool, tc.args, tc.want)
 	}
 }
+
+func TestStatusWithNoStoreAndGitFailingStillAnswers(t *testing.T) {
+	cs := connect(t, Config{Repo: t.TempDir(), Head: func() (string, bool, error) {
+		return "", false, errors.New("git: not a git repository")
+	}})
+	a := ok(t, cs, "status", nil)
+	for _, want := range []string{"no store", "adamap index", "HEAD: unknown", "not a git repository", "refresh: adamap index --repo"} {
+		if !strings.Contains(a.text, want) {
+			t.Errorf("status text should hold %q: %q", want, a.text)
+		}
+	}
+	s := a.structured
+	if s["store"] != false || s["stale"] != true || s["git_error"] != "git: not a git repository" ||
+		s["store_error"] == nil || s["head"] != nil || s["at_head"] != false {
+		t.Errorf("status structured %v", s)
+	}
+	if refresh, _ := s["refresh"].(string); !strings.Contains(refresh, "adamap index --repo") {
+		t.Errorf("the refresh command should be offered: %v", s)
+	}
+}
