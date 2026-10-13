@@ -57,8 +57,17 @@ A SCIP index is untrusted input. adamap refuses, with an error naming the docume
 - a file larger than `--max-bytes`, or bytes that are not a SCIP index;
 - a range that is not 3 or 4 integers, or one that is negative or ends before it starts (in either
   the packed or the typed range encoding, and for enclosing ranges too);
-- a document path that is empty or absolute (`/x`, `\x`, `C:...`), or has a `..` segment;
+- a document with an empty path;
 - symbol information without a symbol.
+
+A backslash in a document path is read as `/` (SCIP specifies `/`, but indexers on Windows write
+`\`), and the path is cleaned (`a/./b.go` and `a//b.go` become `a/b.go`) before it is checked.
+
+A document whose path leaves the project (absolute: `/x`, `C:...`, a UNC path; or with a `..` that
+escapes) or names the project root itself (`pkg/..`) is skipped with its occurrences and symbols,
+unread, and `adamap index` prints `skipped N documents outside the project` on stderr and still
+writes the store. Indexers on Windows list such a document: the test main Go builds in its cache.
+The checks above (ranges, symbols) apply to the documents that are kept.
 
 Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice is
 merged into one.

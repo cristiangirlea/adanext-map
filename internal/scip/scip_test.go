@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -85,7 +87,7 @@ func diff(t *testing.T, got, want *model.Index) {
 }
 
 func TestConvertBuildsTheModel(t *testing.T) {
-	got, err := Convert(sciptest.Index())
+	got, _, err := Convert(sciptest.Index())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +95,7 @@ func TestConvertBuildsTheModel(t *testing.T) {
 }
 
 func TestDecodeReadsTheSerializedIndex(t *testing.T) {
-	got, err := Decode(sciptest.Bytes(t, sciptest.Index()))
+	got, _, err := Decode(sciptest.Bytes(t, sciptest.Index()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +103,7 @@ func TestDecodeReadsTheSerializedIndex(t *testing.T) {
 }
 
 func TestDecodeRefusesBytesThatAreNotAnIndex(t *testing.T) {
-	_, err := Decode([]byte{0xff, 0xff, 0xff})
+	_, _, err := Decode([]byte{0xff, 0xff, 0xff})
 	if err == nil || !strings.Contains(err.Error(), "not a SCIP index") {
 		t.Fatalf("err = %v, want one saying it is not a SCIP index", err)
 	}
@@ -114,7 +116,7 @@ func TestConvertMergesADocumentListedTwice(t *testing.T) {
 		Occurrences:  []*scippb.Occurrence{{Range: []int32{9, 0, 3}, Symbol: sciptest.Impl}},
 	}
 	x.Documents = append(x.Documents, again)
-	got, err := Convert(x)
+	got, _, err := Convert(x)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +148,7 @@ func TestConvertReadsTypedRangesBeforePackedOnes(t *testing.T) {
 			}},
 		},
 	}
-	got, err := Convert(x)
+	got, _, err := Convert(x)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +179,7 @@ func TestConvertCombinesSymbolDescriptions(t *testing.T) {
 	})
 	// An external local symbol has no document to belong to and is dropped.
 	x.ExternalSymbols = append(x.ExternalSymbols, &scippb.SymbolInformation{Symbol: "local 5"})
-	got, err := Convert(x)
+	got, _, err := Convert(x)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +213,7 @@ func TestConvertRoles(t *testing.T) {
 		// A forward definition is a declaration, not the definition.
 		{Range: []int32{2, 0, 3}, Symbol: sciptest.Impl, SymbolRoles: int32(scippb.SymbolRole_ForwardDefinition)},
 	}
-	got, err := Convert(x)
+	got, _, err := Convert(x)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,12 +251,6 @@ func TestConvertRejectsMalformedInput(t *testing.T) {
 				SingleLineEnclosingRange: &scippb.SingleLineRange{Line: 2, StartCharacter: 5, EndCharacter: 1},
 			}
 		}, "enclosing"},
-		{"absolute path", func(x *scippb.Index) { x.Documents[0].RelativePath = "/etc/passwd" }, "absolute"},
-		{"drive path", func(x *scippb.Index) { x.Documents[0].RelativePath = `C:\Windows\x.go` }, "absolute"},
-		{"UNC path", func(x *scippb.Index) { x.Documents[0].RelativePath = `\\server\share\x.go` }, "absolute"},
-		{"dot-dot path", func(x *scippb.Index) { x.Documents[0].RelativePath = "../x.go" }, ".."},
-		{"dot-dot inside the path", func(x *scippb.Index) { x.Documents[0].RelativePath = "pkg/../../x.go" }, ".."},
-		{"dot-dot with backslashes", func(x *scippb.Index) { x.Documents[0].RelativePath = `pkg\..\..\x.go` }, ".."},
 		{"empty path", func(x *scippb.Index) { x.Documents[0].RelativePath = "" }, "no path"},
 		{"symbol information without a symbol", func(x *scippb.Index) { x.Documents[0].Symbols[0].Symbol = "" }, "no symbol"},
 	}
@@ -262,7 +258,7 @@ func TestConvertRejectsMalformedInput(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			x := sciptest.Index()
 			c.break_(x)
-			got, err := Convert(x)
+			got, _, err := Convert(x)
 			if err == nil {
 				t.Fatalf("no error; model %+v", got)
 			}
@@ -282,7 +278,7 @@ func TestConvertTakesLinearTimeInRelationships(t *testing.T) {
 		si.Relationships = append(si.Relationships, &scippb.Relationship{Symbol: fmt.Sprint("s", i), IsReference: true})
 	}
 	start := time.Now()
-	got, err := Convert(x)
+	got, _, err := Convert(x)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,20 +296,112 @@ func TestReadFileBoundsTheSize(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ReadFile(path, int64(len(data)))
+	got, _, err := ReadFile(path, int64(len(data)))
 	if err != nil {
 		t.Fatalf("at exactly the limit: %v", err)
 	}
 	diff(t, got, wantFixture())
 
-	_, err = ReadFile(path, int64(len(data))-1)
+	_, _, err = ReadFile(path, int64(len(data))-1)
 	if err == nil || !strings.Contains(err.Error(), "--max-bytes") {
 		t.Fatalf("one byte over the limit: err = %v, want one naming --max-bytes", err)
 	}
 }
 
 func TestReadFileRefusesANonPositiveLimit(t *testing.T) {
-	if _, err := ReadFile("index.scip", 0); err == nil {
+	if _, _, err := ReadFile("index.scip", 0); err == nil {
 		t.Fatal("a limit of 0 was accepted")
+	}
+}
+
+// SCIP specifies `/`, but indexers on Windows write `\`; either way the model gets the slash form.
+func TestConvertNormalisesDocumentPaths(t *testing.T) {
+	x := sciptest.Index()
+	x.Documents[0].RelativePath = `pkg\a.go`
+	x.Documents[1].RelativePath = `pkg\.\sub//b.go`
+	got, _, err := Convert(x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, d := range got.Documents {
+		paths = append(paths, d.Path)
+	}
+	if want := []string{"pkg/a.go", "pkg/sub/b.go"}; !slices.Equal(paths, want) {
+		t.Fatalf("paths %q, want %q", paths, want)
+	}
+	for _, s := range got.Symbols {
+		if s.Definition != nil && strings.Contains(s.Definition.Path, `\`) {
+			t.Errorf("%s defined at %q", s.ID, s.Definition.Path)
+		}
+	}
+}
+
+func TestConvertCleansSlashPaths(t *testing.T) {
+	for in, want := range map[string]string{"a/./b.go": "a/b.go", "a//b.go": "a/b.go", "a/x/../b.go": "a/b.go"} {
+		x := sciptest.Index()
+		x.Documents = x.Documents[:1]
+		x.Documents[0].RelativePath = in
+		got, _, err := Convert(x)
+		if err != nil {
+			t.Fatalf("%q: %v", in, err)
+		}
+		if p := got.Documents[0].Path; p != want {
+			t.Errorf("%q became %q, want %q", in, p, want)
+		}
+	}
+}
+
+// scip-go on Windows also indexes the test main Go generates in its build cache, a document whose
+// path leaves the project; it is skipped, with its occurrences and symbols, and the rest converts.
+func TestConvertSkipsADocumentOutsideTheProject(t *testing.T) {
+	const outside = `..\..\go-build\d7\d74c8dab-d`
+	x := sciptest.Index()
+	x.Documents = append(x.Documents, &scippb.Document{
+		RelativePath: outside,
+		Language:     "go",
+		Symbols:      []*scippb.SymbolInformation{{Symbol: "scip-go gomod example.com/m v1 `example.com/m/pkg`/testmain.", DisplayName: "testmain"}, {Symbol: "local 0"}},
+		Occurrences: []*scippb.Occurrence{{
+			Range: []int32{1, 0, 8}, Symbol: "scip-go gomod example.com/m v1 `example.com/m/pkg`/testmain.",
+			SymbolRoles: int32(scippb.SymbolRole_Definition),
+		}},
+	})
+	got, skipped, err := Convert(x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skipped.Count != 1 || !slices.Equal(skipped.Paths, []string{strconv.Quote(outside)}) {
+		t.Fatalf("skipped %+v, want the one document, quoted", skipped)
+	}
+	diff(t, got, wantFixture())
+}
+
+func TestConvertSkipsEveryKindOfPathOutsideTheProject(t *testing.T) {
+	paths := []string{"/etc/passwd", `\x.go`, `C:\Windows\x.go`, "C:x.go", `\server\share\x.go`,
+		`\\server\share\x.go`, `\..`, `a\..\..\b`, "../x.go", "pkg/../../x.go", `pkg\..\..\x.go`,
+		// Paths that clean to the project root itself name no file.
+		"pkg/..", ".", `pkg\..`}
+	x := sciptest.Index()
+	for _, p := range paths {
+		x.Documents = append(x.Documents, &scippb.Document{RelativePath: p})
+	}
+	got, skipped, err := Convert(x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skipped.Count != len(paths) {
+		t.Errorf("skipped %d, want %d", skipped.Count, len(paths))
+	}
+	if len(skipped.Paths) != maxSkippedPaths || skipped.Paths[0] != strconv.Quote(paths[0]) {
+		t.Errorf("skipped paths %q, want the first %d, quoted", skipped.Paths, maxSkippedPaths)
+	}
+	diff(t, got, wantFixture())
+}
+
+func TestConvertKeepsAnEmptyPathFatalEvenNextToSkippedOnes(t *testing.T) {
+	x := sciptest.Index()
+	x.Documents = append(x.Documents, &scippb.Document{RelativePath: "../x.go"}, &scippb.Document{})
+	if _, _, err := Convert(x); err == nil || !strings.Contains(err.Error(), "no path") {
+		t.Fatalf("err = %v, want one saying there is no path", err)
 	}
 }

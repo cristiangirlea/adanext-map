@@ -96,13 +96,18 @@ func runIndex(args []string, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	var idx *model.Index
+	var skipped scip.Skipped
 	if *scipPath != "" {
-		idx, err = scip.ReadFile(*scipPath, *maxBytes)
+		idx, skipped, err = scip.ReadFile(*scipPath, *maxBytes)
 	} else {
-		idx, err = runAndRead(*repo, *maxBytes, stderr)
+		idx, skipped, err = runAndRead(*repo, *maxBytes, stderr)
 	}
 	if err != nil {
 		return fail(err)
+	}
+	if skipped.Count > 0 {
+		fmt.Fprintf(stderr, "adamap index: skipped %d documents outside the project (first: %s)\n",
+			skipped.Count, strings.Join(skipped.Paths, ", "))
 	}
 	dir, err := store.Write(*repo, store.Header{
 		Adamap:      Version,
@@ -161,7 +166,7 @@ func gitOutput(repo string, args ...string) (string, error) {
 
 // runAndRead runs the indexer repo needs, with repo as its working directory, then reads the
 // index.scip it wrote there and deletes it. An index.scip already there is not adamap's to replace.
-func runAndRead(repo string, maxBytes int64, stderr io.Writer) (*model.Index, error) {
+func runAndRead(repo string, maxBytes int64, stderr io.Writer) (*model.Index, scip.Skipped, error) {
 	var ix *indexer
 	for i := range indexers {
 		if _, err := os.Stat(filepath.Join(repo, indexers[i].marker)); err == nil {
@@ -170,21 +175,21 @@ func runAndRead(repo string, maxBytes int64, stderr io.Writer) (*model.Index, er
 		}
 	}
 	if ix == nil {
-		return nil, fmt.Errorf("%s has no Cargo.toml or go.mod, so adamap does not know its indexer: "+
+		return nil, scip.Skipped{}, fmt.Errorf("%s has no Cargo.toml or go.mod, so adamap does not know its indexer: "+
 			"run one yourself and pass its output with --scip", repo)
 	}
 	program, err := lookPath(ix.program)
 	if err != nil {
-		return nil, fmt.Errorf("%s needs %s (found %s), which is not on PATH: install it with `%s`",
+		return nil, scip.Skipped{}, fmt.Errorf("%s needs %s (found %s), which is not on PATH: install it with `%s`",
 			repo, ix.program, ix.marker, ix.install)
 	}
 	out := filepath.Join(repo, "index.scip")
 	if _, err := os.Lstat(out); !errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("%s already exists: pass it with --scip, or move it so %s can write its own", out, ix.program)
+		return nil, scip.Skipped{}, fmt.Errorf("%s already exists: pass it with --scip, or move it so %s can write its own", out, ix.program)
 	}
 	defer os.Remove(out)
 	if err := runIndexer(repo, program, ix.args, stderr); err != nil {
-		return nil, fmt.Errorf("%s failed: %w", ix.program, err)
+		return nil, scip.Skipped{}, fmt.Errorf("%s failed: %w", ix.program, err)
 	}
 	return scip.ReadFile(out, maxBytes)
 }
