@@ -37,11 +37,30 @@ func runIndexCmd(args ...string) (code int, stdout, stderr string) {
 	return code, out.String(), errOut.String()
 }
 
+// outputFlag is the argument that names where an indexer writes its index.
+const outputFlag = "--output"
+
+// outputOf is the path after outputFlag in an indexer's arguments, or "" when there is none.
+func outputOf(args []string) string {
+	if i := slices.Index(args, outputFlag); i >= 0 && i+1 < len(args) {
+		return args[i+1]
+	}
+	return ""
+}
+
 // fakeIndexers replaces the indexer lookup and run for one test: found says which programs are on
-// PATH, and each run writes the fixture as index.scip in its working directory.
+// PATH, and each run writes the fixture where its --output says. A call is recorded as the program
+// and its arguments with the output path shown as OUT.
 func fakeIndexers(t *testing.T, found ...string) *[]string {
+	calls, _ := fakeIndexersOut(t, found...)
+	return calls
+}
+
+// fakeIndexersOut is fakeIndexers that also returns the directory of each run's output, resolved
+// while it exists, since adamap removes it afterwards.
+func fakeIndexersOut(t *testing.T, found ...string) (calls, outDirs *[]string) {
 	t.Helper()
-	var calls []string
+	calls, outDirs = new([]string), new([]string)
 	oldLook, oldRun := lookPath, runIndexer
 	t.Cleanup(func() { lookPath, runIndexer = oldLook, oldRun })
 	lookPath = func(name string) (string, error) {
@@ -50,11 +69,44 @@ func fakeIndexers(t *testing.T, found ...string) *[]string {
 		}
 		return "", exec.ErrNotFound
 	}
-	runIndexer = func(dir, program string, args []string, _ io.Writer) error {
-		calls = append(calls, program+" "+strings.Join(args, " "))
-		return os.WriteFile(filepath.Join(dir, "index.scip"), sciptest.Bytes(t, sciptest.Index()), 0o644)
+	runIndexer = func(_, program string, args []string, _ io.Writer) error {
+		out := outputOf(args)
+		if out == "" {
+			t.Errorf("%s ran without %s: %q", program, outputFlag, args)
+			return errors.New("no output path")
+		}
+		shown := slices.Clone(args)
+		shown[slices.Index(shown, outputFlag)+1] = "OUT"
+		*calls = append(*calls, program+" "+strings.Join(shown, " "))
+		dir, err := filepath.EvalSymlinks(filepath.Dir(out))
+		if err != nil {
+			t.Errorf("the output directory does not exist when the indexer runs: %v", err)
+			return err
+		}
+		*outDirs = append(*outDirs, dir)
+		return os.WriteFile(out, sciptest.Bytes(t, sciptest.Index()), 0o644)
 	}
-	return &calls
+	return calls, outDirs
+}
+
+// within reports whether path is dir or below it, after resolving symbolic links and 8.3 short
+// names in dir, which must exist.
+func within(t *testing.T, dir, path string) bool {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(resolved, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// gone fails the test when path still exists.
+func gone(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("%s is still there: %v", path, err)
+	}
 }
 
 func writeFile(t *testing.T, path, content string) {
@@ -92,9 +144,12 @@ func TestIndexReadsAGivenSCIPFileIntoTheStore(t *testing.T) {
 }
 
 func TestIndexRunsTheIndexerTheRepositoryNeeds(t *testing.T) {
-	for marker, want := range map[string]string{"go.mod": "/fake/bin/scip-go ", "Cargo.toml": "/fake/bin/rust-analyzer scip ."} {
+	for marker, want := range map[string]string{
+		"go.mod":     "/fake/bin/scip-go --output OUT",
+		"Cargo.toml": "/fake/bin/rust-analyzer scip . --output OUT",
+	} {
 		t.Run(marker, func(t *testing.T) {
-			calls := fakeIndexers(t, "scip-go", "rust-analyzer")
+			calls, outDirs := fakeIndexersOut(t, "scip-go", "rust-analyzer")
 			repo := t.TempDir()
 			writeFile(t, filepath.Join(repo, marker), "")
 			code, out, errOut := runIndexCmd("--commit", testCommit, "--repo", repo)
@@ -110,6 +165,14 @@ func TestIndexRunsTheIndexerTheRepositoryNeeds(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(repo, "index.scip")); !errors.Is(err, os.ErrNotExist) {
 				t.Errorf("index.scip was left behind: %v", err)
 			}
+			// The index is written outside the repository and its directory is removed afterwards.
+			if len(*outDirs) != 1 {
+				t.Fatalf("indexer ran %d times, want once", len(*outDirs))
+			}
+			if within(t, repo, (*outDirs)[0]) {
+				t.Errorf("the indexer wrote inside the repository: %s", (*outDirs)[0])
+			}
+			gone(t, (*outDirs)[0])
 		})
 	}
 }
@@ -122,37 +185,41 @@ func TestIndexPrefersCargoTomlWhenBothProjectFilesExist(t *testing.T) {
 	if code, _, errOut := runIndexCmd("--commit", testCommit, "--repo", repo); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, errOut)
 	}
-	if !slices.Equal(*calls, []string{"/fake/bin/rust-analyzer scip ."}) {
+	if !slices.Equal(*calls, []string{"/fake/bin/rust-analyzer scip . --output OUT"}) {
 		t.Errorf("ran %q, want rust-analyzer", *calls)
 	}
 }
 
 // When the indexer fails or writes an index adamap refuses, the run fails, no store is written,
-// and the index.scip it wrote is removed.
+// and the directory it wrote its index in is removed.
 func TestIndexCleansUpAfterAFailedIndexer(t *testing.T) {
 	bad := sciptest.Index()
 	bad.Documents[0].Occurrences[0].Range = []int32{5, 0, 4, 9}
 	cases := []struct {
 		name  string
-		write func(dir string) error
+		write func(out string) error
 		args  []string
 		want  string
 	}{
-		{"indexer exits non-zero", func(dir string) error {
-			writeFile(t, filepath.Join(dir, "index.scip"), "partial")
+		{"indexer exits non-zero", func(out string) error {
+			writeFile(t, out, "partial")
 			return errors.New("exit status 101")
 		}, nil, "scip-go failed: exit status 101"},
-		{"indexer writes a malformed index", func(dir string) error {
-			return os.WriteFile(filepath.Join(dir, "index.scip"), sciptest.Bytes(t, bad), 0o644)
+		{"indexer writes a malformed index", func(out string) error {
+			return os.WriteFile(out, sciptest.Bytes(t, bad), 0o644)
 		}, nil, "ends before"},
-		{"indexer writes too much", func(dir string) error {
-			return os.WriteFile(filepath.Join(dir, "index.scip"), sciptest.Bytes(t, sciptest.Index()), 0o644)
+		{"indexer writes too much", func(out string) error {
+			return os.WriteFile(out, sciptest.Bytes(t, sciptest.Index()), 0o644)
 		}, []string{"--max-bytes", "10"}, "--max-bytes"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fakeIndexers(t, "scip-go")
-			runIndexer = func(dir, _ string, _ []string, _ io.Writer) error { return c.write(dir) }
+			var outDir string
+			runIndexer = func(_, _ string, args []string, _ io.Writer) error {
+				outDir = filepath.Dir(outputOf(args))
+				return c.write(outputOf(args))
+			}
 			repo := t.TempDir()
 			writeFile(t, filepath.Join(repo, "go.mod"), "")
 			code, out, errOut := runIndexCmd(append([]string{"--commit", testCommit, "--repo", repo}, c.args...)...)
@@ -160,10 +227,12 @@ func TestIndexCleansUpAfterAFailedIndexer(t *testing.T) {
 				t.Fatalf("exit %d, stdout %q, stderr %q; want 1 and %q", code, out, errOut, c.want)
 			}
 			for _, name := range []string{"index.scip", ".adamap"} {
-				if _, err := os.Stat(filepath.Join(repo, name)); !errors.Is(err, os.ErrNotExist) {
-					t.Errorf("%s is there after a failed run: %v", name, err)
-				}
+				gone(t, filepath.Join(repo, name))
 			}
+			if outDir == "" {
+				t.Fatal("the indexer was not run with an output path")
+			}
+			gone(t, outDir)
 		})
 	}
 }
@@ -202,17 +271,22 @@ func TestIndexWithoutAProjectFileAsksForSCIP(t *testing.T) {
 	}
 }
 
-func TestIndexKeepsAnIndexSCIPItDidNotWrite(t *testing.T) {
+// An index.scip already in the repository is the user's: the indexer writes elsewhere, so it is
+// neither refused, nor read in place of the indexer's output, nor deleted.
+func TestIndexLeavesAnIndexSCIPInTheRepositoryAlone(t *testing.T) {
 	calls := fakeIndexers(t, "scip-go")
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, "go.mod"), "")
 	writeFile(t, filepath.Join(repo, "index.scip"), "mine")
 	code, _, errOut := runIndexCmd("--commit", testCommit, "--repo", repo)
-	if code != 1 || !strings.Contains(errOut, "index.scip") {
-		t.Fatalf("exit %d, stderr %q; want 1 naming index.scip", code, errOut)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q; want success", code, errOut)
 	}
-	if data, _ := os.ReadFile(filepath.Join(repo, "index.scip")); string(data) != "mine" || len(*calls) != 0 {
+	if data, _ := os.ReadFile(filepath.Join(repo, "index.scip")); string(data) != "mine" || len(*calls) != 1 {
 		t.Errorf("index.scip now %q, indexer ran %q", data, *calls)
+	}
+	if _, idx, err := store.Load(repo, testCommit); err != nil || len(idx.Documents) != 2 {
+		t.Errorf("the store holds the indexer's output, not the file in the repository: %v, %v", idx, err)
 	}
 }
 
