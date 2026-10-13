@@ -236,3 +236,103 @@ func TestWordsSplitsAndLowers(t *testing.T) {
 		t.Errorf("Words of nothing: %v, want nil", got)
 	}
 }
+
+// member adds a symbol of kind to the definition of the document at path, and one reference to it
+// from the document at from.
+func member(idx *model.Index, name, kind, path, from string) {
+	memberID := "scip-go gomod example.com/m v1 `example.com/m`/T#" + name + "."
+	idx.Symbols = append(idx.Symbols, model.Symbol{
+		ID: memberID, DisplayName: name, Kind: kind, Definition: &model.Location{Path: path},
+	})
+	for i := range idx.Documents {
+		if idx.Documents[i].Path == from {
+			idx.Documents[i].Occurrences = append(idx.Documents[i].Occurrences,
+				model.Occurrence{Symbol: memberID, Roles: model.RoleReference | model.RoleRead})
+		}
+	}
+}
+
+func TestRankLeavesFieldsAndEnumMembersOutOfTheMapButKeepsTheirEdges(t *testing.T) {
+	for _, kind := range []string{"Field", "StaticField", "StaticDataMember", "EnumMember", "Property", "StaticProperty"} {
+		t.Run(kind, func(t *testing.T) {
+			idx := build(
+				file{path: "types.go", defs: []string{"T"}},
+				file{path: "use.go", refs: []string{"T"}},
+				file{path: "fields.go"},
+			)
+			// use.go reads a member of types.go, and fields.go defines nothing but a member.
+			member(idx, "F", kind, "types.go", "use.go")
+			member(idx, "G", kind, "fields.go", "use.go")
+
+			r := Rank(idx, nil)
+			if got, want := paths(r), []string{"types.go"}; !slices.Equal(got, want) {
+				t.Fatalf("files %v, want %v: fields.go defines only a %s", got, want, kind)
+			}
+			if got := names(r.Files[0]); !slices.Equal(got, []string{"T"}) {
+				t.Errorf("types.go symbols %v, want [T] without the %s", got, kind)
+			}
+			// T's file takes the whole rank; the hidden member does not take a share of it.
+			if s := r.Files[0].Symbols[0]; math.Abs(s.Score-r.Files[0].Rank) > 1e-12 {
+				t.Errorf("T scores %v, want its file's whole rank %v", s.Score, r.Files[0].Rank)
+			}
+			// use.go reads T and F from types.go and G from fields.go: three symbols, two edges.
+			g := newGraph(idx)
+			if got := len(g.out[1]); got != 2 {
+				t.Errorf("use.go has %d edges %v, want 2: members still link files", got, g.out[1])
+			}
+		})
+	}
+}
+
+func TestRankDownweightsTestFiles(t *testing.T) {
+	for _, path := range []string{
+		"pkg/x_test.go", "tests/x.rs", "crates/a/tests/it.rs", "test/x.py", "src/x.test.ts", "src/x.spec.ts",
+		"src/x.test.tsx", "src/x.spec.js",
+	} {
+		t.Run(path, func(t *testing.T) {
+			// Both files define one function and are read by one file alike, so only the path tells
+			// them apart, and the test file's path sorts first.
+			idx := build(
+				file{path: "a/" + path, defs: []string{"T"}},
+				file{path: "b/x.go", defs: []string{"P"}},
+				file{path: "use.go", refs: []string{"T", "P"}},
+			)
+			r := Rank(idx, nil)
+			if got, want := paths(r), []string{"b/x.go", "a/" + path}; !slices.Equal(got, want) {
+				t.Fatalf("files %v, want %v", got, want)
+			}
+			if got, want := r.Files[1].Rank, r.Files[0].Rank*testFileFactor; math.Abs(got-want) > 1e-12 {
+				t.Errorf("test file ranks %v, want %v of the other's %v", got, testFileFactor, r.Files[0].Rank)
+			}
+			if s := r.Files[1].Symbols[0]; math.Abs(s.Score-r.Files[1].Rank) > 1e-12 {
+				t.Errorf("test file's symbol scores %v, want the file's rank %v", s.Score, r.Files[1].Rank)
+			}
+		})
+	}
+}
+
+func TestRankKeepsFilesThatOnlyLookLikeTestFiles(t *testing.T) {
+	rankOf := func(path string) float64 {
+		idx := build(file{path: path, defs: []string{"T"}}, file{path: "use.go", refs: []string{"T"}})
+		return Rank(idx, nil).Files[0].Rank
+	}
+	plain := rankOf("plain.go")
+	for _, path := range []string{"contest/x.go", "testing/x.go", "pkg/attest.go", "pkg/test.go", "a_test.go/x.go", "src/x.test.rs", "src/x.testing.ts"} {
+		if got := rankOf(path); got != plain {
+			t.Errorf("%s ranks %v, want the %v of a plain file", path, got, plain)
+		}
+	}
+}
+
+func TestRankStillCountsReferencesFromTestFiles(t *testing.T) {
+	idx := build(
+		file{path: "core.go", defs: []string{"Core"}},
+		file{path: "core_test.go", refs: []string{"Core"}},
+	)
+	if g := newGraph(idx); len(g.out[1]) != 1 {
+		t.Errorf("edges of the test file %v, want one to core.go", g.out[1])
+	}
+	if r := Rank(idx, nil); r.Files[0].Symbols[0].Refs != 1 {
+		t.Errorf("Core has %d references, want the test's one", r.Files[0].Symbols[0].Refs)
+	}
+}

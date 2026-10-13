@@ -44,18 +44,24 @@ repository as its working directory:
 
 | Root file | Indexer | Install it with |
 |---|---|---|
-| `Cargo.toml` | `rust-analyzer scip .` | `rustup component add rust-analyzer` |
-| `go.mod` | `scip-go` | `go install github.com/scip-code/scip-go/cmd/scip-go@latest` |
+| `Cargo.toml` | `rust-analyzer scip . --output <file>` | `rustup component add rust-analyzer` |
+| `go.mod` | `scip-go --output <file>` | `go install github.com/scip-code/scip-go/cmd/scip-go@latest` |
 
-The indexer writes `index.scip` in the repository. adamap reads it and then deletes it. If an
-`index.scip` is already there, adamap stops instead of overwriting it: pass it with `--scip`, or
-move it. If the indexer is not on `PATH`, adamap names it and says how to install it. The indexer's
-own output goes to stderr.
+The `<file>` is an `index.scip` in a new directory under the system's temporary directory
+(`adamap-index-*`), so nothing is written in the repository. adamap reads it and removes the
+directory when it is done, whether the indexer succeeded or not. An `index.scip` already in the
+repository is neither read nor touched. If adamap is killed before it can clean up, the directory
+stays in the temporary directory, where the system clears it. If the indexer is not on `PATH`,
+adamap names it and says how to install it. The indexer's own output goes to stderr.
 
 For any other language, run its SCIP indexer yourself and pass the output with `--scip`.
 
 An indexer builds the project, and building runs the project's code: `rust-analyzer` runs build
 scripts and procedural macros. Index only repositories whose code you would build.
+
+The indexers may download the project's dependencies from the network through `cargo` and the Go
+module proxy, so `adamap index` can use the network even though adamap itself does not. Using
+`--scip` with an index built elsewhere avoids both the dependency downloads and indexer invocations.
 
 ## What is checked
 
@@ -82,7 +88,20 @@ The checks above (ranges, symbols) apply to the documents that are kept.
 Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice is
 merged into one.
 
-`--max-bytes` bounds the file, not the memory: the decoded index takes several times its size.
+Bytes do not bound memory: a few bytes of protobuf or JSON (`{},`) become a whole struct once decoded,
+so the decoded index takes several times the size of the file and a small file can hold millions of
+items. `--max-bytes` is the bound for the index file, and counts bound what is built from it. Both the
+SCIP index and the store are refused with an error naming the limit when they hold more than 2,000,000
+documents, 20,000,000 symbols (global and local together, as in the header's `counts`), 50,000,000
+occurrences or 20,000,000 relationships (over all symbols). These are generous: a Rust workspace of
+2,000 files measured about 20,000 occurrences per 17 files, some 2.4 million occurrences in all, so
+the defaults leave room for some 40,000 such files. For an index the counts are checked right after the
+protobuf is parsed and before it is converted, so they bound the conversion and the store written from
+it, while `--max-bytes` is what bounds the memory of reading the file. When the store is loaded they are
+enforced as the JSON streams in, one element at a time, and loading stops at the first one over its
+limit instead of after building them all; the counts in `header.json` are checked first, but only as a
+quick refusal, since a hand-edited header proves nothing. The store format is unchanged and stores
+written earlier still load. The limits are not flags.
 
 ## The store
 
