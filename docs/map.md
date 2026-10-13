@@ -45,7 +45,12 @@ first: a label for its kind, then its detail.
   ending in `...` when cut.
 
 Files are in rank order. A file that defines nothing the map shows is left out, and so are local
-symbols, namespaces (packages, modules) and parameters. A path holding a control or format
+symbols, namespaces (packages, modules) and parameters. Fields and enum members (the SCIP kinds
+`Field`, `StaticField`, `StaticDataMember`, `EnumMember`, `Property` and `StaticProperty`) are not
+shown either: the line of the struct, class or enum that holds them is the one to read, and a
+member would take a line of the budget from a symbol that matters more. A file that defines only
+members is left out. References to a member still link the files, so they count in the ranking
+(see below); `adamap find`, `outline` and `refs` still list members. A path holding a control or format
 character (bidi overrides, zero-width characters) is printed quoted, so each line stays one line
 and shows what it holds; the same characters in a name, signature or doc become a space.
 
@@ -63,8 +68,16 @@ and shows what it holds; the same characters in a name, signature or doc become 
    one share of the jump for each word its path, or the name of a symbol it defines, contains.
    Those files, and the files they use, move up. The jump is 15% of the rank, so a matched file
    rises but does not always lead. When no file matches, the map is the unpersonalised one.
-4. **Symbols.** A file's rank is shared among the symbols it defines in proportion to the
-   references each gets from other files, plus one. That share is the symbol's score.
+4. **Test files.** The rank of a test file is multiplied by 0.25 once PageRank is done, so tests
+   take a smaller share of the budget than the code they test. A test file is one named
+   `*_test.go`, `*.test.ts` or `*.spec.ts` (also `.tsx`, `.js`, `.jsx`), or under a directory named
+   `tests` or `test` at any depth. This is by path only: a Rust `#[cfg(test)]` module inside a
+   source file is not told apart. A test file's references still count in step 1, so the code it
+   exercises keeps the rank those references give it. The ranks `rank` shows (JSON below) sum to 1
+   only when no file is a test file.
+5. **Symbols.** A file's rank is shared among the symbols it shows (not its fields and enum
+   members) in proportion to the references each gets from other files, plus one. That share is
+   the symbol's score.
 
 Ties go to the path, then the symbol name, then the symbol, so the same store always gives the same
 map.
@@ -133,7 +146,7 @@ pkg/a.go
 | `estimate` | The text form's tokens by the estimate: the JSON itself is larger. |
 | `for`, `matched` | The words of `--for` and how many files they matched; left out without `--for` or a match. |
 | `files` | The files in rank order, an empty list when nothing is shown. |
-| `path`, `rank` | The file's path and its PageRank (all files' ranks sum to 1). |
+| `path`, `rank` | The file's path and its PageRank, times 0.25 for a test file (the ranks sum to 1 when no file is a test file). |
 | `symbols` | The file's chosen symbols, most important first. |
 | `id` | The SCIP symbol, as the store holds it. |
 | `kind`, `detail` | The label and the detail, as the text shows them. |
