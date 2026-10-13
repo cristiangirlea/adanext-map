@@ -114,9 +114,29 @@ func Execute(ctx context.Context, o Options) error {
 			started = append(started, run.ID)
 			continue
 		}
+		limited := o.limitedNote(run.ID)
+		hits := 0
+		if data, err := os.ReadFile(limited); err == nil {
+			hits = limitHits(data)
+			fmt.Fprintf(o.Log, "run %s: met the plan's limit before (%s), started again\n", run.ID, limited)
+		}
 		c := Cell{Run: run, Task: tasks[run.Task], Condition: conds[run.Condition], Backend: backends[run.Backend], Execution: m.Execution}
 		fmt.Fprintf(o.Log, "run %d/%d %s\n", run.Seq, m.PlannedRuns(), run.ID)
-		r, err := o.one(ctx, c, env)
+		r, err := o.one(ctx, c, env, hits)
+		if errors.Is(err, ErrPlanLimit) {
+			// Not a task failure: no record, and no .started marker, so resume runs it again. The
+			// note says it happened, and how many times, for the record the restart will write.
+			note := fmt.Sprintf("limited %s: %v\nNot a task failure: no record was written, and the run starts again on resume.\n"+
+				"Its transcripts are in %s until then.\n%s%d\n", o.Now().UTC().Format(time.RFC3339), err, filepath.Join(o.WorkDir, run.ID, "state"), limitHitsKey, hits+1)
+			if werr := os.WriteFile(limited, []byte(note), 0o644); werr != nil {
+				return errors.Join(fmt.Errorf("run %s: %w", run.ID, err), werr)
+			}
+			if rerr := os.Remove(marker); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+				return errors.Join(fmt.Errorf("run %s: %w", run.ID, err), rerr)
+			}
+			return fmt.Errorf("run %s: %w; the execution stopped with no record for it (see %s): run the same command again once the limit resets",
+				run.ID, err, limited)
+		}
 		if err != nil {
 			// A run that got as far as an attempt keeps its marker, which now says why it stopped.
 			if f, ferr := os.OpenFile(marker, os.O_APPEND|os.O_WRONLY, 0); ferr == nil {
@@ -128,8 +148,10 @@ func Execute(ctx context.Context, o Options) error {
 		if err := record.Write(o.RecordsDir, r); err != nil {
 			return err
 		}
-		if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+		for _, f := range []string{marker, limited} {
+			if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
 		}
 	}
 	if len(started) > 0 {
@@ -150,12 +172,39 @@ func Execute(ctx context.Context, o Options) error {
 	return nil
 }
 
+// ErrPlanLimit is an attempt that met the plan's usage limit, or a rate-limit or overload error the
+// CLI stopped retrying: it says nothing about the task, so the run is not recorded and the
+// execution stops.
+var ErrPlanLimit = errors.New("the plan's usage limit (or a rate-limit or overload error)")
+
+// limitedNote is the file that says a run met the plan's limit: <run id>.limited beside its record.
+// Unlike the .started marker it does not keep resume from running it again.
+func (o *Options) limitedNote(id string) string {
+	return filepath.Join(o.RecordsDir, id+".limited")
+}
+
 // startedMarker is the file that says a run's first attempt began: <run id>.started beside its record.
 func (o *Options) startedMarker(id string) string {
 	return filepath.Join(o.RecordsDir, id+".started")
 }
 
-func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record, error) {
+// limitHitsKey starts the line of a .limited note that counts how many times the run met the limit.
+const limitHitsKey = "limit_hits: "
+
+// limitHits is the count a .limited note holds; 1 for a note without one, which still says a hit.
+func limitHits(note []byte) int {
+	for _, line := range strings.Split(string(note), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), limitHitsKey); ok {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 1
+}
+
+// one runs a planned cell; restarts is how many times it was started afresh after the limit.
+func (o *Options) one(ctx context.Context, c Cell, env []string, restarts int) (*record.Record, error) {
 	m := o.Manifest
 	run := c.Run
 	dir := filepath.Join(o.WorkDir, run.ID)
@@ -183,7 +232,7 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 		source = c.Task.Repository.URL
 	}
 	r := &record.Record{Format: record.Format, RunID: run.ID, Task: run.Task, Condition: run.Condition, Backend: run.Backend,
-		Repeat: run.Repeat, Synthetic: m.Synthetic, Manifest: m.Name, StartedAt: o.Now().UTC().Format(time.RFC3339),
+		Repeat: run.Repeat, Synthetic: m.Synthetic, Manifest: m.Name, StartedAt: o.Now().UTC().Format(time.RFC3339), LimitRestarts: restarts,
 		Attempts: []record.Attempt{}, Checks: []record.CheckResult{}}
 	if err := Checkout(source, c.Task.Revision, c.Workspace); err != nil {
 		return nil, err
@@ -234,6 +283,10 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 	if err := os.WriteFile(o.startedMarker(run.ID), []byte(note), 0o644); err != nil {
 		return nil, err
 	}
+	// Started again after a limit: the marker now speaks for the run.
+	if err := os.Remove(o.limitedNote(run.ID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	var answer string
 	for n := 1; n <= m.Execution.MaxAttempts; n++ {
 		c.Attempt = n
@@ -268,6 +321,17 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 			return nil, fmt.Errorf("attempt %d stopped: %w", n, res.refused)
 		}
 		out := ad.Parse(res.stdout, c.Backend)
+		limit := out.Limit
+		if limit == "" && (out.Err != "" || res.exit != 0) {
+			// A CLI that stopped at the limit before its result may say so only on stderr.
+			limit = limitText(string(res.stderr))
+		}
+		// A timeout is the task's (or the condition's) own slowness, however the CLI's last line read.
+		if limit != "" && ctx.Err() == nil && !res.timedOut {
+			// Retrying would meet it again, and a later run too: stop here. An interruption stays
+			// one, and keeps its marker.
+			return nil, fmt.Errorf("attempt %d met %w: %s", n, ErrPlanLimit, limit)
+		}
 		a := record.Attempt{N: n, WallMS: wall, Exit: res.exit, TimedOut: res.timedOut, SessionID: out.SessionID,
 			Usage: out.Usage, Cost: out.Cost, Observed: out.Observed, OutputBytes: int64(len(res.stdout)),
 			TranscriptSHA256: record.SHA256(string(res.stdout))}

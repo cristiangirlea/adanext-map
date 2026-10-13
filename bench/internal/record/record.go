@@ -65,8 +65,11 @@ type Record struct {
 	Index      *Index `json:"index,omitempty"`
 	// Unsupported says why the condition could not run on this host (its probe failed); such a
 	// run has no attempts and is a coverage gap, never a success.
-	Unsupported string    `json:"unsupported,omitempty"`
-	Attempts    []Attempt `json:"attempts"`
+	Unsupported string `json:"unsupported,omitempty"`
+	// LimitRestarts is how many times the run was started afresh after meeting the plan's usage
+	// limit (each time with no record, its work directory gone); the attempts are the last start's.
+	LimitRestarts int       `json:"limit_restarts,omitempty"`
+	Attempts      []Attempt `json:"attempts"`
 	// Answer is the final attempt's final answer, as the adapter read it.
 	Answer       string        `json:"answer,omitempty"`
 	AnswerSHA256 string        `json:"answer_sha256,omitempty"`

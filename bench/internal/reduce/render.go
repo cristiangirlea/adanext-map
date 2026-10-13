@@ -113,10 +113,10 @@ func (r *Report) Markdown() string {
 	}
 
 	section("Correctness and isolation")
-	b.WriteString("Success is recomputed from the recorded check outputs: the last attempt completed, every executable check passed, the run stayed isolated. Reviews are not gates.\n\n")
-	b.WriteString("| condition | backend | successes | supported runs | attempts | failed attempts | isolation failures |\n|---|---|---|---|---|---|---|\n")
+	b.WriteString("Success is recomputed from the recorded check outputs: the last attempt completed, every executable check passed, the run stayed isolated. Reviews are not gates. Restarts after a limit count the times a run was started afresh because the plan's usage limit stopped it; they are no failed attempts.\n\n")
+	b.WriteString("| condition | backend | successes | supported runs | attempts | failed attempts | isolation failures | restarts after a limit |\n|---|---|---|---|---|---|---|---|\n")
 	for _, c := range r.Conditions {
-		fmt.Fprintf(&b, "| %s | %s | %d | %d | %d | %d | %d |\n", c.Condition, c.Backend, c.Successes, c.Recorded-c.Unsupported, c.Attempts, c.FailedAttempts, c.IsolationFailures)
+		fmt.Fprintf(&b, "| %s | %s | %d | %d | %d | %d | %d | %d |\n", c.Condition, c.Backend, c.Successes, c.Recorded-c.Unsupported, c.Attempts, c.FailedAttempts, c.IsolationFailures, c.LimitRestarts)
 	}
 	b.WriteString("\n")
 

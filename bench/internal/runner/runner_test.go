@@ -104,6 +104,32 @@ func TestMain(m *testing.M) {
 		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte(wd+"\n"), 0o644)
 		time.Sleep(20 * time.Second)
 		os.Exit(0)
+	case "agent-limit": // a worker that leaves a file, says where it runs, then meets the plan's usage limit
+		os.WriteFile("half.txt", []byte("half done\n"), 0o644)
+		wd, _ := os.Getwd()
+		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte(wd), 0o644)
+		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"l","apiKeySource":"none"}` + "\n")
+		if os.Getenv("BENCH_TEST_LIMIT") == "stderr" {
+			os.Stderr.WriteString("Claude AI usage limit reached|1760400000\n")
+		} else {
+			os.Stdout.WriteString(`{"type":"result","subtype":"success","is_error":true,"result":"You've hit your session limit · resets 3:45pm","session_id":"l"}` + "\n")
+		}
+		os.Exit(1)
+	case "agent-stderr-ok": // a worker that succeeds although its CLI named a limit it got past on stderr
+		os.Stderr.WriteString("API Error: 429 rate limited, retrying\n")
+		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
+		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
+	case "agent-limit-hang": // a worker whose CLI names a limit on stderr, then works until stopped
+		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"lh","apiKeySource":"none"}` + "\n")
+		os.Stderr.WriteString("API Error: 429 rate limited, retrying\n")
+		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte("started\n"), 0o644)
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
+	case "agent-retry-hang": // a worker whose CLI retried an overload, then worked past the timeout
+		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"rh","apiKeySource":"none"}` + "\n")
+		os.Stdout.WriteString(`{"type":"system","subtype":"api_retry","error":"overloaded","session_id":"rh"}` + "\n")
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
 	case "agent-hang": // a worker that says it started, then works until stopped
 		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte("started\n"), 0o644)
 		time.Sleep(20 * time.Second)
@@ -757,6 +783,135 @@ func TestResumeDoesNotStartARunThatStartedAgain(t *testing.T) {
 	}
 }
 
+// A run that meets the plan's usage limit is not a task failure: the execution stops at once with
+// no record for it and no retry, its workspace goes, and instead of the .started marker that would
+// keep resume from starting it again it leaves a .limited note. Resume runs it again, and its
+// record clears the note.
+func TestThePlansLimitStopsTheExecutionAndResumeRunsItAgain(t *testing.T) {
+	src, pre, fix := repo(t)
+	for _, shape := range []string{"result", "stderr"} {
+		m := smoke(t, pre, fix)
+		o := options(t, m, src, 8)
+		where := filepath.Join(t.TempDir(), "where.txt")
+		o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-limit", "BENCH_TEST_LIMIT=" + shape, "BENCH_TEST_WHERE=" + where}
+		err := runner.Execute(context.Background(), o)
+		if err == nil || !strings.Contains(err.Error(), "usage limit") || !strings.Contains(err.Error(), "again") {
+			t.Fatalf("%s: err %v", shape, err)
+		}
+		recs, _ := record.ReadDir(o.RecordsDir)
+		started, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+		limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+		if len(recs) != 0 || len(started) != 0 || len(limited) != 1 {
+			t.Fatalf("%s: %d records, started %v, limited %v", shape, len(recs), started, limited)
+		}
+		id := strings.TrimSuffix(filepath.Base(limited[0]), ".limited")
+		if text, _ := os.ReadFile(limited[0]); !strings.Contains(string(text), "usage limit") {
+			t.Fatalf("%s: the note does not say why: %q", shape, text)
+		}
+		if _, err := os.Stat(filepath.Join(o.WorkDir, id, "state", "attempt-2.jsonl")); err == nil {
+			t.Fatalf("%s: the limit was retried", shape)
+		}
+		ws, _ := os.ReadFile(where)
+		if _, err := os.Stat(string(ws)); len(ws) == 0 || err == nil {
+			t.Fatalf("%s: the workspace %q was left behind", shape, ws)
+		}
+		o.Fake.Env = []string{"BENCH_TEST_HELPER=agent"}
+		if err := runner.Execute(context.Background(), o); err != nil {
+			t.Fatalf("%s: resume: %v", shape, err)
+		}
+		recs, _ = record.ReadDir(o.RecordsDir)
+		limited, _ = filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+		if len(recs) != 8 || len(limited) != 0 {
+			t.Fatalf("%s: after resume %d records, limited %v", shape, len(recs), limited)
+		}
+	}
+}
+
+// The stderr of an attempt that completed is not read for a limit: the CLI got past it.
+func TestACompletedAttemptIsNotReadForALimit(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-stderr-ok"}
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if recs, _ := record.ReadDir(o.RecordsDir); len(recs) != 8 {
+		t.Fatalf("%d records", len(recs))
+	}
+}
+
+// A run that met the limit and, started again, stops for another reason keeps only its .started
+// marker: the .limited note, which says resume runs it again, goes when it starts again.
+func TestARunStartedAgainAfterALimitDropsItsNote(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-limit", "BENCH_TEST_WHERE=" + filepath.Join(t.TempDir(), "where.txt")}
+	if err := runner.Execute(context.Background(), o); !errors.Is(err, runner.ErrPlanLimit) {
+		t.Fatalf("err %v", err)
+	}
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-billing"}
+	if err := runner.Execute(context.Background(), o); err == nil || !strings.Contains(err.Error(), "apiKeySource") {
+		t.Fatalf("err %v", err)
+	}
+	started, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+	if len(started) != 1 || len(limited) != 0 {
+		t.Fatalf("started %v, limited %v", started, limited)
+	}
+}
+
+// An attempt that outlives timeout_seconds is a timeout, not the plan's limit, even when the last
+// thing its CLI printed was a retried overload: it is recorded, and no .limited note is left.
+func TestATimedOutAttemptIsNotTakenForALimit(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	m.Tasks, m.Repeats, m.Budget.MaxRuns = m.Tasks[:1], 1, 2
+	// Long enough for the index step under the race detector; the worker hangs until it is killed.
+	m.Execution.TimeoutSeconds, m.Execution.MaxAttempts = 5, 1
+	o := options(t, m, src, 2)
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-retry-hang"}
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+	if len(recs) != 2 || len(limited) != 0 || len(recs[0].Attempts) != 1 || !recs[0].Attempts[0].TimedOut {
+		t.Fatalf("%d records, limited %v, %+v", len(recs), limited, recs)
+	}
+}
+
+// An interruption is not a limit, even when the interrupted CLI had named one: the run keeps its
+// .started marker and gets no .limited note.
+func TestAnInterruptedAttemptIsNotTakenForALimit(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	where := filepath.Join(t.TempDir(), "where.txt")
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-limit-hang", "BENCH_TEST_WHERE=" + where}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for ctx.Err() == nil {
+			if _, err := os.Stat(where); err == nil {
+				cancel()
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	err := runner.Execute(ctx, o)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, runner.ErrPlanLimit) {
+		t.Fatalf("err %v", err)
+	}
+	started, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+	if len(started) != 1 || len(limited) != 0 {
+		t.Fatalf("started %v, limited %v", started, limited)
+	}
+}
+
 // An interrupted execution (Ctrl-C cancels the context) writes no record for a run it did not
 // finish: before the first run nothing at all, and during a run only the marker, which says why.
 func TestACancelledExecutionWritesNoRecord(t *testing.T) {
@@ -917,5 +1072,42 @@ func TestACancelledAttemptStopsBeforeTheGradingSteps(t *testing.T) {
 	markers, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
 	if len(recs) != 0 || len(markers) != 1 {
 		t.Fatalf("%d records, markers %v", len(recs), markers)
+	}
+}
+
+// A run restarted after the plan's limit keeps the count in its record: the note it leaves says how
+// many times it was hit, the restart reads it before dropping it, and the record carries it.
+func TestARestartAfterALimitIsCountedInTheRecord(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	where := filepath.Join(t.TempDir(), "where.txt")
+	for i := 0; i < 2; i++ {
+		o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-limit", "BENCH_TEST_WHERE=" + where}
+		if err := runner.Execute(context.Background(), o); !errors.Is(err, runner.ErrPlanLimit) {
+			t.Fatalf("limit %d: err %v", i+1, err)
+		}
+	}
+	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+	if len(limited) != 1 {
+		t.Fatalf("limited %v", limited)
+	}
+	id := strings.TrimSuffix(filepath.Base(limited[0]), ".limited")
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent"}
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	if len(recs) != 8 {
+		t.Fatalf("%d records", len(recs))
+	}
+	for _, r := range recs {
+		want := 0
+		if r.RunID == id {
+			want = 2
+		}
+		if r.LimitRestarts != want {
+			t.Errorf("%s: limit_restarts %d, want %d", r.RunID, r.LimitRestarts, want)
+		}
 	}
 }

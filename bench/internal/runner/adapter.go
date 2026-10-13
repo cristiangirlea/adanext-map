@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -53,6 +54,9 @@ type Outcome struct {
 	Observed  record.Observed
 	// Err says why the attempt failed by the CLI's own account, when it did.
 	Err string
+	// Limit says the attempt ended at the plan's usage limit, or at a rate-limit or overload error
+	// the CLI stopped retrying: not a task failure, so the run is not recorded.
+	Limit string
 }
 
 // Adapter is one coding CLI.
@@ -190,6 +194,9 @@ type event struct {
 	IsError      bool     `json:"is_error"`
 	TotalCostUSD *float64 `json:"total_cost_usd"`
 	Usage        *usage   `json:"usage"`
+	// Error is a string on an api_retry event and on an assistant message that failed; read raw so
+	// that another shape does not cost the event.
+	Error json.RawMessage `json:"error"`
 }
 
 type message struct {
@@ -223,6 +230,8 @@ func parseStreamJSON(stdout []byte, b manifest.Backend) Outcome {
 	var readBytes int64
 	var last *usage
 	var result *event
+	// The last limit-shaped error the CLI retried, or an assistant message carried.
+	var limitErr string
 	sc := bufio.NewScanner(bytes.NewReader(stdout))
 	sc.Buffer(make([]byte, 1<<20), 64<<20)
 	seen := false
@@ -234,6 +243,12 @@ func parseStreamJSON(stdout []byte, b manifest.Backend) Outcome {
 		seen = true
 		if e.SessionID != "" {
 			o.SessionID = e.SessionID
+		}
+		if c := limitCategory(e.Error); c != "" && (e.Type == "assistant" || e.Type == "system" && e.Subtype == "api_retry") {
+			limitErr = "the CLI reported a " + c + " error"
+		} else if e.Type == "assistant" {
+			// A turn came through after the retries: a later failure is the task's, not the limit's.
+			limitErr = ""
 		}
 		switch e.Type {
 		case "assistant":
@@ -272,11 +287,18 @@ func parseStreamJSON(stdout []byte, b manifest.Backend) Outcome {
 	}
 	if result == nil {
 		o.Err = "no result event in the transcript"
+		o.Limit = limitErr
 		return o
 	}
 	o.Answer = result.Result
 	if result.IsError {
 		o.Err = "the CLI reported an error: " + result.Subtype
+		// A retried limit explains an empty result only: text that names another error is that error.
+		if o.Limit = limitText(result.Result); o.Limit == "" && strings.TrimSpace(result.Result) == "" {
+			o.Limit = limitErr
+		}
+	} else if a := strings.TrimSpace(result.Result); limitAnswer.MatchString(a) {
+		o.Err, o.Limit = "the CLI gave its usage-limit message as the answer", a
 	}
 	if u := result.Usage; u != nil && u.Input != nil && u.CacheCreation != nil && u.CacheRead != nil && u.Output != nil {
 		o.Usage = record.Usage{Source: record.Reported, Semantics: record.SemanticsFor(b.CLI),
@@ -291,6 +313,43 @@ func parseStreamJSON(stdout []byte, b manifest.Backend) Outcome {
 		o.Cost = record.Cost{Source: record.Reported, Kind: "api-equivalent", USD: result.TotalCostUSD, Model: b.Model}
 	}
 	return o
+}
+
+// limitCategory is an error category of Claude Code's (the api_retry event's, an assistant
+// message's) that says the plan or the service refused the request, not the task: "" otherwise.
+func limitCategory(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return ""
+	}
+	switch s {
+	case "rate_limit", "overloaded", "billing_error":
+		return s
+	}
+	return ""
+}
+
+// limitWords are the phrases of a usage limit, a rate limit or an overload in an error's text:
+// Claude Code's own ("Claude AI usage limit reached|<reset>", "You've hit your session limit"),
+// and the API's 429 and 529 as it relays them ("API Error: 429", "status 529"), never a bare number.
+var limitWords = regexp.MustCompile(`(?i)\b(usage|session|weekly|rate)[ _-]?limit|\bhit your (\w+ )?limit|overloaded|\b(error|status|code)\W{1,3}(429|529)\b`)
+
+// limitAnswer is Claude Code's usage-limit message as the whole of a result that is not marked as
+// an error, which some versions give: only the whole answer, never a mention within one.
+var limitAnswer = regexp.MustCompile(`^(?:Claude AI usage limit reached\|\d+|You['\x{2019}]ve hit your (?:\w+ )?limit\b.{0,80})$`)
+
+// limitText is the first line of an error text that names a limit, trimmed; "" when it names none.
+// Only error texts are read: a successful answer may well talk about rate limits.
+func limitText(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if line = strings.TrimSpace(line); limitWords.MatchString(line) {
+			if len(line) > 300 {
+				line = line[:300] + "..."
+			}
+			return line
+		}
+	}
+	return ""
 }
 
 // resultText is a tool result's text: a string, or the text blocks of a list.

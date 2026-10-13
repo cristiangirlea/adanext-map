@@ -133,3 +133,22 @@ repository); a fail-closed push guard (#8).
   bytes are what `json.Encoder` gives for the whole index with `SetEscapeHTML(false)`. The format
   is unchanged: `<`, `>` and `&` are no longer escaped, which any JSON reader decodes the same.
   Issue #10's text was taken from the task brief, as `gh` had no valid credentials in this session.
+- 2026-10-13 (#67, the pilot's preparation): a run that meets the plan's usage limit, or a
+  rate-limit or overload error the CLI stopped retrying, stops the execution with no record and
+  no retry. It leaves `<run id>.limited` instead of the `.started` marker, so resume runs it again.
+  Claude Code documents only the `api_retry` event's error categories, not a usage-limit shape in
+  stream-json. So the limit is read conservatively: from error results, from those categories
+  until a later turn gets through, from a failed attempt's stderr, and from a successful answer
+  only when the whole answer is the CLI's usage-limit message. A 429 or 529 counts only as an
+  error's status, and an interruption stays an interruption. `pilot-1.json` and
+  `pilot-1.tasks.json` are the pilot: the 16 candidates approved by the owner, identities pinned as
+  installed here, 240 runs. The example's `codegraph index .` fails on a fresh tree, so CodeGraph
+  is prepared with `init -y` and served with `serve --mcp`. It is started as `cmd /c codegraph`,
+  relying on npm's global folder being on PATH in a normal Windows terminal, so no machine path is
+  committed to this public repository. A timed-out attempt is never a limit, and a retried limit
+  explains an error result only when the result text is empty, so a genuine failure is not
+  re-rolled; each record counts its restarts after a limit (`limit_restarts`), and the report
+  totals them per condition. The LSP condition gets gopls
+  from Anthropic's `gopls-lsp` plugin, enabled through each condition's `enabledPlugins` setting.
+  The owner installs that plugin and adamap at the pinned commit before the wiring smoke.
+  `max_latency_ratio` stays 1.25.
