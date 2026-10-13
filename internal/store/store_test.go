@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -156,8 +157,8 @@ func TestLoadRefusesANewerFormatNamingTheAdamapNeeded(t *testing.T) {
 	}
 	rewriteHeader(t, repo, func(h map[string]any) { h["format"] = 2; h["adamap"] = "0.9.0" })
 	_, _, err := Load(repo, commitA)
-	if err == nil || !strings.Contains(err.Error(), "format 2") || !strings.Contains(err.Error(), "adamap 0.9.0 or later") {
-		t.Fatalf("err = %v, want one naming format 2 and adamap 0.9.0 or later", err)
+	if err == nil || !strings.Contains(err.Error(), "format 2") || !strings.Contains(err.Error(), `adamap "0.9.0" or later`) {
+		t.Fatalf("err = %v, want one naming format 2 and adamap \"0.9.0\" or later", err)
 	}
 }
 
@@ -604,5 +605,41 @@ func TestLatestErrorDoesNotQuoteTheWholeFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not a commit") {
 		t.Errorf("err = %v, want one saying it is not a commit", err)
+	}
+}
+
+func TestLoadRefusesADocumentPathWindowsCannotHold(t *testing.T) {
+	for _, p := range []string{"a.go:x", "pkg/a:x.go", "a\x00b.go", "a\nb.go",
+		"nul", "pkg/con.txt", "AUX.go", "com1.", "lpt³"} {
+		repo := t.TempDir()
+		idx := fixture(t)
+		idx.Documents[0].Path = p // as a hand-edited store would have it; Convert would skip it
+		if _, err := Write(repo, header(commitA), idx); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), "document 0") {
+			t.Errorf("path %q: Load err = %v, want one naming document 0", p, err)
+		}
+	}
+}
+
+// A store is untrusted too (a cloned repository can commit one): text from its header must reach
+// the terminal quoted, never raw.
+func TestLoadErrorQuotesTheAdamapVersionOfANewerStore(t *testing.T) {
+	const hostile = "9\x1b[31m‮.0"
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	rewriteHeader(t, repo, func(h map[string]any) { h["format"] = 2; h["adamap"] = hostile })
+	_, _, err := Load(repo, commitA)
+	if err == nil {
+		t.Fatal("no error")
+	}
+	if strings.ContainsAny(err.Error(), "\x1b‮") {
+		t.Fatalf("err holds a raw escape or override: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), strconv.Quote(hostile)) {
+		t.Fatalf("err = %q, want the version quoted as %s", err, strconv.Quote(hostile))
 	}
 }

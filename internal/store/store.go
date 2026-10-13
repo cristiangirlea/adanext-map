@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -257,7 +258,7 @@ func LoadLimited(repo, commit string, limit int64) (Header, *model.Index, error)
 	case h.Format > FormatVersion:
 		need := "a newer adamap"
 		if h.Adamap != "" {
-			need = "adamap " + h.Adamap + " or later"
+			need = "adamap " + strconv.Quote(h.Adamap) + " or later"
 		}
 		return Header{}, nil, fmt.Errorf("the store in %s is format %d; this adamap reads format %d: "+
 			"use %s, or rebuild it with `adamap index`", dir, h.Format, FormatVersion, need)
