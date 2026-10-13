@@ -13,6 +13,10 @@ import (
 	"github.com/cristiangirlea/adanext-map/internal/model"
 )
 
+// testFileFactor multiplies a test file's rank, so tests take a smaller share of the budget than
+// the code they test.
+const testFileFactor = 0.25
+
 // Ranking is an index's files, most important first.
 type Ranking struct {
 	// Files are the files that define at least one symbol, by rank, then path.
@@ -24,7 +28,8 @@ type Ranking struct {
 // File is a file and the symbols it defines.
 type File struct {
 	Path string
-	// Rank is the file's PageRank; all files' ranks sum to 1.
+	// Rank is the file's PageRank, times testFileFactor for a test file: the ranks sum to 1 when no
+	// file is a test file.
 	Rank float64
 	// Symbols are by references from other files, most first, then name, then ID.
 	Symbols []Symbol
@@ -161,6 +166,22 @@ func isMember(kind string) bool {
 	return false
 }
 
+// isTestFile reports whether path is a test file by its name alone: Go's _test.go, TypeScript and
+// JavaScript's .test and .spec files, or any file under a tests or test directory.
+func isTestFile(path string) bool {
+	i := strings.LastIndexByte(path, '/')
+	dir, base := path[:max(i, 0)], path[i+1:]
+	if strings.HasSuffix(base, "_test.go") {
+		return true
+	}
+	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx"} {
+		if strings.HasSuffix(base, ".test"+ext) || strings.HasSuffix(base, ".spec"+ext) {
+			return true
+		}
+	}
+	return slices.ContainsFunc(strings.Split(dir, "/"), func(seg string) bool { return seg == "tests" || seg == "test" })
+}
+
 // nameOf is the name in a SCIP symbol's last descriptor: Add in `.../Adder#Add.`, Do in
 // `.../T#Do(+1).`, and a backquoted name without its quotes.
 func nameOf(id string) string {
@@ -230,13 +251,19 @@ func (g *graph) personalise(idx *model.Index, words []string) (personal []float6
 
 // Rank ranks idx's files by PageRank over the reference graph, personalised towards the files
 // that match words (see Words) when any do, and each file's symbols by their references from other
-// files. Fields and enum members (see isMember) are not among a file's symbols and take no share of
-// its rank, but references to them count as edges. Files that define no symbol the map shows are
-// left out.
+// files. A test file's rank is multiplied by testFileFactor once PageRank is done. Fields and enum
+// members (see isMember) are not among a file's symbols and take no share of its rank, but
+// references to them count as edges. Files that define no symbol the map shows are left out.
 func Rank(idx *model.Index, words []string) Ranking {
 	g := newGraph(idx)
 	personal, matched := g.personalise(idx, words)
 	ranks, _ := PageRank(g.out, personal)
+	// After PageRank, so a test file's references still lift the code it uses.
+	for f, d := range idx.Documents {
+		if isTestFile(d.Path) {
+			ranks[f] *= testFileFactor
+		}
+	}
 	r := Ranking{Matched: matched}
 	for f, all := range g.byFile {
 		var defs []int
