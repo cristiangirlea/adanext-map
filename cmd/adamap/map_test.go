@@ -137,6 +137,34 @@ func TestMapJSONHasTheSameContent(t *testing.T) {
 	}
 }
 
+func TestMapJSONKeepsPathNameAndIDRaw(t *testing.T) {
+	// The text form quotes a path and blanks a name; the JSON holds both as stored (docs/map.md),
+	// except that encoding/json escapes ESC and the like. Kind and detail are the text form's.
+	out := mustRun(t, "map", "--repo", hostileRepo(t), "--json")
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Errorf("JSON holds a raw control character: %q", out)
+	}
+	var got mapJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not the map's JSON: %v\n%s", err, out)
+	}
+	if len(got.Files) != 1 || got.Files[0].Path != "d\u202e/f.go" {
+		t.Fatalf("files %+v, want d\\u202e/f.go raw", got.Files)
+	}
+	var found bool
+	for _, s := range got.Files[0].Symbols {
+		if s.ID == "s m p v esc()." {
+			found = true
+			if s.Name != "ev\x1b[2Jil" || s.Kind != "fun ction" || s.Detail != "ev [2Jil" {
+				t.Errorf("symbol %+v, want the raw name and the blanked kind and detail", s)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no symbol with the stored ID in %+v", got.Files[0].Symbols)
+	}
+}
+
 func TestMapOfAnEmptyStore(t *testing.T) {
 	repo := t.TempDir()
 	if _, err := store.Write(repo, store.Header{Adamap: Version, Commit: testCommit, Created: time.Now().UTC()}, &model.Index{}); err != nil {

@@ -159,3 +159,10 @@ pkg/a.go
 | `name` | The display name, or the last name in `id` when the indexer gave none. |
 | `refs` | References to the symbol from other files. |
 | `score` | The symbol's share of its file's rank. |
+
+`path`, `name` and `id` are the strings as the store holds them: unlike the text form, which quotes
+a path and blanks the characters in a name, the JSON does not neutralise them. It is JSON-escaped
+as `encoding/json` does (control characters and U+2028, U+2029 become `\u` escapes, and invalid
+UTF-8 becomes U+FFFD), but a bidi override or a zero-width character stays in the string. A reader
+that shows these fields in a terminal has to neutralise them itself. `kind` and `detail` are the
+text form's, with those characters already blanked.
