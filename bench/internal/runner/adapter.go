@@ -61,8 +61,9 @@ type Adapter interface {
 }
 
 // Claude is Claude Code's CLI in print mode with stream-json output. Each attempt is a fresh
-// session; the MCP servers are only the condition's (--strict-mcp-config); the tools are the
-// fixed set plus the condition's; the prompt goes on stdin.
+// session; the settings are the user's (checked by Authorize) and the cell's, never the task
+// repository's (--setting-sources user); the MCP servers are only the condition's
+// (--strict-mcp-config); the tools are the fixed set plus the condition's; the prompt goes on stdin.
 type Claude struct{}
 
 func (Claude) Command(c Cell) (Invocation, error) {
@@ -94,7 +95,7 @@ func (Claude) Command(c Cell) (Invocation, error) {
 	setPath := filepath.Join(c.StateDir, "settings.json")
 	argv := []string{"claude", "-p", "--output-format", "stream-json", "--verbose",
 		"--model", c.Backend.Model, "--permission-mode", c.Execution.PermissionMode,
-		"--strict-mcp-config", "--mcp-config", mcpPath, "--settings", setPath,
+		"--setting-sources", "user", "--strict-mcp-config", "--mcp-config", mcpPath, "--settings", setPath,
 		"--allowedTools", strings.Join(tools, ",")}
 	if len(c.Condition.Deny) > 0 {
 		argv = append(argv, "--disallowedTools", strings.Join(c.Condition.Deny, ","))

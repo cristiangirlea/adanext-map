@@ -108,9 +108,10 @@ record cannot claim a run it is not, and a swapped task and condition names no p
    became reachable is a violation), and the declared checks with their outputs and hashes.
 
 The claude adapter runs `claude -p --output-format stream-json --verbose --model <model>
---permission-mode <mode> --strict-mcp-config --mcp-config <state>/mcp.json --settings
-<state>/settings.json --allowedTools <fixed tools plus the condition's> [--disallowedTools ...]
-[--append-system-prompt <map>]`. The condition's MCP server is the only one the session has.
+--permission-mode <mode> --setting-sources user --strict-mcp-config --mcp-config <state>/mcp.json
+--settings <state>/settings.json --allowedTools <fixed tools plus the condition's>
+[--disallowedTools ...] [--append-system-prompt <map>]`. The condition's MCP server is the only one
+the session has, and the task repository's own `.claude/settings.json` is never loaded.
 
 Not yet controlled, and to settle in the wiring smoke before the pilot: the CLI also reads the
 user's own settings and memory files, and the worker is not sandboxed from the network or from

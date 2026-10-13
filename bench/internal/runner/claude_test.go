@@ -47,6 +47,11 @@ func TestClaudeCommandHoldsTheCellFixed(t *testing.T) {
 		if flag(a, "--model") != "claude-sonnet-5-5" || flag(a, "--permission-mode") != "acceptEdits" || !slices.Contains(a, "--strict-mcp-config") {
 			t.Fatalf("%s: argv %q", cond, a)
 		}
+		// The task repository's own .claude/settings.json (project and local) is never loaded: it
+		// could carry an apiKeyHelper or an env block that bills.
+		if flag(a, "--setting-sources") != "user" {
+			t.Fatalf("%s: setting sources %q", cond, flag(a, "--setting-sources"))
+		}
 		if inv.Stdin != m.Tasks[0].Prompt || inv.Dir != "/work/run/ws" || inv.Timeout.Seconds() != 900 {
 			t.Fatalf("%s: invocation %+v", cond, inv)
 		}
