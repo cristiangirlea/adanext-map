@@ -208,13 +208,14 @@ func TestInstallClaudeKeepsTheFilePermissions(t *testing.T) {
 	repo := t.TempDir()
 	path := filepath.Join(repo, ".mcp.json")
 	writeFile(t, path, `{"other": 1}`)
-	if err := os.Chmod(path, 0o600); err != nil {
+	// 0640, not 0600: os.CreateTemp already makes files 0600, so 0600 would pass with the mode lost.
+	if err := os.Chmod(path, 0o640); err != nil {
 		t.Fatal(err)
 	}
 	mustRun(t, "install", "--claude", "--repo", repo)
 	checkEntry(t, adamapEntry(t, repo), repo)
-	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
-		t.Errorf("mode %v (%v), want 0600", fi.Mode().Perm(), err)
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o640 {
+		t.Errorf("mode %v (%v), want 0640", fi.Mode().Perm(), err)
 	}
 }
 
