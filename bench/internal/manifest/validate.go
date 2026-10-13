@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"slices"
 	"sort"
@@ -365,6 +366,11 @@ func (v *validator) checks(p string, t Task) {
 			if len(c.Expect.Contains) > 0 {
 				v.add(cp+".expect.contains", "only an answer check matches text")
 			}
+			for k, pat := range c.Paths {
+				if _, err := path.Match(pat, ""); err != nil || pat == "" {
+					v.add(fmt.Sprintf("%s.paths[%d]", cp, k), fmt.Sprintf("%q: a path.Match pattern", pat))
+				}
+			}
 		case CheckAnswer:
 			gates++
 			if len(c.Expect.Contains) == 0 {
@@ -383,6 +389,9 @@ func (v *validator) checks(p string, t Task) {
 			}
 		default:
 			v.add(cp+".type", fmt.Sprintf("unknown %q", c.Type))
+		}
+		if len(c.Paths) > 0 && c.Type != CheckFixTests {
+			v.add(cp+".paths", "only a fix-tests check lays files over the workspace")
 		}
 		if c.Expect.Exit != nil && c.Type != CheckCommand && c.Type != CheckFixTests {
 			v.add(cp+".expect.exit", "only a command or fix-tests check has an exit code")
@@ -462,6 +471,15 @@ var (
 		"CLAUDE_CODE_USE_FOUNDRY", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_APPLICATION_CREDENTIALS"}
 	apiKeyish = regexp.MustCompile(`(?i)(api[_-]?key|auth[_-]?token|apikeyhelper)`)
 )
+
+// IsProviderKeyVar reports whether an environment variable, when set, hands a provider API key
+// (or a pay-per-token cloud route) to a CLI: the named provider variables and any *_API_KEY.
+// Unlike IsAPIKeyName it leaves unrelated tokens (GH_TOKEN, NPM_AUTH_TOKEN) alone, so a real run
+// is refused for what would bill, not for every credential on the machine.
+func IsProviderKeyVar(name string) bool {
+	u := strings.ToUpper(name)
+	return slices.Contains(apiKeyNames, u) || strings.HasSuffix(u, "_API_KEY")
+}
 
 // IsAPIKeyName reports whether an environment variable or setting name would hand a provider API
 // key (or a pay-per-token cloud route) to a CLI.

@@ -207,6 +207,9 @@ type Check struct {
 	// Needs says what the check needs to run: toolchains, the fix revision, the final answer.
 	Needs  []string `json:"needs,omitempty"`
 	Expect Expect   `json:"expect,omitempty"`
+	// Paths are the fix revision's files a fix-tests check lays over the workspace, as path.Match
+	// patterns on the slash path or its base name; default *_test.go.
+	Paths []string `json:"paths,omitempty"`
 	// Criteria is what a reviewer checks the answer against (review only).
 	Criteria string `json:"criteria,omitempty"`
 }

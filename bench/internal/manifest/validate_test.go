@@ -185,3 +185,35 @@ func TestLoadReadsTheTasksFileAndRefusesUnknownFields(t *testing.T) {
 		t.Fatal("tasks and tasks_file together: no error")
 	}
 }
+
+func TestFixTestsPathsArePatterns(t *testing.T) {
+	m := benchtest.Pilot()
+	m.Tasks[2].Checks[0].Paths = []string{"*_test.go", "["}
+	m.Tasks[0].Checks[0].Paths = []string{"*.go"}
+	issues := m.Validate()
+	if !benchtest.HasIssue(issues, "tasks[2].checks[0].paths[1]", "path.Match pattern") {
+		t.Errorf("a bad pattern: %v", issues)
+	}
+	if benchtest.HasIssue(issues, "tasks[2].checks[0].paths[0]", "") {
+		t.Errorf("a good pattern refused: %v", issues)
+	}
+	if !benchtest.HasIssue(issues, "tasks[0].checks[0].paths", "only a fix-tests check") {
+		t.Errorf("paths on an answer check: %v", issues)
+	}
+}
+
+// A run is refused for a variable that would bill (a provider key or a cloud route), not for
+// every token on the machine.
+func TestIsProviderKeyVar(t *testing.T) {
+	for _, name := range []string{"ANTHROPIC_API_KEY", "anthropic_api_key", "OPENAI_API_KEY", "GEMINI_API_KEY",
+		"GOOGLE_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "SOME_VENDOR_API_KEY"} {
+		if !manifest.IsProviderKeyVar(name) {
+			t.Errorf("%s is not refused", name)
+		}
+	}
+	for _, name := range []string{"GH_TOKEN", "NPM_AUTH_TOKEN", "PATH", "HOME", "API_KEYBOARD"} {
+		if manifest.IsProviderKeyVar(name) {
+			t.Errorf("%s is refused", name)
+		}
+	}
+}
