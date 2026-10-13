@@ -304,8 +304,9 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 			// A CLI that stopped at the limit before its result may say so only on stderr.
 			limit = limitText(string(res.stderr))
 		}
-		if limit != "" {
-			// Retrying would meet it again, and a later run too: stop here.
+		if limit != "" && ctx.Err() == nil {
+			// Retrying would meet it again, and a later run too: stop here. An interruption stays
+			// one, and keeps its marker.
 			return nil, fmt.Errorf("attempt %d met %w: %s", n, ErrPlanLimit, limit)
 		}
 		a := record.Attempt{N: n, WallMS: wall, Exit: res.exit, TimedOut: res.timedOut, SessionID: out.SessionID,

@@ -115,6 +115,12 @@ func TestMain(m *testing.M) {
 			os.Stdout.WriteString(`{"type":"result","subtype":"success","is_error":true,"result":"You've hit your session limit · resets 3:45pm","session_id":"l"}` + "\n")
 		}
 		os.Exit(1)
+	case "agent-limit-hang": // a worker whose CLI names a limit on stderr, then works until stopped
+		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"lh","apiKeySource":"none"}` + "\n")
+		os.Stderr.WriteString("API Error: 429 rate limited, retrying\n")
+		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte("started\n"), 0o644)
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
 	case "agent-hang": // a worker that says it started, then works until stopped
 		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte("started\n"), 0o644)
 		time.Sleep(20 * time.Second)
@@ -809,6 +815,36 @@ func TestThePlansLimitStopsTheExecutionAndResumeRunsItAgain(t *testing.T) {
 		if len(recs) != 8 || len(limited) != 0 {
 			t.Fatalf("%s: after resume %d records, limited %v", shape, len(recs), limited)
 		}
+	}
+}
+
+// An interruption is not a limit, even when the interrupted CLI had named one: the run keeps its
+// .started marker and gets no .limited note.
+func TestAnInterruptedAttemptIsNotTakenForALimit(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	where := filepath.Join(t.TempDir(), "where.txt")
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-limit-hang", "BENCH_TEST_WHERE=" + where}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for ctx.Err() == nil {
+			if _, err := os.Stat(where); err == nil {
+				cancel()
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	err := runner.Execute(ctx, o)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, runner.ErrPlanLimit) {
+		t.Fatalf("err %v", err)
+	}
+	started, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+	if len(started) != 1 || len(limited) != 0 {
+		t.Fatalf("started %v, limited %v", started, limited)
 	}
 }
 
