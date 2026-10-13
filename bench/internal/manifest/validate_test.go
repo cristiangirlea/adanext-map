@@ -192,6 +192,33 @@ func TestValidateRefusesAnEnvThatMovesTheSettingsHome(t *testing.T) {
 	}
 }
 
+// A process environment splits each entry at its first "=", so a key holding "=" names another
+// variable than the one the checks above compare: {"HOME=/x": ""} would reach the worker as HOME.
+func TestValidateRefusesAnEnvKeyThatIsNotOneName(t *testing.T) {
+	for _, key := range []string{"HOME=/elsewhere", "CLAUDE_CONFIG_DIR=/x", "ANTHROPIC_BASE_URL=http://x", "A\x00B", ""} {
+		for _, site := range []struct {
+			where  string
+			mutate func(m *manifest.Manifest, env map[string]string)
+		}{
+			{"backends[0].env", func(m *manifest.Manifest, env map[string]string) { m.Backends[0].Env = env }},
+			{"conditions[1].env", func(m *manifest.Manifest, env map[string]string) { m.Conditions[1].Env = env }},
+			{"conditions[4].mcp.env", func(m *manifest.Manifest, env map[string]string) { m.Conditions[4].MCP.Env = env }},
+		} {
+			m := benchtest.Pilot()
+			site.mutate(m, map[string]string{key: ""})
+			found := false
+			for _, i := range m.Validate() {
+				if strings.HasPrefix(i.Path, site.where) && strings.Contains(i.Msg, "not a variable name") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%s key %q: not refused", site.where, key)
+			}
+		}
+	}
+}
+
 func TestPlannedRunsCountsEveryCell(t *testing.T) {
 	m := benchtest.Pilot()
 	if got := m.PlannedRuns(); got != 10*5*3 {

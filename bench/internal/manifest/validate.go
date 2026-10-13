@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -525,6 +526,12 @@ var settingsHomeNames = []string{"CLAUDE_CONFIG_DIR", "HOME", "USERPROFILE", "XD
 func (v *validator) noSettingsHome(path string, kv map[string]string) {
 	names := make([]string, 0, len(kv))
 	for k := range kv {
+		// A process environment splits each entry at its first "=", so a key holding one names
+		// another variable than every check here compares; an empty key or a NUL is no name either.
+		if k == "" || strings.ContainsAny(k, "=\x00") {
+			v.add(path+"."+strconv.Quote(k), "not a variable name: an env key must not be empty or hold \"=\" or a NUL")
+			continue
+		}
 		if slices.Contains(settingsHomeNames, strings.ToUpper(k)) {
 			names = append(names, k)
 		}
