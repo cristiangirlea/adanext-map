@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -315,5 +316,43 @@ func TestReadFileBoundsTheSize(t *testing.T) {
 func TestReadFileRefusesANonPositiveLimit(t *testing.T) {
 	if _, err := ReadFile("index.scip", 0); err == nil {
 		t.Fatal("a limit of 0 was accepted")
+	}
+}
+
+// SCIP specifies `/`, but indexers on Windows write `\`; either way the model gets the slash form.
+func TestConvertNormalisesDocumentPaths(t *testing.T) {
+	x := sciptest.Index()
+	x.Documents[0].RelativePath = `pkg\a.go`
+	x.Documents[1].RelativePath = `pkg\.\sub//b.go`
+	got, err := Convert(x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, d := range got.Documents {
+		paths = append(paths, d.Path)
+	}
+	if want := []string{"pkg/a.go", "pkg/sub/b.go"}; !slices.Equal(paths, want) {
+		t.Fatalf("paths %q, want %q", paths, want)
+	}
+	for _, s := range got.Symbols {
+		if s.Definition != nil && strings.Contains(s.Definition.Path, `\`) {
+			t.Errorf("%s defined at %q", s.ID, s.Definition.Path)
+		}
+	}
+}
+
+func TestConvertCleansSlashPaths(t *testing.T) {
+	for in, want := range map[string]string{"a/./b.go": "a/b.go", "a//b.go": "a/b.go", "a/x/../b.go": "a/b.go"} {
+		x := sciptest.Index()
+		x.Documents = x.Documents[:1]
+		x.Documents[0].RelativePath = in
+		got, err := Convert(x)
+		if err != nil {
+			t.Fatalf("%q: %v", in, err)
+		}
+		if p := got.Documents[0].Path; p != want {
+			t.Errorf("%q became %q, want %q", in, p, want)
+		}
 	}
 }

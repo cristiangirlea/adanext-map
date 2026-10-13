@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path"
 	"slices"
 	"strings"
 
@@ -85,7 +86,7 @@ func Convert(x *scippb.Index) (*model.Index, error) {
 	var docs []*document
 	byPath := map[string]*document{}
 	for i, d := range x.GetDocuments() {
-		path := d.GetRelativePath()
+		path := normalisePath(d.GetRelativePath())
 		if err := model.CheckPath(path); err != nil {
 			return nil, fmt.Errorf("document %d: %w", i, err)
 		}
@@ -150,6 +151,16 @@ func Convert(x *scippb.Index) (*model.Index, error) {
 	slices.SortFunc(idx.Documents, func(a, b model.Document) int { return strings.Compare(a.Path, b.Path) })
 	idx.Symbols = sorted(globals)
 	return idx, nil
+}
+
+// normalisePath is a document path in slash form, cleaned. SCIP specifies "/", but indexers on
+// Windows write a backslash, which is always taken as a separator here. An empty path stays empty
+// for CheckPath.
+func normalisePath(p string) string {
+	if p == "" {
+		return p
+	}
+	return path.Clean(strings.ReplaceAll(p, `\`, "/"))
 }
 
 func occurrence(o *scippb.Occurrence) (model.Occurrence, error) {

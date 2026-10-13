@@ -60,6 +60,9 @@ A SCIP index is untrusted input. adamap refuses, with an error naming the docume
 - a document path that is empty or absolute (`/x`, `\x`, `C:...`), or has a `..` segment;
 - symbol information without a symbol.
 
+A backslash in a document path is read as `/` (SCIP specifies `/`, but indexers on Windows write
+`\`), and the path is cleaned (`a/./b.go` and `a//b.go` become `a/b.go`) before it is checked.
+
 Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice is
 merged into one.
 
