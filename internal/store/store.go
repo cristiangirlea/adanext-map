@@ -150,13 +150,19 @@ func writeAtomic(dir, name string, write func(io.Writer) error) (err error) {
 // store.json.gz that inflates without end.
 const MaxLoadBytes = 4 << 30
 
-// Load reads commit's store from repo.
+// Load reads commit's store from repo. Besides the bytes it decompresses, it bounds how many
+// documents, symbols, occurrences and relationships it builds (model.DefaultLimits): a few MB of
+// gzip of `{},` would otherwise become gigabytes of structs.
 func Load(repo, commit string) (Header, *model.Index, error) {
-	return LoadLimited(repo, commit, MaxLoadBytes)
+	return load(repo, commit, MaxLoadBytes, model.DefaultLimits())
 }
 
 // LoadLimited is Load with a limit on the decompressed bytes it reads.
 func LoadLimited(repo, commit string, limit int64) (Header, *model.Index, error) {
+	return load(repo, commit, limit, model.DefaultLimits())
+}
+
+func load(repo, commit string, limit int64, lim model.Limits) (Header, *model.Index, error) {
 	if err := CheckCommit(commit); err != nil {
 		return Header{}, nil, err
 	}
@@ -188,6 +194,11 @@ func LoadLimited(repo, commit string, limit int64) (Header, *model.Index, error)
 	case h.Commit != commit:
 		return Header{}, nil, fmt.Errorf("the store in %s says it is commit %q: rebuild it with `adamap index`", dir, h.Commit)
 	}
+	// The header's counts are a cheap first check, not the bound: the stream is counted as it is read.
+	// Its relationships are not counted, so that limit is only ever met in the stream.
+	if err := lim.Check(h.Counts, 0); err != nil {
+		return Header{}, nil, fmt.Errorf("%s: the store has %w: rebuild it with `adamap index`", filepath.Join(dir, headerFile), err)
+	}
 	if err := checkRegular(filepath.Join(dir, storeFile)); err != nil {
 		return Header{}, nil, err
 	}
@@ -200,9 +211,9 @@ func LoadLimited(repo, commit string, limit int64) (Header, *model.Index, error)
 	if err != nil {
 		return Header{}, nil, fmt.Errorf("%s: %w", filepath.Join(dir, storeFile), err)
 	}
-	var idx model.Index
-	if err := json.NewDecoder(&limitedReader{r: gz, left: limit, limit: limit}).Decode(&idx); err != nil {
-		return Header{}, nil, fmt.Errorf("%s: %w", filepath.Join(dir, storeFile), err)
+	idx, err := decodeIndex(&limitedReader{r: gz, left: limit, limit: limit}, lim)
+	if err != nil {
+		return Header{}, nil, fmt.Errorf("%s: the store has %w", filepath.Join(dir, storeFile), err)
 	}
 	for i, d := range idx.Documents {
 		if err := model.CheckPath(d.Path); err != nil {
@@ -219,7 +230,7 @@ func LoadLimited(repo, commit string, limit int64) (Header, *model.Index, error)
 			return Header{}, nil, fmt.Errorf("%s: symbol %d: %w", filepath.Join(dir, storeFile), i, err)
 		}
 	}
-	return h, &idx, nil
+	return h, idx, nil
 }
 
 // checkDefinition checks the path of s's definition, when it has one.
