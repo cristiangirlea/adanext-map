@@ -64,9 +64,10 @@ A backslash in a document path is read as `/` (SCIP specifies `/`, but indexers 
 `\`), and the path is cleaned (`a/./b.go` and `a//b.go` become `a/b.go`) before it is checked.
 
 A document whose path leaves the project (absolute: `/x`, `C:...`, a UNC path; or with a `..` that
-escapes) is skipped with its occurrences and symbols, and `adamap index` prints `skipped N documents
-outside the project` on stderr and still writes the store. Indexers on Windows list such a document: the
-test main Go builds in its cache.
+escapes) or names the project root itself (`pkg/..`) is skipped with its occurrences and symbols,
+unread, and `adamap index` prints `skipped N documents outside the project` on stderr and still
+writes the store. Indexers on Windows list such a document: the test main Go builds in its cache.
+The checks above (ranges, symbols) apply to the documents that are kept.
 
 Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice is
 merged into one.
