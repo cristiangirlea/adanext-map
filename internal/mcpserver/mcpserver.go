@@ -514,6 +514,10 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 		fmt.Fprintf(&b, "HEAD: unknown (%s)\n", out.GitError)
 	}
 
+	// A store indexed from the dirty tree it is asked about is not called stale, since indexing
+	// again could not clear that, and git does not say whether files changed since; maybe is that
+	// case, where the refresh command is offered all the same.
+	maybe := false
 	switch {
 	case !out.Store:
 		out.Stale = true
@@ -524,21 +528,27 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 		switch {
 		case !out.AtHead:
 			fmt.Fprintf(&b, "stale: the store describes %s, not HEAD\n", out.Commit[:12])
+		case out.Dirty && out.StoreDirty:
+			maybe = true
+			b.WriteString("the store and the tree both have uncommitted changes: refresh if files changed since it was indexed\n")
 		case out.Dirty:
-			b.WriteString("stale: the working tree has uncommitted changes the store may not show\n")
+			b.WriteString("stale: the working tree has uncommitted changes the store does not show\n")
 		case out.StoreDirty:
 			b.WriteString("stale: the store was indexed with uncommitted changes, and the tree has none now\n")
 		default:
 			b.WriteString("the store is current\n")
 		}
-		out.Stale = !out.AtHead || out.Dirty || out.StoreDirty
+		out.Stale = !out.AtHead || out.Dirty != out.StoreDirty
+		if maybe {
+			fmt.Fprintf(&b, "refresh: %s\n", out.Refresh)
+		}
 	}
 	if out.Stale {
 		fmt.Fprintf(&b, "refresh: %s\n", out.Refresh)
 		if out.Pinned {
 			b.WriteString("this server is pinned to its commit by --commit: restart it without --commit to follow new stores\n")
 		}
-	} else {
+	} else if !maybe {
 		out.Refresh = ""
 	}
 	return text(b.String()), out, nil

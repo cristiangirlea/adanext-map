@@ -524,3 +524,57 @@ func TestTheStoreIsLoadedWhenTheServerStarts(t *testing.T) {
 	}
 	ok(t, cs, "outline", map[string]any{"file": "calls/a.go"})
 }
+
+func TestStatusOfAStoreIndexedFromTheDirtyTreeItDescribes(t *testing.T) {
+	repo := t.TempDir()
+	idx, err := scip.Convert(sciptest.CallGraph())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Write(repo, store.Header{Commit: commitA, Dirty: true}, idx); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name      string
+		treeDirty bool
+		stale     bool
+		want      string
+	}{
+		// Indexing again cannot clear a dirty tree, so the store is not called stale; the text
+		// says what adamap cannot tell.
+		{"tree still dirty", true, false, "both have uncommitted changes"},
+		{"tree clean now", false, true, "stale: the store was indexed with uncommitted changes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := connect(t, Config{Repo: repo, Head: func() (string, bool, error) { return commitA, tc.treeDirty, nil }})
+			a := ok(t, cs, "status", nil)
+			if a.structured["stale"] != tc.stale || a.structured["store_dirty"] != true {
+				t.Errorf("status %v", a.structured)
+			}
+			if !strings.Contains(a.text, tc.want) || !strings.Contains(a.text, "adamap index --repo") {
+				t.Errorf("status text %q, want %q and the refresh command", a.text, tc.want)
+			}
+			if refresh, _ := a.structured["refresh"].(string); !strings.Contains(refresh, "adamap index --repo") {
+				t.Errorf("structured refresh %q, want the command", refresh)
+			}
+		})
+	}
+}
+
+func TestStatusOfAPinnedStaleStoreSaysToRestart(t *testing.T) {
+	cs := connect(t, Config{Repo: callGraphRepo(t), Commit: commitA,
+		Head: func() (string, bool, error) { return commitB, false, nil }})
+	if a := ok(t, cs, "status", nil); !strings.Contains(a.text, "restart it without --commit") {
+		t.Errorf("status text %q", a.text)
+	}
+}
+
+func TestStatusWithoutGitCannotTell(t *testing.T) {
+	cs := connect(t, Config{Repo: callGraphRepo(t), Head: func() (string, bool, error) {
+		return "", false, errors.New("not a git repository")
+	}})
+	a := ok(t, cs, "status", nil)
+	if !strings.Contains(a.text, "cannot tell") || !strings.Contains(a.text, "not a git repository") {
+		t.Errorf("status text %q", a.text)
+	}
+}
