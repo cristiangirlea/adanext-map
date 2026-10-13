@@ -125,6 +125,11 @@ func TestMain(m *testing.M) {
 		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte("started\n"), 0o644)
 		time.Sleep(20 * time.Second)
 		os.Exit(0)
+	case "agent-retry-hang": // a worker whose CLI retried an overload, then worked past the timeout
+		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"rh","apiKeySource":"none"}` + "\n")
+		os.Stdout.WriteString(`{"type":"system","subtype":"api_retry","error":"overloaded","session_id":"rh"}` + "\n")
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
 	case "agent-hang": // a worker that says it started, then works until stopped
 		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte("started\n"), 0o644)
 		time.Sleep(20 * time.Second)
@@ -854,6 +859,25 @@ func TestARunStartedAgainAfterALimitDropsItsNote(t *testing.T) {
 	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
 	if len(started) != 1 || len(limited) != 0 {
 		t.Fatalf("started %v, limited %v", started, limited)
+	}
+}
+
+// An attempt that outlives timeout_seconds is a timeout, not the plan's limit, even when the last
+// thing its CLI printed was a retried overload: it is recorded, and no .limited note is left.
+func TestATimedOutAttemptIsNotTakenForALimit(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	m.Tasks, m.Repeats, m.Budget.MaxRuns = m.Tasks[:1], 1, 2
+	m.Execution.TimeoutSeconds, m.Execution.MaxAttempts = 1, 1
+	o := options(t, m, src, 2)
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-retry-hang"}
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+	if len(recs) != 2 || len(limited) != 0 || len(recs[0].Attempts) != 1 || !recs[0].Attempts[0].TimedOut {
+		t.Fatalf("%d records, limited %v, %+v", len(recs), limited, recs)
 	}
 }
 

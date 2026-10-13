@@ -308,7 +308,8 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 			// A CLI that stopped at the limit before its result may say so only on stderr.
 			limit = limitText(string(res.stderr))
 		}
-		if limit != "" && ctx.Err() == nil {
+		// A timeout is the task's (or the condition's) own slowness, however the CLI's last line read.
+		if limit != "" && ctx.Err() == nil && !res.timedOut {
 			// Retrying would meet it again, and a later run too: stop here. An interruption stays
 			// one, and keeps its marker.
 			return nil, fmt.Errorf("attempt %d met %w: %s", n, ErrPlanLimit, limit)
