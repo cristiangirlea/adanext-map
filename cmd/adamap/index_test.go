@@ -237,6 +237,41 @@ func TestIndexCleansUpAfterAFailedIndexer(t *testing.T) {
 	}
 }
 
+func TestIndexAddsRustupHintWhenRustAnalyzerFails(t *testing.T) {
+	cases := []struct {
+		name     string
+		marker   string
+		program  string
+		wantHint bool
+	}{
+		{"rust-analyzer", "Cargo.toml", "rust-analyzer", true},
+		{"scip-go", "go.mod", "scip-go", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fakeIndexers(t, "rust-analyzer", "scip-go")
+			runIndexer = func(dir, program string, args []string, _ io.Writer) error {
+				return errors.New("exit status 1")
+			}
+			repo := t.TempDir()
+			writeFile(t, filepath.Join(repo, c.marker), "")
+			code, out, errOut := runIndexCmd("--commit", testCommit, "--repo", repo)
+			if code != 1 || out != "" {
+				t.Fatalf("exit %d, stdout %q; want 1 and nothing", code, out)
+			}
+			if c.wantHint {
+				if !strings.Contains(errOut, "rustup component add rust-analyzer") {
+					t.Errorf("stderr %q does not contain rustup hint for rust-analyzer", errOut)
+				}
+			} else {
+				if strings.Contains(errOut, "rustup component add") {
+					t.Errorf("stderr %q contains rustup hint but should not for %s", errOut, c.name)
+				}
+			}
+		})
+	}
+}
+
 func TestIndexNamesAMissingIndexerAndHowToInstallIt(t *testing.T) {
 	cases := map[string][]string{
 		"go.mod":     {"scip-go", "go install github.com/scip-code/scip-go/cmd/scip-go@latest"},

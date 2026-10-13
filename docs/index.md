@@ -52,7 +52,9 @@ The `<file>` is an `index.scip` in a new directory under the system's temporary 
 directory when it is done, whether the indexer succeeded or not. An `index.scip` already in the
 repository is neither read nor touched. If adamap is killed before it can clean up, the directory
 stays in the temporary directory, where the system clears it. If the indexer is not on `PATH`,
-adamap names it and says how to install it. The indexer's own output goes to stderr.
+adamap names it and says how to install it. When rust-analyzer fails, adamap also suggests
+`rustup component add rust-analyzer`, since a rustup shim without that component fails the same
+way. The indexer's own output goes to stderr.
 
 For any other language, run its SCIP indexer yourself and pass the output with `--scip`.
 
