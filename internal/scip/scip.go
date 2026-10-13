@@ -55,13 +55,41 @@ func ReadFile(path string, maxBytes int64) (*model.Index, Skipped, error) {
 	return idx, skipped, nil
 }
 
-// Decode converts a serialized SCIP index.
+// Decode converts a serialized SCIP index. The bytes are bounded by the caller (ReadFile's maxBytes);
+// the counts of documents, symbols, occurrences and relationships by model.DefaultLimits.
 func Decode(data []byte) (*model.Index, Skipped, error) {
+	return decode(data, model.DefaultLimits())
+}
+
+// decode is Decode with the count limits given. The counts are checked after proto.Unmarshal, which
+// has already built the messages: they bound the work of converting and the store written from it,
+// not the memory of reading, which the size of the data bounds.
+func decode(data []byte, lim model.Limits) (*model.Index, Skipped, error) {
 	var x scippb.Index
 	if err := proto.Unmarshal(data, &x); err != nil {
 		return nil, Skipped{}, fmt.Errorf("not a SCIP index: %w", err)
 	}
+	if err := checkCounts(&x, lim); err != nil {
+		return nil, Skipped{}, fmt.Errorf("the SCIP index has %w", err)
+	}
 	return Convert(&x)
+}
+
+// checkCounts counts what x holds as it is, before any merging, and refuses more than lim allows.
+func checkCounts(x *scippb.Index, lim model.Limits) error {
+	c := model.Counts{Documents: len(x.GetDocuments()), Symbols: len(x.GetExternalSymbols())}
+	rels := 0
+	for _, si := range x.GetExternalSymbols() {
+		rels += len(si.GetRelationships())
+	}
+	for _, d := range x.GetDocuments() {
+		c.Symbols += len(d.GetSymbols())
+		c.Occurrences += len(d.GetOccurrences())
+		for _, si := range d.GetSymbols() {
+			rels += len(si.GetRelationships())
+		}
+	}
+	return lim.Check(c, rels)
 }
 
 // maxSkippedPaths is how many skipped paths a Skipped keeps for a message.
