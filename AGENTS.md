@@ -37,6 +37,9 @@ go test -race -count=1 ./...     # CI only; needs cgo
 test -z "$(gofmt -l .)"          # /check: tracked files only
 bash -n .claude/hooks/go-rules.sh && bash -n .claude/hooks/go-rules.test.sh
 sh .claude/hooks/go-rules.test.sh
+bash -n .claude/hooks/hidden-chars.sh && bash -n .claude/hooks/hidden-chars.test.sh
+sh .claude/hooks/hidden-chars.test.sh
+sh .claude/hooks/hidden-chars.sh   # no bidi controls or zero-width characters in tracked files
 ```
 
 `-race` needs cgo, which the owner's Windows PC lacks: run `go test -count=3 ./...` there and leave
