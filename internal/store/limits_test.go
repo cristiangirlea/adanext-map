@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -182,5 +183,27 @@ func TestLoadDoesNotTrustHeaderCounts(t *testing.T) {
 	lim.Documents = 1
 	if _, _, err := load(repo, commitA, MaxLoadBytes, lim); err == nil || !strings.Contains(err.Error(), "more than the limit of 1 documents") {
 		t.Fatalf("load err = %v, want the streamed document count refused", err)
+	}
+}
+
+func TestDecodeRefusesAnUnknownFieldNestedTooDeepWithoutReadingTheRest(t *testing.T) {
+	for _, open := range []string{"[", `{"a":`} {
+		// The LimitReader only keeps a decoder without the depth limit from running away.
+		r := &endless{prefix: `{"x":`, elem: open}
+		_, err := decodeIndex(io.LimitReader(r, 64<<20), model.DefaultLimits())
+		if err == nil || !strings.Contains(err.Error(), "exceeded max depth") {
+			t.Fatalf("open %q: decodeIndex err = %v, want one naming the depth limit", open, err)
+		}
+		if r.read > 1<<20 {
+			t.Errorf("open %q: read %d bytes before giving up, want well under 1 MiB", open, r.read)
+		}
+	}
+}
+
+func TestDecodeSkipsAnUnknownFieldAtTheDepthLimit(t *testing.T) {
+	n := 10000
+	doc := `{"x":` + strings.Repeat("[", n) + strings.Repeat("]", n) + `}`
+	if _, err := decodeIndex(strings.NewReader(doc), model.DefaultLimits()); err != nil {
+		t.Fatalf("a value nested %d deep: %v", n, err)
 	}
 }

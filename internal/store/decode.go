@@ -156,6 +156,10 @@ func readArray[T any](d *decoder, elem func(*T) error) ([]T, error) {
 	return out, eof(err)
 }
 
+// maxDepth is how deep a skipped value may nest, the limit encoding/json keeps in its scanner.
+// Token has none: its stack grows with every open bracket.
+const maxDepth = 10000
+
 // skip consumes the value at the decoder's position, token by token, so a field this adamap does not
 // know is never built in memory.
 func (d *decoder) skip() error {
@@ -167,7 +171,9 @@ func (d *decoder) skip() error {
 		}
 		if delim, ok := tok.(json.Delim); ok {
 			if delim == '[' || delim == '{' {
-				depth++
+				if depth++; depth > maxDepth {
+					return fmt.Errorf("exceeded max depth of %d", maxDepth)
+				}
 			} else {
 				depth--
 			}
