@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -230,5 +231,41 @@ func TestEncodeHoldsOneElementAtATime(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > uint64(w.total/4) {
 		t.Errorf("encoding %d bytes of JSON allocated %d bytes: more than a quarter of it", w.total, alloc)
+	}
+}
+
+// failAfter accepts n bytes and then fails every write, as a full disk would.
+type failAfter struct {
+	n      int
+	writes int // writes asked for after the first failure
+	failed bool
+}
+
+var errDiskFull = errors.New("disk full")
+
+func (w *failAfter) Write(p []byte) (int, error) {
+	if w.failed {
+		w.writes++
+		return 0, errDiskFull
+	}
+	if len(p) > w.n {
+		w.failed = true
+		return 0, errDiskFull
+	}
+	w.n -= len(p)
+	return len(p), nil
+}
+
+// A write that fails part way through the store is the error encodeIndex returns, and nothing is
+// written after it: Write then never completes a store from a stream that broke.
+func TestEncodeStopsAtTheFirstFailedWrite(t *testing.T) {
+	for _, n := range []int{0, 10, 1000, 20000} {
+		w := &failAfter{n: n}
+		if err := encodeIndex(w, bigIndex(50)); !errors.Is(err, errDiskFull) {
+			t.Fatalf("after %d bytes: err = %v, want the write's error", n, err)
+		}
+		if w.writes != 0 {
+			t.Errorf("after %d bytes: %d writes after the failure", n, w.writes)
+		}
 	}
 }
