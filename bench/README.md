@@ -71,7 +71,9 @@ limit resets: resume starts that run afresh, and its new first attempt removes t
 in a second attempt also discards the failed first attempt: the run is started again as a whole.
 A limit is read from the CLI's own account only:
 - a result event with `is_error` whose text names a usage, session, weekly or rate limit, an
-  overload, or a 429 or 529;
+  overload, or a 429 or 529 given as the error's status;
+- a result, error or not, whose whole answer is Claude Code's usage-limit message
+  (`Claude AI usage limit reached|<reset>`, `You've hit your session limit ...`);
 - for an attempt with no result or an error result, an `api_retry` event or an assistant message
   whose `error` is `rate_limit`, `overloaded` or `billing_error`;
 - the stderr of a failed attempt naming the same.

@@ -190,6 +190,9 @@ func TestClaudeParseNamesThePlansLimit(t *testing.T) {
 			`{"type":"result","subtype":"error_max_turns","is_error":true,"result":""}`, false},
 		{"retried, got through, then timed out", `{"type":"system","subtype":"api_retry","error":"overloaded","attempt":1,"max_retries":10,"error_status":529}` + "\n" +
 			`{"type":"assistant","message":{"content":[{"type":"text","text":"Looking."}]}}`, false},
+		{"usage limit as the whole answer", `{"type":"result","subtype":"success","is_error":false,"result":"Claude AI usage limit reached|1760400000"}`, true},
+		{"session limit as the whole answer", `{"type":"result","subtype":"success","is_error":false,"result":"You’ve hit your session limit · resets 3:45pm"}`, true},
+		{"answer quotes the limit message", `{"type":"result","subtype":"success","is_error":false,"result":"The CLI prints Claude AI usage limit reached|<epoch> when the plan runs out."}`, false},
 		{"answer mentions a rate limit", `{"type":"result","subtype":"success","is_error":false,"result":"The client retries on HTTP 429 and on a rate limit; it handles overloaded servers."}`, false},
 		{"status 429", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"request failed with status 429"}`, true},
 		{"a process id 529", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"(node:529) Warning: a deprecated option"}`, false},

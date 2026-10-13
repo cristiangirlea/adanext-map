@@ -296,6 +296,8 @@ func parseStreamJSON(stdout []byte, b manifest.Backend) Outcome {
 		if o.Limit = limitText(result.Result); o.Limit == "" {
 			o.Limit = limitErr
 		}
+	} else if a := strings.TrimSpace(result.Result); limitAnswer.MatchString(a) {
+		o.Err, o.Limit = "the CLI gave its usage-limit message as the answer", a
 	}
 	if u := result.Usage; u != nil && u.Input != nil && u.CacheCreation != nil && u.CacheRead != nil && u.Output != nil {
 		o.Usage = record.Usage{Source: record.Reported, Semantics: record.SemanticsFor(b.CLI),
@@ -330,6 +332,10 @@ func limitCategory(raw json.RawMessage) string {
 // Claude Code's own ("Claude AI usage limit reached|<reset>", "You've hit your session limit"),
 // and the API's 429 and 529 as it relays them ("API Error: 429", "status 529"), never a bare number.
 var limitWords = regexp.MustCompile(`(?i)\b(usage|session|weekly|rate)[ _-]?limit|\bhit your (\w+ )?limit|overloaded|\b(error|status|code)\W{1,3}(429|529)\b`)
+
+// limitAnswer is Claude Code's usage-limit message as the whole of a result that is not marked as
+// an error, which some versions give: only the whole answer, never a mention within one.
+var limitAnswer = regexp.MustCompile(`^(?:Claude AI usage limit reached\|\d+|You['\x{2019}]ve hit your (?:\w+ )?limit\b.{0,80})$`)
 
 // limitText is the first line of an error text that names a limit, trimmed; "" when it names none.
 // Only error texts are read: a successful answer may well talk about rate limits.
