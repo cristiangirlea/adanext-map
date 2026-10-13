@@ -525,6 +525,29 @@ func TestLoadRefusesAnOversizedHeader(t *testing.T) {
 	}
 }
 
+func TestLoadReadsAHeaderOfExactlyTheLimit(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(repo, ".adamap", commitA, "header.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Valid JSON, padded with whitespace to exactly 1 MiB.
+	padded := append(data, bytes.Repeat([]byte(" "), 1<<20-len(data))...)
+	if len(padded) != maxHeaderBytes {
+		t.Fatalf("test header is %d bytes, want %d", len(padded), maxHeaderBytes)
+	}
+	if err := os.WriteFile(path, padded, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Load(repo, commitA); err != nil {
+		t.Fatalf("Load of a header of exactly %d bytes: %v", maxHeaderBytes, err)
+	}
+}
+
 func TestLoadRefusesASymbolDefinitionPathOutsideTheProject(t *testing.T) {
 	loc := func(p string) *model.Location { return &model.Location{Path: p} }
 	cases := map[string]func(idx *model.Index){
