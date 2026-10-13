@@ -31,10 +31,11 @@ no notes: the JSON is the whole answer.
 ## What the arguments mean
 
 **A file** is matched against the paths in the index, which are relative to the project root with
-forward slashes. adamap converts what you type to that form first: backslashes become slashes, a
-leading `./` and `..` segments are cleaned, and an absolute path is made relative to `--repo` (one
-outside the repository is an error). A relative path is taken relative to the repository, not to the
-working directory.
+forward slashes. adamap converts what you type to that form first: on Windows backslashes become
+slashes (elsewhere a backslash is an ordinary character, and no indexed path holds one, since the
+index reader took each as a separator), a leading `./` and `..` segments are cleaned, and an absolute
+path is made relative to `--repo` (one outside the repository is an error). A relative path is taken
+relative to the repository, not to the working directory.
 
 **A symbol** is its SCIP symbol string, or a display name. A name is resolved as `find` would,
 but strictly: it must equal exactly one symbol's name, or, failing that, exactly one symbol's name
