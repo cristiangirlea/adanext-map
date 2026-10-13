@@ -186,6 +186,20 @@ func TestInstallClaudeRefusesALink(t *testing.T) {
 	}
 }
 
+func TestInstallClaudeRefusesAFileOverTheLimit(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, ".mcp.json")
+	big := strings.Repeat(" ", maxMCPJSONBytes+1)
+	writeFile(t, path, big)
+	code, out, errOut := runCmd("install", "--claude", "--repo", repo)
+	if code != 1 || out != "" || !strings.Contains(errOut, "larger than") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want exit 1 saying the file is too large", code, out, errOut)
+	}
+	if data, _ := os.ReadFile(path); string(data) != big {
+		t.Errorf("the file was changed: %d bytes", len(data))
+	}
+}
+
 // noFiles fails the test if dir holds anything.
 func noFiles(t *testing.T, dir string) {
 	t.Helper()
