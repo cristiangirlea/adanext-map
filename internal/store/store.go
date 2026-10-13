@@ -276,10 +276,7 @@ func load(repo, commit string, limit int64, lim model.Limits) (Header, *model.In
 	if err := lim.Check(h.Counts, 0); err != nil {
 		return Header{}, nil, fmt.Errorf("%s: the store has %w: rebuild it with `adamap index`", filepath.Join(dir, headerFile), err)
 	}
-	if err := checkRegular(filepath.Join(dir, storeFile)); err != nil {
-		return Header{}, nil, err
-	}
-	f, err := os.Open(filepath.Join(dir, storeFile))
+	f, err := openRegular(filepath.Join(dir, storeFile))
 	if err != nil {
 		return Header{}, nil, err
 	}
@@ -321,25 +318,36 @@ func checkDefinition(s model.Symbol) error {
 // maxHeaderBytes is the largest header.json Load reads; a real one is a few hundred bytes.
 const maxHeaderBytes = 1 << 20
 
-// checkRegular refuses path unless it is a regular file, not a link to one: a cloned repository can
-// commit a store file as a symbolic link to a device or to a file outside itself.
-func checkRegular(path string) error {
+// openRegular opens path unless it is not a regular file, or a link to one: a cloned repository can
+// commit a store file as a symbolic link to a device or to a file outside itself. What was opened
+// must also be the file that was checked, as something may replace the path between the two.
+func openRegular(path string) (*os.File, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !fi.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a regular file: adamap will not read a store through a link or a device", path)
+		return nil, fmt.Errorf("%s is not a regular file: adamap will not read a store through a link or a device", path)
 	}
-	return nil
+	f, err := openFile(path)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := f.Stat()
+	if err == nil && !os.SameFile(fi, opened) {
+		err = fmt.Errorf("%s was replaced while it was opened, so what was read is not the file that was checked: "+
+			"run it again", path)
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 // readHeader reads header.json, at most maxHeaderBytes of it.
 func readHeader(path string) ([]byte, error) {
-	if err := checkRegular(path); err != nil {
-		return nil, err
-	}
-	f, err := os.Open(path)
+	f, err := openRegular(path)
 	if err != nil {
 		return nil, err
 	}
@@ -387,13 +395,7 @@ func Latest(repo string) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(repo, DirName, latestFile)
-	if err := checkRegular(path); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return "", fmt.Errorf("no store in %s yet: run `adamap index` (%w)", repo, err)
-		}
-		return "", err
-	}
-	f, err := openFile(path)
+	f, err := openRegular(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("no store in %s yet: run `adamap index` (%w)", repo, err)
 	}

@@ -626,6 +626,42 @@ func TestLatestSaysNoStoreWhenTheFileIsGoneAtOpen(t *testing.T) {
 	}
 }
 
+func TestStoreFilesAreRefusedWhenTheOpenedFileIsNotTheOneChecked(t *testing.T) {
+	// A file swapped in between the Lstat and the open (a link to a device, say) must not be read.
+	// The stand-in is a copy with the same bytes, so only the identity check can tell.
+	for _, name := range []string{headerFile, storeFile, latestFile} {
+		t.Run(name, func(t *testing.T) {
+			repo := t.TempDir()
+			if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+				t.Fatal(err)
+			}
+			useOpenFile(t, func(path string) (*os.File, error) {
+				if filepath.Base(path) != name {
+					return os.Open(path)
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					return nil, err
+				}
+				other := filepath.Join(t.TempDir(), name)
+				if err := os.WriteFile(other, data, 0o644); err != nil {
+					return nil, err
+				}
+				return os.Open(other)
+			})
+			_, _, loadErr := Load(repo, commitA)
+			_, latestErr := Latest(repo)
+			err := loadErr
+			if name == latestFile {
+				err = latestErr
+			}
+			if err == nil || !strings.Contains(err.Error(), "is not the file that was checked") {
+				t.Fatalf("err = %v, want a refusal saying the opened file is not the one checked", err)
+			}
+		})
+	}
+}
+
 func TestLatestErrorDoesNotQuoteTheWholeFile(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".adamap"), 0o755); err != nil {
