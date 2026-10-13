@@ -40,7 +40,9 @@ repository); a fail-closed push guard (#8).
   not depend on SCIP's types. The store is gzip-compressed JSON from the standard library, format 1.
 - 2026-10-13 (slice 2): `--commit` takes only a full hash, since it names a directory; with it, git
   is not asked and the store is not marked dirty. `adamap index` refuses to run an indexer over an
-  `index.scip` already in the repository rather than overwrite and delete it. The converter reads
+  `index.scip` already in the repository rather than overwrite and delete it (replaced in issue #12:
+  the indexer now writes into a temporary directory outside the repository, so there is nothing to
+  refuse and a run stopped by a signal leaves nothing behind in the repository). The converter reads
   the typed ranges SCIP added as well as the packed ones, merges a document listed twice, takes a
   symbol's first definition occurrence as its definition, and counts a forward definition as a
   reference.

@@ -44,18 +44,24 @@ repository as its working directory:
 
 | Root file | Indexer | Install it with |
 |---|---|---|
-| `Cargo.toml` | `rust-analyzer scip .` | `rustup component add rust-analyzer` |
-| `go.mod` | `scip-go` | `go install github.com/scip-code/scip-go/cmd/scip-go@latest` |
+| `Cargo.toml` | `rust-analyzer scip . --output <file>` | `rustup component add rust-analyzer` |
+| `go.mod` | `scip-go --output <file>` | `go install github.com/scip-code/scip-go/cmd/scip-go@latest` |
 
-The indexer writes `index.scip` in the repository. adamap reads it and then deletes it. If an
-`index.scip` is already there, adamap stops instead of overwriting it: pass it with `--scip`, or
-move it. If the indexer is not on `PATH`, adamap names it and says how to install it. The indexer's
-own output goes to stderr.
+The `<file>` is an `index.scip` in a new directory under the system's temporary directory
+(`adamap-index-*`), so nothing is written in the repository. adamap reads it and removes the
+directory when it is done, whether the indexer succeeded or not. An `index.scip` already in the
+repository is neither read nor touched. If adamap is killed before it can clean up, the directory
+stays in the temporary directory, where the system clears it. If the indexer is not on `PATH`,
+adamap names it and says how to install it. The indexer's own output goes to stderr.
 
 For any other language, run its SCIP indexer yourself and pass the output with `--scip`.
 
 An indexer builds the project, and building runs the project's code: `rust-analyzer` runs build
 scripts and procedural macros. Index only repositories whose code you would build.
+
+The indexers may download the project's dependencies from the network through `cargo` and the Go
+module proxy, so `adamap index` can use the network even though adamap itself does not. Using
+`--scip` with an index built elsewhere avoids both the dependency downloads and indexer invocations.
 
 ## What is checked
 
