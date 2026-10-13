@@ -130,6 +130,11 @@ func TestMain(m *testing.M) {
 		os.Stdout.WriteString(`{"type":"system","subtype":"api_retry","error":"overloaded","session_id":"rh"}` + "\n")
 		time.Sleep(20 * time.Second)
 		os.Exit(0)
+	case "agent-overage": // a CLI whose plan's meter shows overage in use, then works on
+		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"o","apiKeySource":"none"}` + "\n")
+		os.Stdout.WriteString(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","isUsingOverage":true},"session_id":"o"}` + "\n")
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
 	case "agent-hang": // a worker that says it started, then works until stopped
 		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte("started\n"), 0o644)
 		time.Sleep(20 * time.Second)
@@ -1109,5 +1114,39 @@ func TestARestartAfterALimitIsCountedInTheRecord(t *testing.T) {
 		if r.LimitRestarts != want {
 			t.Errorf("%s: limit_restarts %d, want %d", r.RunID, r.LimitRestarts, want)
 		}
+	}
+}
+
+// A session whose plan's meter shows overage in use is spending beyond the plan: the CLI is killed,
+// no record is written, the execution stops, and the .started marker stays, so resume does not run
+// it again on its own.
+func TestOverageStopsTheExecutionAndKeepsTheMarker(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-overage"}
+	start := time.Now()
+	err := runner.Execute(context.Background(), o)
+	if !errors.Is(err, runner.ErrOverage) || errors.Is(err, runner.ErrPlanLimit) || !strings.Contains(err.Error(), "overage") {
+		t.Fatalf("err %v", err)
+	}
+	if d := time.Since(start); d > 15*time.Second {
+		t.Fatalf("the CLI was not stopped (%s)", d)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	started, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+	if len(recs) != 0 || len(started) != 1 || len(limited) != 0 {
+		t.Fatalf("%d records, started %v, limited %v", len(recs), started, limited)
+	}
+	if text, _ := os.ReadFile(started[0]); !strings.Contains(string(text), "overage") {
+		t.Fatalf("the marker does not say why: %q", text)
+	}
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent"}
+	if err := runner.Execute(context.Background(), o); err == nil || !strings.Contains(err.Error(), ".started") {
+		t.Fatalf("resume: err %v", err)
+	}
+	if recs, _ := record.ReadDir(o.RecordsDir); len(recs) != 7 {
+		t.Fatalf("resume: %d records", len(recs))
 	}
 }

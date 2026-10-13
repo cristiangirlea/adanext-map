@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -121,17 +122,31 @@ func (Claude) Command(c Cell) (Invocation, error) {
 // subscriptionOnly watches a stream-json transcript for its init event and lets the session go on
 // only when the init shows the subscription login (apiKeySource "none"). Any other source, a
 // missing one, or a turn (or any event but a system or rate_limit_event one) before the init stops
-// it; an init that never comes is bounded by the attempt's timeout. It is a backstop, not a gate: the CLI starts
-// its first request right after writing the init, so at most one request can get through before
-// the process is stopped.
+// it; an init that never comes is bounded by the attempt's timeout. Before the init and after it,
+// a rate_limit_event (the plan's meter) that shows overage in use stops it too. It is a backstop,
+// not a gate: the CLI starts its first request right after writing the init, so at most one
+// request can get through before the process is stopped.
 func subscriptionOnly() func(line []byte) error {
 	seen := false
 	return func(line []byte) error {
+		// After the init only the meter matters: skip the turns, which can be large, unread.
+		if seen && !bytes.Contains(line, []byte(`"rate_limit_event"`)) {
+			return nil
+		}
 		var e struct {
 			Type, Subtype string
-			APIKeySource  *string `json:"apiKeySource"`
+			APIKeySource  *string        `json:"apiKeySource"`
+			Info          map[string]any `json:"rate_limit_info"`
 		}
-		if seen || json.Unmarshal(line, &e) != nil {
+		if json.Unmarshal(line, &e) != nil {
+			return nil
+		}
+		if e.Type == "rate_limit_event" {
+			if field := overageInUse(e.Info, false, "rate_limit_info"); field != "" {
+				return fmt.Errorf("the plan's meter shows %w at %s: the CLI was stopped", ErrOverage, field)
+			}
+		}
+		if seen {
 			return nil
 		}
 		switch {
@@ -150,6 +165,52 @@ func subscriptionOnly() func(line []byte) error {
 		}
 		return fmt.Errorf("a %q event came before the CLI's init event, so its login (apiKeySource) is unknown: refused as possible API billing", e.Type)
 	}
+}
+
+// ErrOverage is a session whose plan's meter (a rate_limit_event) shows overage in use: usage
+// billed beyond the plan. The CLI is stopped, and the run keeps its .started marker.
+var ErrOverage = errors.New("overage in use (usage billed beyond the plan)")
+
+// overageInUse is the path of the first field in a rate_limit_event's info that may say overage
+// is in use, "" when none does. Claude Code documents isUsingOverage only, so any field named for
+// overage (or inside one) that is true, or a status that reads as in use, counts; a flag named
+// for overage being disabled does not.
+func overageInUse(v any, under bool, path string) string {
+	switch x := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			key := strings.ToLower(k)
+			if strings.Contains(key, "disabled") {
+				continue
+			}
+			if p := overageInUse(x[k], under || strings.Contains(key, "overage"), path+"."+k); p != "" {
+				return p
+			}
+		}
+	case []any:
+		for i, y := range x {
+			if p := overageInUse(y, under, fmt.Sprintf("%s[%d]", path, i)); p != "" {
+				return p
+			}
+		}
+	case bool:
+		if under && x {
+			return path
+		}
+	case string:
+		switch strings.ToLower(strings.TrimSpace(x)) {
+		case "in_use", "in use", "inuse", "using", "active":
+			if under {
+				return path
+			}
+		}
+	}
+	return ""
 }
 
 func (Claude) Parse(stdout []byte, b manifest.Backend) Outcome { return parseStreamJSON(stdout, b) }

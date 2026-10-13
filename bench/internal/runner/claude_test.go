@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -305,6 +306,41 @@ func TestClaudeWatchAcceptsTheMeterAndHooksBeforeInit(t *testing.T) {
 		}
 		if err != nil && !strings.Contains(err.Error(), "apiKeySource") {
 			t.Errorf("%s: the refusal does not name the login: %v", c.name, err)
+		}
+	}
+}
+
+// Overage is billed beyond the plan: a rate_limit_event with any flag that says overage is in use
+// stops the session, before the init or after it. Overage that is only allowed, or off, does not.
+func TestClaudeWatchRefusesOverage(t *testing.T) {
+	real := fixtureLines(t, "claude-2.1.284-start.jsonl")
+	meter := real[len(real)-1]
+	if !strings.Contains(meter, `"isUsingOverage":false`) {
+		t.Fatalf("the fixture's meter line changed: %s", meter)
+	}
+	init := `{"type":"system","subtype":"init","apiKeySource":"none"}`
+	event := func(info string) string { return `{"type":"rate_limit_event","rate_limit_info":` + info + `}` }
+	cases := []struct {
+		name  string
+		lines []string
+		ok    bool
+	}{
+		{"the real stream, overage in use", append(slices.Clone(real[:len(real)-1]), strings.Replace(meter, `"isUsingOverage":false`, `"isUsingOverage":true`, 1)), false},
+		{"in use after the init", []string{init, `{"type":"assistant","message":{}}`, event(`{"status":"allowed","isUsingOverage":true}`)}, false},
+		{"an overage status in use", []string{init, event(`{"status":"allowed","overageStatus":"in_use"}`)}, false},
+		{"a nested overage flag", []string{init, event(`{"status":"allowed","overage":{"inUse":true}}`)}, false},
+		{"a window's overage flag", []string{init, event(`{"unifiedWindows":{"five_hour":{"utilization":0.2,"isUsingOverage":true}}}`)}, false},
+		{"overage allowed, not used", []string{init, event(`{"status":"allowed","isUsingOverage":false,"overageStatus":"allowed"}`)}, true},
+		{"overage disabled", []string{init, event(`{"status":"allowed","overageDisabled":true,"overageStatus":"rejected"}`)}, true},
+		{"a turn quoting the meter", []string{init, `{"type":"user","message":{"content":[{"type":"tool_result","content":"{\"type\":\"rate_limit_event\",\"isUsingOverage\":true}"}]}}`}, true},
+	}
+	for _, c := range cases {
+		_, err := watchLines(t, c.lines)
+		if (err == nil) != c.ok {
+			t.Errorf("%s: watch says %v", c.name, err)
+		}
+		if err != nil && (!errors.Is(err, runner.ErrOverage) || errors.Is(err, runner.ErrPlanLimit)) {
+			t.Errorf("%s: not an overage refusal: %v", c.name, err)
 		}
 	}
 }
