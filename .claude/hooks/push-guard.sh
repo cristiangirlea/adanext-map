@@ -137,12 +137,14 @@ current_branch() {
 
 # check_cmd TEXT: each simple command in TEXT, split at ; | & ( ) { } and newlines outside quotes.
 # A command substitution, $( ) or sh's backticks, in double quotes too, is checked as commands, and
-# the command around it gets a $ where it was, as what it adds cannot be seen. A comment is skipped.
+# the command around it gets a $ where it was, as what it adds cannot be seen. A comment is skipped,
+# and so is a heredoc's body, unless its word is unquoted and the body has a substitution: then the
+# body is checked as commands.
 check_cmd() {
-  cs=$1 cur= md=o stk= lastc=
+  cs=$1 cur= md=o stk= lastc= hdq=
   while [ -n "$cs" ]; do
     case $md in
-      o) pre=${cs%%[\;\|\&\(\)\{\}\#\"\'\\\`$nl]*} ;;
+      o) pre=${cs%%[\;\|\&\(\)\{\}\<\#\"\'\\\`$nl]*} ;;
       s) pre=${cs%%\'*} ;;
       *) pre=${cs%%[\"\\\`\(]*} ;;
     esac
@@ -174,6 +176,13 @@ check_cmd() {
           '' | [\ \	\;\&\|\(\)] | "$nl") case $cs in *"$nl"*) cs=$nl${cs#*"$nl"} ;; *) cs= ;; esac ;;
           *) cur=$cur$ch ;;
         esac ;;
+      o\<)
+        cur=$cur$ch
+        case $lang$cs in
+          sh\<\<*) cur=$cur'<<' cs=${cs#??} ;; # <<<, a here-string
+          sh\<*) cs=${cs#?}; cur=$cur'<'; heredoc_start ;;
+        esac ;;
+      o"$nl") check_part "$cur"; cur=; heredoc_skip ;;
       *) check_part "$cur"; cur= ;;
     esac
     lastc=$ch
@@ -181,6 +190,37 @@ check_cmd() {
   check_part "$cur"
   while [ -n "$stk" ]; do sub_end; check_part "$cur"; done
   return 0
+}
+# heredoc_start: after <<, queues the heredoc's word: u or q (unquoted, quoted), - or _ (<<- or <<),
+# then the word without its quotes.
+heredoc_start() {
+  hd=_
+  case $cs in -*) hd=- cs=${cs#-} cur=$cur- ;; esac
+  hb=${cs%%[!\ \	]*}
+  cs=${cs#"$hb"}
+  hw=${cs%%[\ \	\;\|\&\<\>\(\)$nl]*}
+  cs=${cs#"$hw"} cur=$cur$hb$hw hq=u
+  while :; do
+    case $hw in *[\'\"\\]*) hq=q hw=${hw%%[\'\"\\]*}${hw#*[\'\"\\]} ;; *) break ;; esac
+  done
+  [ -z "$hw" ] || hdq=$hdq$hq$hd$hw$nl
+}
+# heredoc_skip: at a newline, takes the queued heredocs' bodies off the text. <<- ends at the word
+# after blanks: a JSON tab arrives as a space.
+heredoc_skip() {
+  while [ -n "$hdq" ]; do
+    he=${hdq%%"$nl"*} hdq=${hdq#*"$nl"}
+    hq=${he%"${he#?}"} he=${he#?}
+    hd=${he%"${he#?}"} he=${he#?}
+    hbody=
+    while [ -n "$cs" ]; do
+      case $cs in *"$nl"*) hl=${cs%%"$nl"*} cs=${cs#*"$nl"} ;; *) hl=$cs cs= ;; esac
+      [ "$hd" = - ] && hl=${hl#"${hl%%[!\ \	]*}"}
+      [ "$hl" = "$he" ] && break
+      hbody=$hbody$hl$nl
+    done
+    case $hq$hbody in u*'$('* | u*'`'*) (check_cmd "$hbody") || exit $? ;; esac
+  done
 }
 # sub_start MODE: a substitution or a group begins; MODE (o, d, or O, D for backticks) is the mode to
 # return to, and the command so far is set aside.

@@ -162,6 +162,10 @@ refused "git commit -m 'a; b' && git push origin main"
 refused "git status # don't\\ngit push origin main"
 refused 'echo ${#x}; git push origin main'
 refused 'cd \"C:\\x\\\"; git push origin main' . PowerShell
+# A heredoc's body is text up to its word; what follows it is read again.
+refused 'cat <<EOF >body.md\nhi\nEOF\ngit push origin main'
+refused 'cat <<EOF; git push origin main\nhi\nEOF'
+refused 'cat <<EOF\n$(git push origin main)\nEOF'
 # Git aliases are expanded.
 refused 'git ship'
 refused 'git yolo'
@@ -193,6 +197,10 @@ allowed 'echo \"ok; git push origin main\"'
 allowed 'git commit -m \"line one\nline two; git push origin main\"'
 allowed "bash -c \\\"git commit -m 'x; git push origin main'\\\""
 allowed 'echo \"a`; git tag b\"' . PowerShell
+allowed "git commit -F - <<EOF\\ngit tag v1 is the owner's step\\nEOF\\ngit status"
+allowed "gh pr create --title x --body-file - <<'EOF'\\nRefuses \`git push origin main\`; (and git tag).\\nEOF"
+allowed 'cat <<-EOF >x\n\tgit tag v1\n\tEOF\ngit status'
+allowed 'cat <<\"EOF\"\ngit push origin main\nEOF'
 allowed 'echo push'
 allowed 'go test ./...'
 allowed 'go vet ./... && go build ./...'
