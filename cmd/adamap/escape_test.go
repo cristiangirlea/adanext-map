@@ -86,7 +86,7 @@ func TestJSONOutputKeepsTheRawValues(t *testing.T) {
 	if sym["name"] != "ev\x1b[2Jil" {
 		t.Errorf("name = %q, want the raw stored value", sym["name"])
 	}
-	if sym["path"] != "d‮/f.go" {
+	if sym["path"] != "d\u202e/f.go" {
 		t.Errorf("path = %q, want the raw stored value", sym["path"])
 	}
 }
