@@ -94,7 +94,7 @@ change can read as dirty, and edits inside a submodule do not make it dirty. If 
 all, do not call `status`.
 
 A store is stale when it does not describe the working tree: it is for a commit other than HEAD,
-tracked files have uncommitted changes and the store was indexed from a clean tree, or the other way
+the tree has uncommitted changes (tracked, or untracked and not ignored) and the store was indexed from a clean tree, or the other way
 round. A store indexed from a dirty tree at HEAD, asked about while the tree is still dirty, is not
 called stale, since indexing again would not change that: `status` says it cannot tell whether
 files changed since and gives the refresh command anyway. When git cannot be asked, `status` says
@@ -108,7 +108,7 @@ it cannot tell, and `stale` is `false`. Structured content:
 | `commit`, `store_dirty` | The commit the store describes, and whether it was indexed with uncommitted changes. |
 | `pinned` | `true` when `--commit` fixed the store. |
 | `indexer`, `created`, `counts` | From the store's header ([index.md](index.md)). |
-| `head`, `dirty`, `at_head`, `git_error` | The repository's HEAD, whether tracked files have changes now, whether the store is for HEAD, and why git could not tell. |
+| `head`, `dirty`, `at_head`, `git_error` | The repository's HEAD, whether the tree has uncommitted changes now (as in [index.md](index.md)), whether the store is for HEAD, and why git could not tell. |
 | `stale`, `refresh` | Whether the store is stale, and the command that rebuilds it (also given when both have uncommitted changes). |
 
 ### Errors
