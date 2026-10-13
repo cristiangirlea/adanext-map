@@ -120,3 +120,8 @@ repository); a fail-closed push guard (#8).
   approves them. Slice 6 stays open for the authorized pilot. Issue #6's text was read from its
   public page, since `gh` had no valid credentials in this session; the candidate tasks were taken
   from merge commits in git history, for the same reason.
+- 2026-10-13 (#10): `store.json.gz` is written as it is encoded, one document and one symbol at a
+  time (`internal/store/encode.go`), with encoding/json's field order and omitempty rules, so the
+  bytes are what `json.Encoder` gives for the whole index with `SetEscapeHTML(false)`. The format
+  is unchanged: `<`, `>` and `&` are no longer escaped, which any JSON reader decodes the same.
+  Issue #10's text was taken from the task brief, as `gh` had no valid credentials in this session.

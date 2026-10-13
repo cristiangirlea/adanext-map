@@ -179,6 +179,11 @@ lists other symbols with the flags `implementation`, `reference` and `type_defin
 Local symbols (`local N` in SCIP) are kept in their document's `locals`: the same `local 0` in two
 documents is two symbols.
 
+The file is written one document and one symbol at a time, straight into the compressor, so writing
+a store holds the model and one element of it, never the whole JSON. `<`, `>` and `&` are written as
+they are rather than as `<`, `>` and `&`; both forms are the same JSON string, so
+stores written before this still load, and adamap versions from before it load the new ones.
+
 An occurrence has a `range`, a `symbol`, its `roles` and, when the indexer gives one, an `enclosing`
 range (the whole construct around it, such as a function body around its name). A range is
 `start_line`, `start_col`, `end_line` and `end_col`: zero-based, the end exclusive, columns in the
