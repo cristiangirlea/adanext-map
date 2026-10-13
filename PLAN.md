@@ -120,3 +120,11 @@ repository); a fail-closed push guard (#8).
   approves them. Slice 6 stays open for the authorized pilot. Issue #6's text was read from its
   public page, since `gh` had no valid credentials in this session; the candidate tasks were taken
   from merge commits in git history, for the same reason.
+- 2026-10-13 (#24, query follow-ups): `impact` reports `unattributed` as `callers` does: the references,
+  to the target or to a symbol whose callers the walk looked up, that lie in no definition (a walk
+  that reaches one now prints a note on stderr). `--json` writes DEL and the C1 controls as unicode
+  escapes; the MCP structured content stays the SDK's encoding. A fallback scope starts where an
+  enclosing range ends on its name's line, not inside that range. `scopeAt` searches a chain of
+  scopes with strictly growing ends (skip pointers) instead of walking every nesting level.
+  `impact` given an absolute path outside the repository that is no symbol either answers with the
+  path error. `Safe` relies on `strconv.IsPrint` alone, which already refuses format characters.

@@ -31,10 +31,11 @@ no notes: the JSON is the whole answer.
 ## What the arguments mean
 
 **A file** is matched against the paths in the index, which are relative to the project root with
-forward slashes. adamap converts what you type to that form first: backslashes become slashes, a
-leading `./` and `..` segments are cleaned, and an absolute path is made relative to `--repo` (one
-outside the repository is an error). A relative path is taken relative to the repository, not to the
-working directory.
+forward slashes. adamap converts what you type to that form first: on Windows backslashes become
+slashes (elsewhere a backslash is an ordinary character, and no indexed path holds one, since the
+index reader took each as a separator), a leading `./` and `..` segments are cleaned, and an absolute
+path is made relative to `--repo` (one outside the repository is an error). A relative path is taken
+relative to the repository, not to the working directory.
 
 **A symbol** is its SCIP symbol string, or a display name. A name is resolved as `find` would,
 but strictly: it must equal exactly one symbol's name, or, failing that, exactly one symbol's name
@@ -67,7 +68,9 @@ One line per item, starting with where it is: `path:line kind name`.
 - `callers` adds `refs=` and the lines of the references; `impact` adds `depth=`.
 - A path, kind, name or symbol string that holds a control character (such as ESC), a format character
   (a bidi override, a zero-width space) or invalid UTF-8 is printed in Go quotes (`"a\x1b[2Jb"`), since
-  the store may come from a hostile repository and a terminal acts on them. `--json` keeps the raw value.
+  the store may come from a hostile repository and a terminal acts on them. `--json` keeps the raw value,
+  and writes every control character, DEL and the C1 controls (U+0080 to U+009F) included, as a JSON
+  unicode escape, so the line holds none and decoding it gives the value back.
 
 ## JSON output
 
@@ -168,12 +171,15 @@ belongs to the innermost scope that contains the position where the reference st
    of the line of the next global definition's name in the same document, or to the end of the document
    for the last one, and clipped to the scope that holds the definition, if there is one. Starting at
    column 0 keeps what stands left of the name, such as the receiver in Go's `func (s *Server) Handle()`,
-   inside the definition; a second definition on the same line starts at its name.
+   inside the definition; a second definition on the same line starts at its name, and one that follows
+   an enclosing range ending on its line starts where that range ends.
 
 The fallback is a heuristic. A definition without an enclosing range is taken to own everything up to
 the next definition, so a top-level statement between two functions is attributed to the first, and every
-global definition (a struct field, say) ends the span of the one before it. An indexer that gives
-enclosing ranges does not have these problems.
+global definition (a struct field, say) ends the span of the one before it. Nesting is the same
+limit: a definition inside another that has no enclosing range (a method in a class) ends the outer
+span at its own name, and what comes after it in the outer one is attributed to the inner one, up to
+the next definition. An indexer that gives enclosing ranges does not have these problems.
 
 Also: the reference occurrence's own enclosing range is ignored (SCIP uses it for the expression around
 the reference, such as the call, not for the function); an occurrence with the import role is not a call;
@@ -206,7 +212,10 @@ cycle (a recursive function, two functions that call each other) ends the walk i
 
 JSON: `commit`, `target` (the symbol string or the path), `kind` (`symbol` or `file`), `depth` (the limit
 that was used), `impacted`: a list of `{"symbol": symbol, "depth": n, "via": id}` where `via` is the symbol
-it calls on the way: the target itself at depth 1, otherwise a symbol at depth `n-1`.
+it calls on the way: the target itself at depth 1, otherwise a symbol at depth `n-1`; and `unattributed`,
+the number of references the walk met, to the target or to a symbol whose callers it looked up, that lie
+in no definition, so it could not follow them (left out when 0; as for `callers`, the text mode says so on
+stderr).
 
 The list is not capped. A function the whole code base calls reaches much of it within a few levels, so
 lower `--depth` when only the near neighbours matter.
