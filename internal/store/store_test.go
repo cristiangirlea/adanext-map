@@ -24,7 +24,7 @@ const (
 
 func fixture(t *testing.T) *model.Index {
 	t.Helper()
-	idx, err := scip.Convert(sciptest.Index())
+	idx, _, err := scip.Convert(sciptest.Index())
 	if err != nil {
 		t.Fatal(err)
 	}

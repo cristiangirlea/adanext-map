@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 
 	scippb "github.com/scip-code/scip/bindings/go/scip"
@@ -22,18 +23,18 @@ import (
 const DefaultMaxBytes int64 = 1 << 30
 
 // ReadFile reads the SCIP index at path, refusing one larger than maxBytes, and converts it.
-func ReadFile(path string, maxBytes int64) (*model.Index, error) {
+func ReadFile(path string, maxBytes int64) (*model.Index, Skipped, error) {
 	if maxBytes <= 0 {
-		return nil, fmt.Errorf("the size limit must be positive, not %d", maxBytes)
+		return nil, Skipped{}, fmt.Errorf("the size limit must be positive, not %d", maxBytes)
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, Skipped{}, err
 	}
 	defer f.Close()
 	tooBig := fmt.Errorf("%s is larger than the limit of %d bytes (--max-bytes)", path, maxBytes)
 	if fi, err := f.Stat(); err == nil && fi.Mode().IsRegular() && fi.Size() > maxBytes {
-		return nil, tooBig
+		return nil, Skipped{}, tooBig
 	}
 	// The limit holds while reading too, for a file that grows or is not a regular file.
 	limit := maxBytes
@@ -42,25 +43,42 @@ func ReadFile(path string, maxBytes int64) (*model.Index, error) {
 	}
 	data, err := io.ReadAll(io.LimitReader(f, limit))
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
+		return nil, Skipped{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	if int64(len(data)) > maxBytes {
-		return nil, tooBig
+		return nil, Skipped{}, tooBig
 	}
-	idx, err := Decode(data)
+	idx, skipped, err := Decode(data)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, Skipped{}, fmt.Errorf("%s: %w", path, err)
 	}
-	return idx, nil
+	return idx, skipped, nil
 }
 
 // Decode converts a serialized SCIP index.
-func Decode(data []byte) (*model.Index, error) {
+func Decode(data []byte) (*model.Index, Skipped, error) {
 	var x scippb.Index
 	if err := proto.Unmarshal(data, &x); err != nil {
-		return nil, fmt.Errorf("not a SCIP index: %w", err)
+		return nil, Skipped{}, fmt.Errorf("not a SCIP index: %w", err)
 	}
 	return Convert(&x)
+}
+
+// maxSkippedPaths is how many skipped paths a Skipped keeps for a message.
+const maxSkippedPaths = 3
+
+// Skipped counts the documents left out because their path leaves the project, and keeps the first
+// few paths, quoted, for a message.
+type Skipped struct {
+	Count int
+	Paths []string
+}
+
+func (s *Skipped) add(p string) {
+	s.Count++
+	if len(s.Paths) < maxSkippedPaths {
+		s.Paths = append(s.Paths, strconv.Quote(p))
+	}
 }
 
 // document is a document being converted, with its locals by ID.
@@ -71,8 +89,10 @@ type document struct {
 
 // Convert turns a SCIP index into adamap's model. A document listed twice is merged; occurrences
 // without a symbol (syntax highlighting only) are dropped; a symbol's definition is its first
-// definition occurrence.
-func Convert(x *scippb.Index) (*model.Index, error) {
+// definition occurrence. A document whose path leaves the project is skipped with its occurrences and
+// symbols, and counted in the Skipped result; any other problem is an error.
+func Convert(x *scippb.Index) (*model.Index, Skipped, error) {
+	var skipped Skipped
 	idx := &model.Index{
 		Tool: model.Tool{
 			Name:    x.GetMetadata().GetToolInfo().GetName(),
@@ -88,7 +108,11 @@ func Convert(x *scippb.Index) (*model.Index, error) {
 	for i, d := range x.GetDocuments() {
 		path := normalisePath(d.GetRelativePath())
 		if err := model.CheckPath(path); err != nil {
-			return nil, fmt.Errorf("document %d: %w", i, err)
+			if path == "" {
+				return nil, Skipped{}, fmt.Errorf("document %d: %w", i, err)
+			}
+			skipped.add(d.GetRelativePath())
+			continue
 		}
 		doc := byPath[path]
 		if doc == nil {
@@ -101,7 +125,7 @@ func Convert(x *scippb.Index) (*model.Index, error) {
 		}
 		for j, si := range d.GetSymbols() {
 			if si.GetSymbol() == "" {
-				return nil, fmt.Errorf("document %s: symbol information %d has no symbol", path, j)
+				return nil, Skipped{}, fmt.Errorf("document %s: symbol information %d has no symbol", path, j)
 			}
 			if scippb.IsLocalSymbol(si.GetSymbol()) {
 				merge(doc.locals, rels, si)
@@ -115,7 +139,7 @@ func Convert(x *scippb.Index) (*model.Index, error) {
 			}
 			occ, err := occurrence(o)
 			if err != nil {
-				return nil, fmt.Errorf("document %s: occurrence %d: %w", path, j, err)
+				return nil, Skipped{}, fmt.Errorf("document %s: occurrence %d: %w", path, j, err)
 			}
 			doc.Occurrences = append(doc.Occurrences, occ)
 			if occ.Roles.Has(model.RoleDefinition) {
@@ -150,7 +174,7 @@ func Convert(x *scippb.Index) (*model.Index, error) {
 	}
 	slices.SortFunc(idx.Documents, func(a, b model.Document) int { return strings.Compare(a.Path, b.Path) })
 	idx.Symbols = sorted(globals)
-	return idx, nil
+	return idx, skipped, nil
 }
 
 // normalisePath is a document path in slash form, cleaned. SCIP specifies "/", but indexers on
