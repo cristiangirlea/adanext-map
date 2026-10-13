@@ -480,7 +480,8 @@ func TestLatestErrorDoesNotQuoteTheWholeFile(t *testing.T) {
 }
 
 func TestLoadRefusesADocumentPathWindowsCannotHold(t *testing.T) {
-	for _, p := range []string{"a.go:x", "pkg/a:x.go", "a\x00b.go", "a\nb.go"} {
+	for _, p := range []string{"a.go:x", "pkg/a:x.go", "a\x00b.go", "a\nb.go",
+		"nul", "pkg/con.txt", "AUX.go", "com1.", "lpt³"} {
 		repo := t.TempDir()
 		idx := fixture(t)
 		idx.Documents[0].Path = p // as a hand-edited store would have it; Convert would skip it

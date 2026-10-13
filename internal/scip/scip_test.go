@@ -407,7 +407,8 @@ func TestConvertKeepsAnEmptyPathFatalEvenNextToSkippedOnes(t *testing.T) {
 }
 
 func TestConvertSkipsAPathWindowsCannotHold(t *testing.T) {
-	paths := []string{"a.go:x", "dir/a:x.go", "a\x00b.go", "a\nb.go", "a\x7fb.go"}
+	paths := []string{"a.go:x", "dir/a:x.go", "a\x00b.go", "a\nb.go", "a\x7fb.go",
+		"nul", "con.txt", "pkg/aux.go", `pkg\com1.go`, "LPT9.go", "nul.", "com².go"}
 	x := sciptest.Index()
 	for _, p := range paths {
 		x.Documents = append(x.Documents, &scippb.Document{RelativePath: p})

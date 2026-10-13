@@ -120,7 +120,8 @@ func (x *Index) Counts() Counts {
 
 // CheckPath refuses a document path that could point outside the project: empty, absolute in any
 // platform's spelling, or with a `..` segment; or that a file system cannot hold: a NUL or other
-// control character, or a colon (an alternate data stream on Windows).
+// control character, a colon (an alternate data stream on Windows), or a Windows device name. It
+// checks the same on every OS: a store written on Linux is read on Windows.
 func CheckPath(p string) error {
 	switch {
 	case p == "":
@@ -138,6 +139,28 @@ func CheckPath(p string) error {
 		if seg == ".." {
 			return fmt.Errorf("path %q has a .. segment", p)
 		}
+		if isDeviceName(seg) {
+			return fmt.Errorf("path %q names a Windows device", p)
+		}
 	}
 	return nil
+}
+
+// isDeviceName reports whether a path segment is a name Windows reserves for a device, whatever its
+// case or extension: CON, PRN, AUX, NUL, COM0-COM9 and LPT0-LPT9 (also with the superscript digits
+// ¹ ² ³), as `nul`, `NUL.txt` and `nul .txt`. Trailing dots and spaces do not hide one either.
+func isDeviceName(seg string) bool {
+	base, _, _ := strings.Cut(seg, ".")
+	base = strings.ToUpper(strings.TrimRight(base, ". "))
+	switch base {
+	case "CON", "PRN", "AUX", "NUL":
+		return true
+	}
+	for _, prefix := range []string{"COM", "LPT"} {
+		if digit, ok := strings.CutPrefix(base, prefix); ok && len([]rune(digit)) == 1 &&
+			strings.Contains("0123456789¹²³", digit) {
+			return true
+		}
+	}
+	return false
 }
