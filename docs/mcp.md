@@ -16,9 +16,9 @@ adamap install [--print | --claude | --codex] [--repo dir]
 | `--repo` | `.` | The repository root, whose `.adamap` directory holds the store. |
 | `--commit` | none | Answer from this commit's store only (a full hash). |
 
-Stdout carries only the protocol. One line goes to stderr when the server starts, and another when
-there is no store yet. The server stops with exit 0 when the host closes stdin. It exits 1 when
-`--repo` is not a directory and 2 for a usage error.
+Stdout carries only the protocol. One line goes to stderr when the server starts, and, without
+`--commit`, another when there is no store yet. The server stops with exit 0 when the host closes
+stdin. It exits 1 when `--repo` is not a directory or the session fails, and 2 for a usage error.
 
 **Which store.** The server loads the store when it starts: `--commit`'s, or the one
 `.adamap/latest` names. Without `--commit`, every call compares `latest`'s modification time and
@@ -35,8 +35,8 @@ repository. A tool answers with two things:
 - **Text content.** The compact text the CLI prints for the same question, one line per item (see
   [queries.md](queries.md) and [map.md](map.md)). The remarks the CLI writes to stderr, such as an
   empty answer or how many matches were left out, come as a last line in parentheses.
-- **Structured content.** The CLI's `--json` answer, with `commit` (and `dirty`) first. Each tool
-  declares it as an output schema.
+- **Structured content.** The CLI's `--json` answer, with `commit` first (and, for the queries,
+  `dirty`); `status` has its own, below. Each tool declares it as an output schema.
 
 | Tool | Inputs | Answers |
 |---|---|---|
@@ -66,8 +66,11 @@ refresh: adamap index --repo /work/project
 ```
 
 A store is stale when it does not describe the working tree: it is for a commit other than HEAD,
-tracked files have uncommitted changes, or it was indexed from a dirty tree. When git cannot be
-asked, `status` says it cannot tell. Structured content:
+tracked files have uncommitted changes and the store was indexed from a clean tree, or the other way
+round. A store indexed from a dirty tree at HEAD, asked about while the tree is still dirty, is not
+called stale, since indexing again would not change that: `status` says it cannot tell whether
+files changed since and gives the refresh command anyway. When git cannot be asked, `status` says
+it cannot tell, and `stale` is `false`. Structured content:
 
 | Field | Meaning |
 |---|---|
@@ -77,7 +80,7 @@ asked, `status` says it cannot tell. Structured content:
 | `pinned` | `true` when `--commit` fixed the store. |
 | `indexer`, `created`, `counts` | From the store's header ([index.md](index.md)). |
 | `head`, `dirty`, `at_head`, `git_error` | The repository's HEAD, whether tracked files have changes now, whether the store is for HEAD, and why git could not tell. |
-| `stale`, `refresh` | Whether the store is stale, and the command that rebuilds it. |
+| `stale`, `refresh` | Whether the store is stale, and the command that rebuilds it (also given when both have uncommitted changes). |
 
 ### Errors
 
