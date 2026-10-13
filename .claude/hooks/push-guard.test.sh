@@ -30,6 +30,15 @@ g -C "$tmp/upmain" checkout -q -b feat && g -C "$tmp/upmain" update-ref refs/rem
   g -C "$tmp/upmain" config branch.feat.merge refs/heads/main &&
   g -C "$tmp/upmain" config push.default upstream || fail "setting up upmain failed"
 onmain=$tmp/onmain onfeat=$tmp/onfeat upmain=$tmp/upmain
+# onfeat also knows old-feature on a remote named up/stream, and has aliases deep1 to deep7, each
+# naming the next. detached: on no branch.
+g -C "$onfeat" update-ref refs/remotes/up/stream/old-feature HEAD || fail "setting up up/stream failed"
+for i in 1 2 3 4 5 6; do
+  g -C "$onfeat" config "alias.deep$i" "deep$((i + 1))" || fail "setting up the aliases failed"
+done
+g -C "$onfeat" config alias.deep7 status || fail "setting up the aliases failed"
+detached=$tmp/detached
+g clone -q "$onmain" "$detached" && g -C "$detached" checkout -q --detach || fail "setting up detached failed"
 # spaced: on feat, in a directory whose name has a space.
 spaced="$tmp/with space"
 mkdir "$spaced" && g -C "$spaced" init -q && g -C "$spaced" checkout -q -b feat &&
@@ -102,6 +111,14 @@ refused 'git push origin my-branch -f'
 refused 'git push -uf origin my-branch'
 refused 'git push origin +my-branch'
 refused 'git push origin +HEAD:my-branch'
+# What a bare push sends is decided by configuration, or cannot be told.
+refused 'git -c remote.origin.push=HEAD:refs/heads/x push'
+refused 'git -c remote.origin.mirror=true push'
+refused 'git push' "$detached"
+# Deleting is let through only for a branch the remote is known to have.
+refused 'git push origin --delete no-such-branch'
+refused 'git push up/stream --delete old-feature'
+refused 'git push --repo=https://example.invalid/r.git --delete old-feature'
 refused 'git push --force-with-lease origin my-branch'
 refused 'git push --force-with-lease=my-branch:abc origin my-branch'
 refused 'git push --force-if-includes origin my-branch'
@@ -112,6 +129,12 @@ refused 'git push origin $(git branch --show-current)'
 refused 'git push origin `git branch --show-current`'
 refused 'echo main | xargs git push origin'
 refused 'git $sub origin main'
+refused '$git push origin main'
+refused 'eval $cmd; echo pushed'
+refused 'iex $cmd; echo pushed' . PowerShell
+refused 'echo 5 | xargs gh pr merge'
+refused 'echo x | xargs gh api -X POST repos/o/r/pulls'
+refused 'gh api -X POST repos/o/r/$path'
 # Tags and releases.
 refused 'git tag v1.1'
 refused 'git tag -a v1.1 -m release'
@@ -120,6 +143,8 @@ refused 'gh release create v1.0'
 refused 'gh release list'
 refused 'gh pr merge 5 --auto --merge'
 refused 'gh pr merge 5 --merge --admin'
+refused 'gh -R o/r pr merge 5 --admin'
+refused 'gh pr -R o/r merge 5 --auto'
 refused 'gh api -X POST repos/o/r/releases'
 refused 'gh api --method PATCH repos/o/r/releases/1'
 refused 'gh api --method=PUT repos/o/r/git/refs/heads/main'
@@ -151,6 +176,7 @@ refused 'powershell -EncodedCommand ZwBpAHQA' . PowerShell
 refused 'cmd /c git push origin main' . PowerShell
 refused '& git push origin main' . PowerShell
 refused '& \"C:\\Program Files\\Git\\cmd\\git.exe\" push origin main' . PowerShell
+refused 'strace -f /usr/bin/git push origin main'
 refused 'git push origin main; if ($?) { echo ok }' . PowerShell
 refused '$out = git push origin main' . PowerShell
 refused "Start-Process git -ArgumentList 'push','origin','main'" . PowerShell
@@ -179,6 +205,7 @@ allowed 'if true; then git status; else git log; fi'
 # Git aliases are expanded.
 refused 'git ship'
 refused 'git yolo'
+refused 'git deep1'
 
 # Allowed: feature-branch pushes and ordinary commands.
 allowed 'git push -u origin my-branch'
@@ -190,6 +217,8 @@ allowed 'git push origin hrn/guard-hook:guard-hook'
 allowed 'git push'
 allowed 'git push origin'
 allowed 'git push origin --delete old-feature'
+allowed 'git push -o ci.skip origin --delete old-feature'
+allowed 'git push --receive-pack git-receive-pack origin --delete old-feature'
 allowed 'git push -u origin my-branch 2>&1 | tail -5'
 allowed 'git status'
 allowed 'git st'
@@ -244,6 +273,15 @@ raw 2 '{"tool_input":{"command":null},"note":"release"}'
 raw 0 'not json: ls -la'
 raw 0 '{"tool_input":{"command":"ls -la'
 raw 0 ''
+# A failure of the hook itself fails closed for a command that mentions a push: here git kills it.
+mkdir "$tmp/shim" && printf '#!/bin/sh\nkill -TERM "$PPID"\n' > "$tmp/shim/git" &&
+  chmod +x "$tmp/shim/git" || fail "setting up the git shim failed"
+n=$((n + 1))
+printf '{"cwd":"%s","tool_name":"Bash","tool_input":{"command":"git push origin my-branch"}}' "$onfeat" |
+  PATH="$tmp/shim:$PATH" sh "$hook" 2>"$tmp/err"
+# The shell may add its own line for the signal, so only the exit and the reason are checked.
+[ $? -eq 2 ] && grep -q 'the hook failed' "$tmp/err" ||
+  fail "git push under a git that kills the hook: not refused as a failure: $(cat "$tmp/err")"
 # A Windows cwd, backslashes JSON-escaped, as Claude Code sends it on Windows.
 if command -v cygpath >/dev/null 2>&1; then
   winmain=$(cygpath -w "$onmain" | sed 's/\\/\\\\/g')
