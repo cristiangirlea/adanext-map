@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -316,4 +317,100 @@ func TestInstallClaudeReadsTheLastOfADuplicateKey(t *testing.T) {
 		t.Errorf("the adamap entry in effect is the last one:\n%s", data)
 	}
 	checkEntry(t, doc.MCPServers["adamap"], repo)
+}
+
+func TestInstallRefusesAPathThatIsNotUTF8(t *testing.T) {
+	repo := t.TempDir()
+	bad := filepath.Join(repo, "bad\xffname")
+	for _, mode := range []string{"--print", "--claude", "--codex"} {
+		code, out, errOut := runCmd("install", mode, "--repo", bad)
+		if code != 1 || out != "" || !strings.Contains(errOut, "UTF-8") || !strings.Contains(errOut, "--repo") {
+			t.Errorf("%s with a repository path that is not UTF-8: exit %d, stdout %q, stderr %q; want exit 1 naming --repo and UTF-8", mode, code, out, errOut)
+		}
+	}
+	noFiles(t, repo)
+
+	// The same for the path of this adamap, which cannot be chosen by the test but can be stood in for.
+	real := osExecutable
+	osExecutable = func() (string, error) { return filepath.Join(repo, "adamap\xff"), nil }
+	defer func() { osExecutable = real }()
+	code, out, errOut := runCmd("install", "--claude", "--repo", repo)
+	if code != 1 || out != "" || !strings.Contains(errOut, "UTF-8") || !strings.Contains(errOut, "adamap") {
+		t.Errorf("an executable path that is not UTF-8: exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	noFiles(t, repo)
+}
+
+func TestInstallClaudeNamesAReadOnlyFileOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("elsewhere a rename replaces a read-only file, as its directory allows")
+	}
+	repo := t.TempDir()
+	path := filepath.Join(repo, ".mcp.json")
+	writeFile(t, path, `{"other": 1}`)
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0o644) })
+	code, out, errOut := runCmd("install", "--claude", "--repo", repo)
+	if code != 1 || out != "" || !strings.Contains(errOut, path) || !strings.Contains(errOut, "read-only") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want exit 1 naming %s and that it is read-only", code, out, errOut, path)
+	}
+	if data, _ := os.ReadFile(path); string(data) != `{"other": 1}` {
+		t.Errorf("the file was changed: %q", data)
+	}
+	if entries, _ := os.ReadDir(repo); len(entries) != 1 {
+		t.Errorf("the temporary file should be removed, the directory holds %d entries", len(entries))
+	}
+}
+
+// tomlStrings reads the basic strings (the double-quoted ones) of a TOML line back. Go's escapes
+// are TOML's for what tomlString writes: \ \" \b \t \n \f \r and \uXXXX.
+func tomlStrings(t *testing.T, line string) []string {
+	t.Helper()
+	var out []string
+	for rest := line; ; {
+		i := strings.IndexByte(rest, '"')
+		if i < 0 {
+			return out
+		}
+		q, err := strconv.QuotedPrefix(rest[i:])
+		if err != nil {
+			t.Fatalf("no string at %q in %q: %v", rest[i:], line, err)
+		}
+		s, err := strconv.Unquote(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, s)
+		rest = rest[i+len(q):]
+	}
+}
+
+func TestInstallWritesAndPrintsAPathWithSpacesAndNonASCIIBackAsItWas(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "my projéct ünï 日本 \"quoted\" 'tick'")
+	if runtime.GOOS == "windows" {
+		repo = filepath.Join(t.TempDir(), "my projéct ünï 日本 'tick'") // no " in a Windows file name
+	}
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	mustRun(t, "install", "--claude", "--repo", repo)
+	e := adamapEntry(t, repo)
+	checkEntry(t, e, repo)
+
+	var command string
+	var args []string
+	for _, line := range strings.Split(mustRun(t, "install", "--codex", "--repo", repo), "\n") {
+		switch {
+		case strings.HasPrefix(line, "command = "):
+			command = tomlStrings(t, line)[0]
+		case strings.HasPrefix(line, "args = "):
+			args = tomlStrings(t, line)
+		}
+	}
+	if command != executable(t) || len(args) != 3 || args[0] != "mcp" || args[1] != "--repo" || args[2] != repo {
+		t.Errorf("the printed TOML reads back as command %q, args %q; want %q and [mcp --repo %q]", command, args, executable(t), repo)
+	}
 }

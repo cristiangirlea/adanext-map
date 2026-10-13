@@ -14,6 +14,9 @@ bash -n .claude/hooks/go-rules.sh && bash -n .claude/hooks/go-rules.test.sh
 bash -n .claude/hooks/push-guard.sh && bash -n .claude/hooks/push-guard.test.sh
 sh .claude/hooks/go-rules.test.sh
 sh .claude/hooks/push-guard.test.sh
+bash -n .claude/hooks/hidden-chars.sh && bash -n .claude/hooks/hidden-chars.test.sh
+sh .claude/hooks/hidden-chars.test.sh
+sh .claude/hooks/hidden-chars.sh
 ```
 
 The gofmt step lists the repository's own Go files, so it does not walk worktrees or a `.adamap/`

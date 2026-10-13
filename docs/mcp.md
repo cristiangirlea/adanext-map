@@ -22,10 +22,23 @@ stdin. It exits 1 when `--repo` is not a directory or the session fails, and 2 f
 
 **Which store.** The server loads the store when it starts: `--commit`'s, or the one
 `.adamap/latest` names. Without `--commit`, every call compares `latest`'s modification time and
-size with what they were at the last load, and loads again when they differ. So after
-`adamap index`, the next call answers from the new store, with no restart. With `--commit`, the
+size, and the modification time of the served store's `header.json`, with what they were at the last
+load, and loads again when they differ. The header's time is there so that indexing the same commit
+again is noticed even when `latest` keeps its size and, on a file system with a coarse clock, its
+time. So after `adamap index`, the next call answers from the new store, with no restart. With `--commit`, the
 server stays on that store. A server started before there is any store answers each call with a
 tool error saying to run `adamap index`, and picks the store up once it exists.
+
+On Windows, a call that opens `latest` at the instant `adamap index` renames a new one over it can
+get a sharing violation; the server tries that read up to five times, five milliseconds apart,
+before it counts as a failure.
+
+When `latest` changes and the store it names does not load (a damaged file, a format this adamap
+cannot read), the server keeps answering from the store it has, and `status` says the newer store
+failed to load and why. It remembers the `latest` it failed on, so later calls do not load the
+broken store again; it tries again when `latest` changes once more, as after `adamap index`. A
+server with no store loaded yet has nothing to fall back on: it answers each call with the error and
+tries again at the next.
 
 ## The tools
 
@@ -65,6 +78,13 @@ stale: the store describes 0123456789ab, not HEAD
 refresh: adamap index --repo /work/project
 ```
 
+The repository path in the `refresh` command is quoted for the shell that will run it: in single
+quotes for a POSIX shell (a `'` in the path is written `'\''`), and in single quotes for PowerShell on
+Windows (a `'` is doubled, as are the typographic single quotes PowerShell also reads as quotes).
+Nothing inside the quotes is special to either shell, so `$`, backticks, `"` and `;` are safe. A
+path of letters, digits and `_-./:` (and `\` on Windows) is left bare, as in the example above;
+`cmd.exe` is not catered for.
+
 A store is stale when it does not describe the working tree: it is for a commit other than HEAD,
 tracked files have uncommitted changes and the store was indexed from a clean tree, or the other way
 round. A store indexed from a dirty tree at HEAD, asked about while the tree is still dirty, is not
@@ -76,6 +96,7 @@ it cannot tell, and `stale` is `false`. Structured content:
 |---|---|
 | `repo` | The repository root, absolute. |
 | `store`, `store_error` | Whether a store loaded, and why not. |
+| `newer_store_error` | Why the store `latest` now names did not load, while an earlier store still serves (see above). The text says so too, and `stale` is `true`. |
 | `commit`, `store_dirty` | The commit the store describes, and whether it was indexed with uncommitted changes. |
 | `pinned` | `true` when `--commit` fixed the store. |
 | `indexer`, `created`, `counts` | From the store's header ([index.md](index.md)). |
@@ -111,7 +132,10 @@ build lives in a temporary directory.
 | `--codex` | Prints the block for `~/.codex/config.toml`, and nothing else, so it can be appended. Writes nothing. |
 
 `--repo` (default `.`) names the repository: what the server answers about, and where `.mcp.json`
-goes. Install never writes outside it.
+goes. Install never writes outside it. It refuses, with a message that names the path, when the
+repository path or the path of this adamap is not valid UTF-8: JSON and TOML hold text, and the
+entry would otherwise carry a replacement character in place of the bytes and name a path that
+does not exist.
 
 ### Claude Code
 
@@ -141,7 +165,10 @@ Other servers in the file stay as they are, in their order. An existing `adamap`
 `type`, `command` and `args`, and keeps its other fields (an `env`, say). The file is rewritten
 with two-space indentation, as Claude Code writes it, and a second install leaves it unchanged.
 Install refuses, and leaves the file alone, when `.mcp.json` is not valid JSON, is not an object,
-has an `mcpServers` or `adamap` that is not an object, or is a link rather than a plain file.
+has an `mcpServers` or `adamap` that is not an object, is a link rather than a plain file, or is
+larger than 1 MiB (a real one is a few hundred bytes; edit a file that large by hand).
+On Windows a `.mcp.json` with the read-only attribute cannot be replaced: install says so, naming
+the file, and leaves it alone; clear the attribute and run install again.
 Claude Code asks you to approve a project server the first time it starts in the project. The
 absolute paths are particular to your machine, so think twice before committing the file.
 

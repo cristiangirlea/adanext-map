@@ -40,7 +40,9 @@ repository); a fail-closed push guard (#8).
   not depend on SCIP's types. The store is gzip-compressed JSON from the standard library, format 1.
 - 2026-10-13 (slice 2): `--commit` takes only a full hash, since it names a directory; with it, git
   is not asked and the store is not marked dirty. `adamap index` refuses to run an indexer over an
-  `index.scip` already in the repository rather than overwrite and delete it. The converter reads
+  `index.scip` already in the repository rather than overwrite and delete it (replaced in issue #12:
+  the indexer now writes into a temporary directory outside the repository, so there is nothing to
+  refuse and a run stopped by a signal leaves nothing behind in the repository). The converter reads
   the typed ranges SCIP added as well as the packed ones, merges a document listed twice, takes a
   symbol's first definition occurrence as its definition, and counts a forward definition as a
   reference.
@@ -89,6 +91,12 @@ repository); a fail-closed push guard (#8).
   `.mcp.json` and keeps the entry's other fields and every other key in order; of a key written
   twice it reads the last, as JSON readers do. It refuses a link and a file it cannot parse. `--codex` only prints: `~/.codex/config.toml` is outside the
   repository.
+- 2026-10-13: item-count limits for an index (issue #17), checked while the store is decoded and
+  after a SCIP index is read and converted: 2,000,000 documents, 20,000,000 symbols (global and
+  local), 50,000,000 occurrences and 20,000,000 relationships. Bytes do not bound memory, since a
+  few bytes (`{},`) become a whole struct. The defaults sit far above the measured Rust workspace
+  (2,000 files, about 2.4 million occurrences) so no real repository meets them, and stay low
+  enough that a planted store or index is refused before it exhausts memory.
 - 2026-10-13 (#8): the push guard is a PreToolUse hook on Bash and PowerShell,
   `.claude/hooks/push-guard.sh`, in POSIX sh with git, sed and tr only. settings.json's deny rules
   stay as a first layer. It asks git where a push without a destination goes (`@{push}`,

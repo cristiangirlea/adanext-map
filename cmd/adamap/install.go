@@ -10,7 +10,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"unicode/utf8"
 )
 
 // mcpJSONName is Claude Code's project MCP file, at the repository root.
@@ -31,6 +33,32 @@ project's .mcp.json, keeping the other servers there; --codex prints the block f
 	fl.SetOutput(w)
 	fl.PrintDefaults()
 }
+
+// checkUTF8 refuses a path that is not valid UTF-8: JSON and TOML hold text, so writing it would
+// put U+FFFD where its bytes are, and the host would start a server at a path that does not exist.
+func checkUTF8(what, p string) error {
+	if utf8.ValidString(p) {
+		return nil
+	}
+	return fmt.Errorf("%s, %q, is not valid UTF-8, so it cannot be written to a JSON or TOML file: use a path that is", what, p)
+}
+
+// absUTF8 is p made absolute, refused when it is not valid UTF-8 as given or once made absolute (the
+// working directory may be the one). It checks first because on Windows Abs turns a byte that is not
+// UTF-8 into U+FFFD without a word.
+func absUTF8(what, p string) (string, error) {
+	if err := checkUTF8(what, p); err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	return abs, checkUTF8(what, abs)
+}
+
+// osExecutable is where this adamap is; a variable so that a test can stand in for it.
+var osExecutable = os.Executable
 
 // serverEntry is the command a host runs to start the server.
 type serverEntry struct {
@@ -74,19 +102,19 @@ func runInstall(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "adamap install: %v\n", err)
 		return 1
 	}
-	root, err := filepath.Abs(*repo)
+	root, err := absUTF8("--repo", *repo)
 	if err != nil {
 		return fail(err)
 	}
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
 		return fail(fmt.Errorf("--repo %s is not a directory", root))
 	}
-	exe, err := os.Executable()
-	if err == nil {
-		exe, err = filepath.Abs(exe)
-	}
+	exe, err := osExecutable()
 	if err != nil {
 		return fail(fmt.Errorf("cannot tell where this adamap is: %w", err))
+	}
+	if exe, err = absUTF8("the path of this adamap", exe); err != nil {
+		return fail(err)
 	}
 	e := serverEntry{command: exe, args: []string{"mcp", "--repo", root}}
 
@@ -167,7 +195,7 @@ func readMCPJSON(path string) ([]byte, fs.FileMode, error) {
 	return data, fi.Mode().Perm(), nil
 }
 
-// writeFileAtomic writes data to a temporary file beside path and renames it into place.
+// writeFileAtomic writes data to a temporary file beside path, flushes it, and renames it into place.
 func writeFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
 	if err != nil {
@@ -182,13 +210,32 @@ func writeFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 		f.Close()
 		return err
 	}
+	// Flushed before the rename, so a crash cannot leave the new name pointing at an empty file.
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
 	if err = f.Close(); err != nil {
 		return err
 	}
 	if err = os.Chmod(f.Name(), mode); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	if err = os.Rename(f.Name(), path); err != nil && readOnly(path) {
+		return fmt.Errorf("%s is read-only, so adamap cannot replace it: clear its read-only attribute, or edit the file by hand, and run install again", path)
+	}
+	return err
+}
+
+// readOnly says whether path is a file Windows will not let a rename replace because it has the
+// read-only attribute. Elsewhere a rename needs only the directory to be writable, so the answer
+// is no and the rename's own error stands.
+func readOnly(path string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().Perm()&0o200 == 0
 }
 
 // member is one key of a JSON object and its value as written.

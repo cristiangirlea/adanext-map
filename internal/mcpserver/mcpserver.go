@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -205,9 +206,12 @@ type (
 	}
 	statusOut struct {
 		// Repo is the repository root; Store whether a store could be loaded, and StoreError why not.
-		Repo       string `json:"repo"`
-		Store      bool   `json:"store"`
-		StoreError string `json:"store_error,omitempty"`
+		// NewerStoreError says why the store .adamap/latest now names did not load, when the store
+		// above is an earlier one still serving.
+		Repo            string `json:"repo"`
+		Store           bool   `json:"store"`
+		StoreError      string `json:"store_error,omitempty"`
+		NewerStoreError string `json:"newer_store_error,omitempty"`
 		// Commit is the commit the store describes, Pinned whether --commit fixed it, StoreDirty
 		// whether it was indexed with uncommitted changes.
 		Commit     string        `json:"commit,omitempty"`
@@ -471,7 +475,7 @@ func (s *server) impact(_ context.Context, _ *mcp.CallToolRequest, in impactIn) 
 func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (*mcp.CallToolResult, statusOut, error) {
 	out := statusOut{Repo: s.repo, Pinned: s.cfg.Commit != "", Refresh: "adamap index --repo " + shellArg(s.repo)}
 	var b strings.Builder
-	snap, err := s.stores.get()
+	snap, newerErr, err := s.stores.current()
 	if err != nil {
 		out.StoreError = err.Error()
 		fmt.Fprintf(&b, "no store: %v\n", err)
@@ -493,6 +497,10 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 			fmt.Fprintf(&b, " by %s", query.Safe(strings.TrimSpace(h.Indexer.Name+" "+h.Indexer.Version)))
 		}
 		fmt.Fprintf(&b, ": %d documents, %d symbols, %d occurrences\n", h.Counts.Documents, h.Counts.Symbols, h.Counts.Occurrences)
+		if newerErr != nil {
+			out.NewerStoreError = newerErr.Error()
+			fmt.Fprintf(&b, "a newer store failed to load, so this one still serves: %v\n", newerErr)
+		}
 	}
 
 	known := false
@@ -535,14 +543,16 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 			b.WriteString("stale: the working tree has uncommitted changes the store does not show\n")
 		case out.StoreDirty:
 			b.WriteString("stale: the store was indexed with uncommitted changes, and the tree has none now\n")
-		default:
+		case out.NewerStoreError == "":
 			b.WriteString("the store is current\n")
 		}
 		out.Stale = !out.AtHead || out.Dirty != out.StoreDirty
-		if maybe {
+		if maybe && out.NewerStoreError == "" { // with one, the stale branch below gives the command
 			fmt.Fprintf(&b, "refresh: %s\n", out.Refresh)
 		}
 	}
+	// A store that did not load is newer than the one serving, whatever git says.
+	out.Stale = out.Stale || out.NewerStoreError != ""
 	if out.Stale {
 		fmt.Fprintf(&b, "refresh: %s\n", out.Refresh)
 		if out.Pinned {
@@ -562,11 +572,45 @@ func short(commit string) string {
 	return commit
 }
 
-// shellArg is p as one argument of a shell command line: in double quotes when it holds a space.
-// Backslashes stay as they are, since they are Windows' separators.
+// shellArg is p as one argument of the command line the refresh command is: quoted for PowerShell on
+// Windows, for a POSIX shell elsewhere. A path of plain characters is left as it is.
 func shellArg(p string) string {
-	if strings.ContainsAny(p, " \t") {
-		return `"` + p + `"`
+	if runtime.GOOS == "windows" {
+		return powershellArg(p)
 	}
-	return p
+	return posixArg(p)
+}
+
+// plainRune says whether r needs no quoting in a path on either shell's command line.
+func plainRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("_-./:", r)
+}
+
+// posixArg is p in single quotes, in which a POSIX shell reads every character as itself, but for
+// the quote itself, which is written as quote, backslash, quote, quote (end the quotes, an escaped quote,
+// begin them again).
+func posixArg(p string) string {
+	if p != "" && !strings.ContainsFunc(p, func(r rune) bool { return !plainRune(r) }) {
+		return p
+	}
+	return "'" + strings.ReplaceAll(p, "'", `'\''`) + "'"
+}
+
+// powershellArg is p as a PowerShell single-quoted string, in which every character is itself but
+// the quotes: PowerShell reads ' and the typographic quotes U+2018 to U+201B as one, and a doubled
+// one stands for itself. Backslash, the Windows separator, needs no quoting.
+func powershellArg(p string) string {
+	if p != "" && !strings.ContainsFunc(p, func(r rune) bool { return !plainRune(r) && r != '\\' }) {
+		return p
+	}
+	var b strings.Builder
+	b.WriteByte('\'')
+	for _, r := range p {
+		b.WriteRune(r)
+		if r == 0x27 || r >= 0x2018 && r <= 0x201b {
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('\'')
+	return b.String()
 }
