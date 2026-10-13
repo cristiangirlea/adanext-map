@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -379,6 +382,93 @@ func TestANewLatestStoreIsUsedOnTheNextCall(t *testing.T) {
 	writeStore(t, repo, commitB, sciptest.Index())
 	touchLatest(t, repo, 2*time.Minute)
 	ok(t, cs, "outline", map[string]any{"file": "pkg/a.go"})
+}
+
+// pointLatest makes .adamap/latest name commit, through a temporary file and a rename as
+// store.Write does, with an mtime that differs from every earlier call's.
+func pointLatest(t *testing.T, repo, commit string, mod time.Time) {
+	t.Helper()
+	dir := filepath.Join(repo, store.DirName)
+	tmp := filepath.Join(dir, ".latest.test.tmp")
+	if err := os.WriteFile(tmp, []byte(commit+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(tmp, mod, mod); err != nil {
+		t.Fatal(err)
+	}
+	// Windows refuses a rename over a file a reader has open at that instant: try again.
+	var err error
+	for try := 0; try < 200; try++ {
+		if err = os.Rename(tmp, filepath.Join(dir, "latest")); err == nil {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal(err)
+}
+
+func TestConcurrentCallsShareTheStoreWhileLatestMoves(t *testing.T) {
+	repo := callGraphRepo(t)
+	writeStore(t, repo, commitB, sciptest.CallGraph())
+	cs := connect(t, Config{Repo: repo})
+
+	const workers, rounds = 8, 50
+	problems := make(chan string, workers*rounds*2)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < rounds; i++ {
+				for _, tc := range []struct {
+					tool string
+					args map[string]any
+				}{
+					{"outline", map[string]any{"file": "calls/a.go"}},
+					{"map", nil},
+				} {
+					res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
+					if err != nil {
+						problems <- tc.tool + ": protocol error: " + err.Error()
+						continue
+					}
+					if res.IsError {
+						msg := ""
+						for _, c := range res.Content {
+							if text, ok := c.(*mcp.TextContent); ok {
+								msg += text.Text
+							}
+						}
+						// Windows fails an open of a file at the instant it is renamed over; POSIX never does.
+						if runtime.GOOS == "windows" && strings.Contains(msg, "used by another process") {
+							continue
+						}
+						problems <- tc.tool + ": tool error: " + msg
+						continue
+					}
+					sc, _ := res.StructuredContent.(map[string]any)
+					if commit, _ := sc["commit"].(string); commit != commitA && commit != commitB {
+						problems <- fmt.Sprintf("%s: answer names commit %q, want %s or %s", tc.tool, commit, commitA, commitB)
+					}
+				}
+			}
+		}()
+	}
+
+	// Meanwhile latest moves between the two stores, each time with a new mtime so the server reloads.
+	base := time.Now()
+	for i := 0; i < 2*rounds; i++ {
+		commit := commitB
+		if i%2 == 1 {
+			commit = commitA
+		}
+		pointLatest(t, repo, commit, base.Add(time.Duration(i+1)*time.Minute))
+	}
+	wg.Wait()
+	close(problems)
+	for p := range problems {
+		t.Error(p)
+	}
 }
 
 func TestPinnedCommitIgnoresLatest(t *testing.T) {
