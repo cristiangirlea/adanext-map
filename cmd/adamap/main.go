@@ -1,7 +1,6 @@
 // Command adamap is a code map for AI agents, built slice by slice (PLAN.md): it reads SCIP
 // indexes into a per-commit store and answers outline, find, refs, callers, impact and a ranked
-// repo map from it; an MCP server is still to come. So far it has version, help, index, the five
-// queries and map.
+// repo map from it, on the command line and as an MCP server (mcp).
 package main
 
 import (
@@ -42,6 +41,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runImpact(args[1:], stdout, stderr)
 	case "map":
 		return runMap(args[1:], stdout, stderr)
+	case "mcp":
+		return runMCP(args[1:], os.Stdin, stdout, stderr)
+	case "install":
+		return runInstall(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		usage(stdout)
 		return 0
@@ -65,8 +68,10 @@ commands:
   callers   list the symbols that call or use a symbol
   impact    list what depends on a symbol or a file, transitively
   map       print the files and symbols that matter most, within a token budget (adamap map -h)
+  mcp       serve the map and the queries as MCP tools on stdin and stdout (adamap mcp -h)
+  install   print or write the entry an agent host needs to start adamap mcp (adamap install -h)
 
 The queries and map read the store that "adamap index" wrote; each takes --repo, --commit and
---json (adamap <command> -h). The command mcp arrives in a later slice; PLAN.md lists it.
+--json (adamap <command> -h).
 `)
 }

@@ -2,8 +2,9 @@
 
 **Status: being built; nothing to install yet.** [PLAN.md](PLAN.md) lists the slices in the order
 they land. The commands so far are `adamap version`, `adamap help`, `adamap index`, the five
-queries `adamap outline`, `find`, `refs`, `callers` and `impact` ([docs/queries.md](docs/queries.md))
-and `adamap map` ([docs/map.md](docs/map.md)); `mcp` is still to come.
+queries `adamap outline`, `find`, `refs`, `callers` and `impact` ([docs/queries.md](docs/queries.md)),
+`adamap map` ([docs/map.md](docs/map.md)), and `adamap mcp` and `adamap install`
+([docs/mcp.md](docs/mcp.md)).
 
 What adamap is for: coding agents need exact code navigation, and today that means keeping a
 language server running per language, or parsing the code approximately. adamap will instead read
@@ -32,6 +33,14 @@ repository. Until those numbers exist, this README makes no claim.
 2. The queries and the map read the store; nothing is parsed at question time.
 3. `adamap mcp` serves the same queries as MCP tools; `adamap install` writes the host's entry
    (Claude Code, Codex, any MCP host).
+
+## Use it from an agent
+
+`adamap mcp` serves the map and the queries as MCP tools over stdio: `map`, `outline`,
+`find_symbol`, `refs`, `callers`, `impact` and `status`. `adamap install --claude` writes the entry
+into the project's `.mcp.json` for Claude Code (and hrn's `--mcp`), and `adamap install --codex`
+prints the block for Codex's `config.toml`. [docs/mcp.md](docs/mcp.md) describes the tools and the
+setup.
 
 ## The family
 
