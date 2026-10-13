@@ -31,7 +31,7 @@ const (
 // writeStore converts x and stores it as commit in repo, which makes it the latest.
 func writeStore(t *testing.T, repo, commit string, x *scippb.Index) {
 	t.Helper()
-	idx, err := scip.Convert(x)
+	idx, _, err := scip.Convert(x)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +617,7 @@ func TestTheStoreIsLoadedWhenTheServerStarts(t *testing.T) {
 
 func TestStatusOfAStoreIndexedFromTheDirtyTreeItDescribes(t *testing.T) {
 	repo := t.TempDir()
-	idx, err := scip.Convert(sciptest.CallGraph())
+	idx, _, err := scip.Convert(sciptest.CallGraph())
 	if err != nil {
 		t.Fatal(err)
 	}

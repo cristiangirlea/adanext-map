@@ -11,9 +11,9 @@ updates this file in that pull request. Tracking issue: #7.
 - [x] 2. scip: read an index and store it per commit (#2)
   Done: PR #23, 2026-10-13.
 - [x] 3. query: outline, find, refs, callers and impact (#3)
-  Done: PR #?, 2026-10-13.
+  Done: PR #31, 2026-10-13.
 - [x] 4. map: a ranked repo map within a token budget (#4)
-  Done: PR #?, 2026-10-13.
+  Done: PR #32, 2026-10-13.
 - [x] 5. mcp: serve the queries to agents (#5)
   Done: PR #?, 2026-10-13.
 - [ ] 6. bench: measure against no tool, LSP, Serena and CodeGraph (#6)
@@ -44,6 +44,16 @@ repository); a fail-closed push guard (#8).
   the typed ranges SCIP added as well as the packed ones, merges a document listed twice, takes a
   symbol's first definition occurrence as its definition, and counts a forward definition as a
   reference.
+- 2026-10-13 (slice 2): a backslash in a document path is always a separator: SCIP specifies `/`
+  and indexers on Windows (scip-go 0.2.7) write `\`. The converter turns it into `/` and cleans the
+  path (`a/./b.go` and `a//b.go` become `a/b.go`) before checking it, and stores the slash form.
+- 2026-10-13 (slice 2): a document whose path leaves the project (absolute, drive-letter, UNC, or
+  `..` escaping, after normalising) is skipped with its occurrences and symbols instead of failing
+  the index: scip-go on Windows also indexes the test main Go generates in its build cache, outside
+  the repository. `adamap index` says how many on stderr and still writes the store. An empty path,
+  and in a kept document a malformed range or a symbol without a symbol, stay fatal; a path that
+  cleans to the project root (`pkg/..`) is skipped too. `store.Load` still refuses such a
+  path, since a store adamap wrote never holds one.
 - 2026-10-13 (slice 3): a symbol is addressed by its SCIP symbol string, or by a display name that fits
   exactly one symbol (equal, else equal ignoring case; a prefix or fragment is `find`'s job), and an
   ambiguous name is refused with the candidates listed. Local symbols (`local N`) cannot be addressed,

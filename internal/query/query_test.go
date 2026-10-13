@@ -13,7 +13,7 @@ import (
 // fixture is the call-graph fixture, converted as `adamap index` would and indexed for queries.
 func fixture(t testing.TB) *Index {
 	t.Helper()
-	m, err := scip.Convert(sciptest.CallGraph())
+	m, _, err := scip.Convert(sciptest.CallGraph())
 	if err != nil {
 		t.Fatal(err)
 	}
