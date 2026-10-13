@@ -22,8 +22,10 @@ stdin. It exits 1 when `--repo` is not a directory or the session fails, and 2 f
 
 **Which store.** The server loads the store when it starts: `--commit`'s, or the one
 `.adamap/latest` names. Without `--commit`, every call compares `latest`'s modification time and
-size with what they were at the last load, and loads again when they differ. So after
-`adamap index`, the next call answers from the new store, with no restart. With `--commit`, the
+size, and the modification time of the served store's `header.json`, with what they were at the last
+load, and loads again when they differ. The header's time is there so that indexing the same commit
+again is noticed even when `latest` keeps its size and, on a file system with a coarse clock, its
+time. So after `adamap index`, the next call answers from the new store, with no restart. With `--commit`, the
 server stays on that store. A server started before there is any store answers each call with a
 tool error saying to run `adamap index`, and picks the store up once it exists.
 

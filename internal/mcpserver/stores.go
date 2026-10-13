@@ -35,13 +35,29 @@ type stores struct {
 	failed *failure // the newer store that did not load, if any
 }
 
-// stamp is what tells one version of .adamap/latest from the next.
+// stamp is what tells one version of the store from the next: .adamap/latest's modification time
+// and size, and the modification time of the header of the store being served. Indexing a commit
+// again rewrites latest with the same size and, on a file system with a coarse clock, the same
+// time; the header it writes just before is what differs.
 type stamp struct {
-	mod  time.Time
-	size int64
+	mod    time.Time
+	size   int64
+	header time.Time
 }
 
-func (a stamp) equal(b stamp) bool { return a.mod.Equal(b.mod) && a.size == b.size }
+func (a stamp) equal(b stamp) bool {
+	return a.mod.Equal(b.mod) && a.size == b.size && a.header.Equal(b.header)
+}
+
+// headerTime is the modification time of commit's header.json, or the zero time when it cannot be
+// read, which differs from any real one.
+func (s *stores) headerTime(commit string) time.Time {
+	fi, err := os.Stat(filepath.Join(store.Dir(s.repo, commit), "header.json"))
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
+}
 
 // failure is a newer store that did not load, and the stamp of latest when that was seen.
 type failure struct {
@@ -80,7 +96,10 @@ func (s *stores) current() (snap *snapshot, newerErr, err error) {
 	var now stamp
 	fi, statErr := os.Lstat(filepath.Join(s.repo, store.DirName, "latest"))
 	if statErr == nil {
-		now = stamp{fi.ModTime(), fi.Size()}
+		now = stamp{mod: fi.ModTime(), size: fi.Size()}
+		if s.cur != nil {
+			now.header = s.headerTime(s.cur.header.Commit)
+		}
 	}
 	if s.cur != nil {
 		switch {
@@ -98,11 +117,13 @@ func (s *stores) current() (snap *snapshot, newerErr, err error) {
 	if err != nil {
 		return s.keep(err, now, true)
 	}
+	loadedAt := now
+	loadedAt.header = s.headerTime(commit) // before the load, like latest's stamp
 	snap, err = load(s.repo, commit)
 	if err != nil {
 		return s.keep(err, now, false)
 	}
-	s.cur, s.stamp, s.failed = snap, now, nil
+	s.cur, s.stamp, s.failed = snap, loadedAt, nil
 	return snap, nil, nil
 }
 

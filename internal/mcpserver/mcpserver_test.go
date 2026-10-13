@@ -743,3 +743,27 @@ func TestAnUnreadableLatestIsTriedAgainEvenAtTheSameStamp(t *testing.T) {
 		t.Errorf("latest was mended at the same stamp and should be read again: %v", a.structured)
 	}
 }
+
+func TestReindexingTheSameCommitIsNoticedWhenLatestLooksUnchanged(t *testing.T) {
+	repo := t.TempDir()
+	writeStore(t, repo, commitA, sciptest.Index())
+	latest := filepath.Join(repo, store.DirName, "latest")
+	fi, err := os.Stat(latest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := connect(t, Config{Repo: repo})
+	ok(t, cs, "outline", map[string]any{"file": "pkg/a.go"})
+
+	// The same commit indexed again: latest is rewritten with the same size, and on a file system
+	// with a coarse clock with the same modification time. Only the header's time tells.
+	writeStore(t, repo, commitA, sciptest.CallGraph())
+	if err := os.Chtimes(latest, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	header := filepath.Join(store.Dir(repo, commitA), "header.json")
+	if err := os.Chtimes(header, fi.ModTime().Add(time.Minute), fi.ModTime().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	ok(t, cs, "outline", map[string]any{"file": "calls/a.go"})
+}
