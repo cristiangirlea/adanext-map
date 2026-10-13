@@ -477,7 +477,7 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 	var b strings.Builder
 	snap, newerErr, err := s.stores.current()
 	if err != nil {
-		out.StoreError = err.Error()
+		out.StoreError = safeLines(err.Error())
 		fmt.Fprintf(&b, "no store: %v\n", err)
 	} else {
 		h := snap.header
@@ -498,7 +498,7 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 		}
 		fmt.Fprintf(&b, ": %d documents, %d symbols, %d occurrences\n", h.Counts.Documents, h.Counts.Symbols, h.Counts.Occurrences)
 		if newerErr != nil {
-			out.NewerStoreError = newerErr.Error()
+			out.NewerStoreError = safeLines(newerErr.Error())
 			fmt.Fprintf(&b, "a newer store failed to load, so this one still serves: %v\n", newerErr)
 		}
 	}
@@ -507,7 +507,7 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 	if s.cfg.Head == nil {
 		out.GitError = "git was not asked"
 	} else if head, dirty, err := s.cfg.Head(); err != nil {
-		out.GitError = err.Error()
+		out.GitError = safeLines(err.Error())
 	} else {
 		known = true
 		out.Head, out.Dirty = head, dirty
