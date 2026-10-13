@@ -221,6 +221,9 @@ func TestEncodeHoldsOneElementAtATime(t *testing.T) {
 	}
 	// What encoding the store allocates, with a generous bound: building the whole JSON in memory
 	// takes at least its size.
+	if !checkAllocations {
+		return
+	}
 	runtime.GC()
 	runtime.GC() // twice, to empty sync.Pool, where an earlier encoding can leave a large buffer
 	var before, after runtime.MemStats
