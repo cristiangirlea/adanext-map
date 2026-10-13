@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -197,6 +198,23 @@ func TestInstallClaudeRefusesAFileOverTheLimit(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(path); string(data) != big {
 		t.Errorf("the file was changed: %d bytes", len(data))
+	}
+}
+
+func TestInstallClaudeKeepsTheFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no permission bits to keep")
+	}
+	repo := t.TempDir()
+	path := filepath.Join(repo, ".mcp.json")
+	writeFile(t, path, `{"other": 1}`)
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, "install", "--claude", "--repo", repo)
+	checkEntry(t, adamapEntry(t, repo), repo)
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v (%v), want 0600", fi.Mode().Perm(), err)
 	}
 }
 
