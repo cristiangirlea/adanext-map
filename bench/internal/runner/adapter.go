@@ -293,7 +293,8 @@ func parseStreamJSON(stdout []byte, b manifest.Backend) Outcome {
 	o.Answer = result.Result
 	if result.IsError {
 		o.Err = "the CLI reported an error: " + result.Subtype
-		if o.Limit = limitText(result.Result); o.Limit == "" {
+		// A retried limit explains an empty result only: text that names another error is that error.
+		if o.Limit = limitText(result.Result); o.Limit == "" && strings.TrimSpace(result.Result) == "" {
 			o.Limit = limitErr
 		}
 	} else if a := strings.TrimSpace(result.Result); limitAnswer.MatchString(a) {

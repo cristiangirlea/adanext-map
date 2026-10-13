@@ -181,6 +181,8 @@ func TestClaudeParseNamesThePlansLimit(t *testing.T) {
 		{"overloaded result", `{"type":"result","subtype":"success","is_error":true,"result":"API Error: Repeated 529 Overloaded errors"}`, true},
 		{"retries exhausted on overload", `{"type":"system","subtype":"api_retry","error":"overloaded","attempt":10,"max_retries":10,"error_status":529}` + "\n" +
 			`{"type":"result","subtype":"error_during_execution","is_error":true,"result":""}`, true},
+		{"retried overload, then a different error result", `{"type":"system","subtype":"api_retry","error":"overloaded","attempt":10,"max_retries":10,"error_status":529}` + "\n" +
+			`{"type":"result","subtype":"success","is_error":true,"result":"API Error: 400 prompt is too long"}`, false},
 		{"retries then no result", `{"type":"system","subtype":"api_retry","error":"rate_limit","attempt":3,"max_retries":10,"error_status":429}`, true},
 		{"assistant error field", `{"type":"assistant","error":"rate_limit","message":{"content":[{"type":"text","text":"Rate limited"}]}}`, true},
 		{"retried then succeeded", `{"type":"system","subtype":"api_retry","error":"rate_limit","attempt":1,"max_retries":10,"error_status":429}` + "\n" +
