@@ -61,7 +61,20 @@ run that stops after that point (a failed check, a refused login, an interruptio
 a session: its marker stays and says why, resume does not start it again, and the execution ends
 with an error naming it. Look at the marker and the run's state under `--work`, then remove the
 marker to run it again. An interruption (Ctrl-C) writes no record for the run it stopped and
-starts no further run. Transcripts and the warm index
+starts no further run.
+
+A run that meets the plan's usage limit is not a task failure. The execution stops at once, with
+no retry and no record for that run, and its workspace is removed as usual. Its `.started` marker
+is replaced by `<run id>.limited`, which says when and why. Run the same command again once the
+limit resets: resume starts that run afresh, and its record removes the note. A limit is read from
+the CLI's own account only:
+- a result event with `is_error` whose text names a usage, session, weekly or rate limit, an
+  overload, or a 429 or 529;
+- for an attempt with no result or an error result, an `api_retry` event or an assistant message
+  whose `error` is `rate_limit`, `overloaded` or `billing_error`;
+- the stderr of a failed attempt naming the same.
+
+A successful answer is never read for these words. Transcripts and the warm index
 cache go to `--work` (default: a temp directory). Each workspace is a directory of its own in the
 system temp directory, away from `--work`, and is removed after its record unless `--keep` is
 given. The grader's checkout of the fix is always removed, and the fix's files a `fix-tests` check

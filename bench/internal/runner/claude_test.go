@@ -164,6 +164,43 @@ func TestClaudeParseWithoutAResultHasNoUsage(t *testing.T) {
 	}
 }
 
+// A transcript that ends at the plan's usage limit, or at a rate-limit or overload error the CLI
+// gave up retrying, says so in Limit. A failure of another kind does not, and neither does a
+// successful answer that happens to mention a rate limit or a 429.
+func TestClaudeParseNamesThePlansLimit(t *testing.T) {
+	b := benchtest.Pilot().Backends[0]
+	initLine := `{"type":"system","subtype":"init","apiKeySource":"none"}` + "\n"
+	cases := []struct {
+		name, transcript string
+		limit            bool
+	}{
+		{"usage limit result", `{"type":"result","subtype":"success","is_error":true,"result":"Claude AI usage limit reached|1760400000"}`, true},
+		{"session limit result", `{"type":"result","subtype":"success","is_error":true,"result":"You've hit your session limit · resets 3:45pm"}`, true},
+		{"weekly limit result", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You've hit your weekly limit"}`, true},
+		{"429 result", `{"type":"result","subtype":"success","is_error":true,"result":"API Error: 429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\"}}"}`, true},
+		{"overloaded result", `{"type":"result","subtype":"success","is_error":true,"result":"API Error: Repeated 529 Overloaded errors"}`, true},
+		{"retries exhausted on overload", `{"type":"system","subtype":"api_retry","error":"overloaded","attempt":10,"max_retries":10,"error_status":529}` + "\n" +
+			`{"type":"result","subtype":"error_during_execution","is_error":true,"result":""}`, true},
+		{"retries then no result", `{"type":"system","subtype":"api_retry","error":"rate_limit","attempt":3,"max_retries":10,"error_status":429}`, true},
+		{"assistant error field", `{"type":"assistant","error":"rate_limit","message":{"content":[{"type":"text","text":"Rate limited"}]}}`, true},
+		{"retried then succeeded", `{"type":"system","subtype":"api_retry","error":"rate_limit","attempt":1,"max_retries":10,"error_status":429}` + "\n" +
+			`{"type":"result","subtype":"success","is_error":false,"result":"done"}`, false},
+		{"answer mentions a rate limit", `{"type":"result","subtype":"success","is_error":false,"result":"The client retries on HTTP 429 and on a rate limit; it handles overloaded servers."}`, false},
+		{"max turns", `{"type":"result","subtype":"error_max_turns","is_error":true,"result":""}`, false},
+		{"another error", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Tool permission denied in 4290 ms"}`, false},
+		{"no result at all", `{"type":"assistant","message":{"content":[{"type":"text","text":"working on the rate limit code"}]}}`, false},
+	}
+	for _, c := range cases {
+		o := runner.Claude{}.Parse([]byte(initLine+c.transcript+"\n"), b)
+		if (o.Limit != "") != c.limit {
+			t.Errorf("%s: limit %q", c.name, o.Limit)
+		}
+		if c.limit && o.Err == "" {
+			t.Errorf("%s: a limit is not a completed attempt: %+v", c.name, o)
+		}
+	}
+}
+
 // The claude invocation watches its stream for the init event: only the subscription login
 // (apiKeySource "none") goes on. Another source, a missing one, or a turn before the init stops it.
 func TestClaudeWatchGoesOnOnlyOnTheSubscriptionLogin(t *testing.T) {

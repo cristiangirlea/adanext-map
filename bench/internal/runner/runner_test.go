@@ -104,6 +104,17 @@ func TestMain(m *testing.M) {
 		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte(wd+"\n"), 0o644)
 		time.Sleep(20 * time.Second)
 		os.Exit(0)
+	case "agent-limit": // a worker that leaves a file, says where it runs, then meets the plan's usage limit
+		os.WriteFile("half.txt", []byte("half done\n"), 0o644)
+		wd, _ := os.Getwd()
+		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte(wd), 0o644)
+		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"l","apiKeySource":"none"}` + "\n")
+		if os.Getenv("BENCH_TEST_LIMIT") == "stderr" {
+			os.Stderr.WriteString("Claude AI usage limit reached|1760400000\n")
+		} else {
+			os.Stdout.WriteString(`{"type":"result","subtype":"success","is_error":true,"result":"You've hit your session limit · resets 3:45pm","session_id":"l"}` + "\n")
+		}
+		os.Exit(1)
 	case "agent-hang": // a worker that says it started, then works until stopped
 		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte("started\n"), 0o644)
 		time.Sleep(20 * time.Second)
@@ -754,6 +765,50 @@ func TestResumeDoesNotStartARunThatStartedAgain(t *testing.T) {
 	}
 	if markers, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started")); len(markers) != 0 {
 		t.Fatalf("markers left %v", markers)
+	}
+}
+
+// A run that meets the plan's usage limit is not a task failure: the execution stops at once with
+// no record for it and no retry, its workspace goes, and instead of the .started marker that would
+// keep resume from starting it again it leaves a .limited note. Resume runs it again, and its
+// record clears the note.
+func TestThePlansLimitStopsTheExecutionAndResumeRunsItAgain(t *testing.T) {
+	src, pre, fix := repo(t)
+	for _, shape := range []string{"result", "stderr"} {
+		m := smoke(t, pre, fix)
+		o := options(t, m, src, 8)
+		where := filepath.Join(t.TempDir(), "where.txt")
+		o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-limit", "BENCH_TEST_LIMIT=" + shape, "BENCH_TEST_WHERE=" + where}
+		err := runner.Execute(context.Background(), o)
+		if err == nil || !strings.Contains(err.Error(), "usage limit") || !strings.Contains(err.Error(), "again") {
+			t.Fatalf("%s: err %v", shape, err)
+		}
+		recs, _ := record.ReadDir(o.RecordsDir)
+		started, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+		limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+		if len(recs) != 0 || len(started) != 0 || len(limited) != 1 {
+			t.Fatalf("%s: %d records, started %v, limited %v", shape, len(recs), started, limited)
+		}
+		id := strings.TrimSuffix(filepath.Base(limited[0]), ".limited")
+		if text, _ := os.ReadFile(limited[0]); !strings.Contains(string(text), "usage limit") {
+			t.Fatalf("%s: the note does not say why: %q", shape, text)
+		}
+		if _, err := os.Stat(filepath.Join(o.WorkDir, id, "state", "attempt-2.jsonl")); err == nil {
+			t.Fatalf("%s: the limit was retried", shape)
+		}
+		ws, _ := os.ReadFile(where)
+		if _, err := os.Stat(string(ws)); len(ws) == 0 || err == nil {
+			t.Fatalf("%s: the workspace %q was left behind", shape, ws)
+		}
+		o.Fake.Env = []string{"BENCH_TEST_HELPER=agent"}
+		if err := runner.Execute(context.Background(), o); err != nil {
+			t.Fatalf("%s: resume: %v", shape, err)
+		}
+		recs, _ = record.ReadDir(o.RecordsDir)
+		limited, _ = filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+		if len(recs) != 8 || len(limited) != 0 {
+			t.Fatalf("%s: after resume %d records, limited %v", shape, len(recs), limited)
+		}
 	}
 }
 
