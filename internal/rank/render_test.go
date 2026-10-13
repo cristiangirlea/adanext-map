@@ -104,6 +104,15 @@ func TestTextQuotesAPathThatLooksLikeASymbolLine(t *testing.T) {
 	}
 }
 
+func TestTextQuotesAPathThatIsNotUTF8(t *testing.T) {
+	// A lone 0xff is no control or format character, only invalid UTF-8: it must not reach the terminal raw.
+	files := []File{{Path: "a\xffb.go", Symbols: []Symbol{{Name: "X", Kind: "Variable"}}}}
+	want := "\"a\\xffb.go\"\n  var  X\n"
+	if got := Text(files); got != want {
+		t.Errorf("Text %q, want %q", got, want)
+	}
+}
+
 func TestTextQuotesAPathWithALineOrParagraphSeparator(t *testing.T) {
 	// U+2028 and U+2029 break a line on some terminals and viewers, though they are not Cc or Cf.
 	files := []File{
