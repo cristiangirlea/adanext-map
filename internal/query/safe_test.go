@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/cristiangirlea/adanext-map/internal/model"
 )
@@ -68,5 +69,22 @@ func TestAmbiguousErrorQuotesNamesAndSymbolIDs(t *testing.T) {
 	}
 	if strings.ContainsAny(err.Error(), "\x1b\u202e") {
 		t.Errorf("message %q holds a raw control or format character", err.Error())
+	}
+}
+
+func TestSafeQuotesEveryFormatCharacter(t *testing.T) {
+	// Safe relies on strconv.IsPrint alone to refuse format characters (Unicode category Cf).
+	n := 0
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if !unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		n++
+		if s := "a" + string(r) + "b"; Safe(s) == s {
+			t.Errorf("Safe leaves U+%04X as it is", r)
+		}
+	}
+	if n < 100 {
+		t.Errorf("only %d format characters found: is the table loaded?", n)
 	}
 }
