@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	scippb "github.com/scip-code/scip/bindings/go/scip"
+
 	"github.com/cristiangirlea/adanext-map/internal/scip/sciptest"
 	"github.com/cristiangirlea/adanext-map/internal/store"
 )
@@ -128,7 +130,7 @@ func TestIndexPrefersCargoTomlWhenBothProjectFilesExist(t *testing.T) {
 // and the index.scip it wrote is removed.
 func TestIndexCleansUpAfterAFailedIndexer(t *testing.T) {
 	bad := sciptest.Index()
-	bad.Documents[0].RelativePath = "/abs.go"
+	bad.Documents[0].Occurrences[0].Range = []int32{5, 0, 4, 9}
 	cases := []struct {
 		name  string
 		write func(dir string) error
@@ -141,7 +143,7 @@ func TestIndexCleansUpAfterAFailedIndexer(t *testing.T) {
 		}, nil, "scip-go failed: exit status 101"},
 		{"indexer writes a malformed index", func(dir string) error {
 			return os.WriteFile(filepath.Join(dir, "index.scip"), sciptest.Bytes(t, bad), 0o644)
-		}, nil, "absolute"},
+		}, nil, "ends before"},
 		{"indexer writes too much", func(dir string) error {
 			return os.WriteFile(filepath.Join(dir, "index.scip"), sciptest.Bytes(t, sciptest.Index()), 0o644)
 		}, []string{"--max-bytes", "10"}, "--max-bytes"},
@@ -226,14 +228,14 @@ func TestIndexRefusesAnIndexOverTheSizeLimit(t *testing.T) {
 
 func TestIndexRefusesAMalformedIndex(t *testing.T) {
 	x := sciptest.Index()
-	x.Documents[0].RelativePath = "../escape.go"
+	x.Documents[0].Occurrences[0].Range = []int32{5, 0, 4, 9}
 	path := filepath.Join(t.TempDir(), "bad.scip")
 	if err := os.WriteFile(path, sciptest.Bytes(t, x), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, _, errOut := runIndexCmd("--scip", path, "--commit", testCommit, "--repo", t.TempDir())
-	if code != 1 || !strings.Contains(errOut, "..") {
-		t.Fatalf("exit %d, stderr %q; want 1 naming the bad path", code, errOut)
+	if code != 1 || !strings.Contains(errOut, "ends before") {
+		t.Fatalf("exit %d, stderr %q; want 1 naming the bad range", code, errOut)
 	}
 }
 
@@ -312,5 +314,36 @@ func TestIndexOutsideARepositoryAsksForCommit(t *testing.T) {
 	code, _, errOut := runIndexCmd("--scip", fixtureFile(t), "--repo", dir)
 	if code != 1 || !strings.Contains(errOut, "--commit") {
 		t.Fatalf("exit %d, stderr %q; want 1 and a pointer to --commit", code, errOut)
+	}
+}
+
+func TestIndexSkipsDocumentsOutsideTheProjectAndSaysSo(t *testing.T) {
+	x := sciptest.Index()
+	x.Documents = append(x.Documents, &scippb.Document{RelativePath: `..\..\go-build\d7\abc-d`, Language: "go"},
+		&scippb.Document{RelativePath: "/abs.go"})
+	path := filepath.Join(t.TempDir(), "outside.scip")
+	if err := os.WriteFile(path, sciptest.Bytes(t, x), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	code, out, errOut := runIndexCmd("--scip", path, "--commit", testCommit, "--repo", repo)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errOut)
+	}
+	if !strings.Contains(errOut, "skipped 2 documents outside the project") || !strings.Contains(errOut, `go-build`) {
+		t.Errorf("stderr %q does not say two documents were skipped", errOut)
+	}
+	if !summary.MatchString(out) {
+		t.Errorf("stdout %q is not the summary line", out)
+	}
+	if _, idx, err := store.Load(repo, testCommit); err != nil || len(idx.Documents) != 2 {
+		t.Errorf("store: %v, %v", idx, err)
+	}
+}
+
+func TestIndexSaysNothingWhenNothingIsSkipped(t *testing.T) {
+	_, _, errOut := runIndexCmd("--scip", fixtureFile(t), "--commit", testCommit, "--repo", t.TempDir())
+	if strings.Contains(errOut, "skipped") {
+		t.Errorf("stderr %q mentions a skip", errOut)
 	}
 }

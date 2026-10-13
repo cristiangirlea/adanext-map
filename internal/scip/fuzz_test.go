@@ -6,6 +6,7 @@ import (
 	scippb "github.com/scip-code/scip/bindings/go/scip"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/cristiangirlea/adanext-map/internal/model"
 	"github.com/cristiangirlea/adanext-map/internal/scip/sciptest"
 )
 
@@ -19,9 +20,17 @@ func FuzzConvert(f *testing.F) {
 		if err := proto.Unmarshal(data, &x); err != nil {
 			return
 		}
-		idx, err := Convert(&x)
+		idx, _, err := Convert(&x)
 		if err == nil && idx == nil {
 			t.Fatal("no model and no error")
+		}
+		if err != nil {
+			return
+		}
+		for _, d := range idx.Documents {
+			if perr := model.CheckPath(d.Path); perr != nil || d.Path != normalisePath(d.Path) {
+				t.Fatalf("document path %q: %v", d.Path, perr)
+			}
 		}
 	})
 }

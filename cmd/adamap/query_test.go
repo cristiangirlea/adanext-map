@@ -122,7 +122,7 @@ func TestQueryCommandsNameTheCommitInJSON(t *testing.T) {
 func TestQueryCommandsReportADirtyStoreInJSON(t *testing.T) {
 	repo := t.TempDir()
 	// A dirty header is written by `adamap index` in a git repository with changes; write one directly.
-	idx, err := scip.Convert(sciptest.CallGraph())
+	idx, _, err := scip.Convert(sciptest.CallGraph())
 	if err != nil {
 		t.Fatal(err)
 	}
