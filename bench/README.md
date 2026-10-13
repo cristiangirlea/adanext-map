@@ -75,10 +75,12 @@ A limit is read from the CLI's own account only:
 - a result, error or not, whose whole answer is Claude Code's usage-limit message
   (`Claude AI usage limit reached|<reset>`, `You've hit your session limit ...`);
 - for an attempt with no result or an error result, an `api_retry` event or an assistant message
-  whose `error` is `rate_limit`, `overloaded` or `billing_error`;
+  whose `error` is `rate_limit`, `overloaded` or `billing_error`, unless a later turn got through;
 - the stderr of a failed attempt naming the same.
 
-A successful answer is never read for these words. Transcripts and the warm index
+Beyond that whole-answer message, a successful answer is never read for these words.
+
+Transcripts and the warm index
 cache go to `--work` (default: a temp directory). Each workspace is a directory of its own in the
 system temp directory, away from `--work`, and is removed after its record unless `--keep` is
 given. The grader's checkout of the fix is always removed, and the fix's files a `fix-tests` check

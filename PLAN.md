@@ -132,8 +132,10 @@ repository); a fail-closed push guard (#8).
   rate-limit or overload error the CLI stopped retrying, stops the execution with no record and
   no retry. It leaves `<run id>.limited` instead of the `.started` marker, so resume runs it again.
   Claude Code documents only the `api_retry` event's error categories, not a usage-limit shape in
-  stream-json. So the limit is read conservatively, from error results, those categories and a
-  failed attempt's stderr, never from a successful answer. `pilot-1.json` and
+  stream-json. So the limit is read conservatively: from error results, from those categories
+  until a later turn gets through, from a failed attempt's stderr, and from a successful answer
+  only when the whole answer is the CLI's usage-limit message. A 429 or 529 counts only as an
+  error's status, and an interruption stays an interruption. `pilot-1.json` and
   `pilot-1.tasks.json` are the pilot: the 16 candidates approved by the owner, identities pinned as
   installed here, 240 runs. The example's `codegraph index .` fails on a fresh tree, so CodeGraph
   is prepared with `init -y` and served with `serve --mcp`. It is started through node and its
