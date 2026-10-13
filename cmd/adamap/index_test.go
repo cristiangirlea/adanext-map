@@ -392,7 +392,6 @@ func TestIndexTakesTheCommitFromGitAndMarksADirtyTree(t *testing.T) {
 	head := git(t, repo, "rev-parse", "HEAD")
 	scip := fixtureFile(t)
 
-	writeFile(t, filepath.Join(repo, "untracked.txt"), "not part of the tree\n")
 	code, out, errOut := runIndexCmd("--scip", scip, "--repo", repo)
 	if code != 0 || !strings.HasPrefix(out, "indexed "+head[:12]+":") {
 		t.Fatalf("clean: exit %d, stdout %q, stderr %q", code, out, errOut)
@@ -408,6 +407,87 @@ func TestIndexTakesTheCommitFromGitAndMarksADirtyTree(t *testing.T) {
 	}
 	if h, _, err := store.Load(repo, head); err != nil || !h.Dirty {
 		t.Fatalf("dirty: header %+v, %v; want HEAD marked dirty", h, err)
+	}
+}
+
+// An untracked source file is part of what an indexer compiles, so it makes the tree dirty; a file
+// git ignores, the store, and anything outside a --repo that is a subdirectory do not.
+func TestDirtyCountsUntrackedFilesInRepoOnly(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	tests := []struct {
+		name  string
+		repo  string // relative to the work tree
+		setup func(t *testing.T, tree string)
+		want  bool
+	}{
+		{"clean", ".", func(t *testing.T, tree string) {}, false},
+		{"untracked go file", ".", func(t *testing.T, tree string) {
+			writeFile(t, filepath.Join(tree, "new.go"), "package a\n")
+		}, true},
+		{"untracked file in a new directory", ".", func(t *testing.T, tree string) {
+			mustMkdir(t, filepath.Join(tree, "pkg"))
+			writeFile(t, filepath.Join(tree, "pkg", "new.go"), "package pkg\n")
+		}, true},
+		{"ignored file", ".", func(t *testing.T, tree string) {
+			writeFile(t, filepath.Join(tree, "debug.log"), "x\n")
+		}, false},
+		{"store with its own .gitignore", ".", func(t *testing.T, tree string) {
+			mustMkdir(t, filepath.Join(tree, ".adamap", "0123"))
+			writeFile(t, filepath.Join(tree, ".adamap", ".gitignore"), "*\n")
+			writeFile(t, filepath.Join(tree, ".adamap", "0123", "header.json"), "{}\n")
+		}, false},
+		{"store whose .gitignore is the owner's", ".", func(t *testing.T, tree string) {
+			mustMkdir(t, filepath.Join(tree, ".adamap", "0123"))
+			writeFile(t, filepath.Join(tree, ".adamap", ".gitignore"), "# mine\n")
+			writeFile(t, filepath.Join(tree, ".adamap", "0123", "header.json"), "{}\n")
+		}, false},
+		{"untracked file next to the store", ".", func(t *testing.T, tree string) {
+			mustMkdir(t, filepath.Join(tree, ".adamap"))
+			writeFile(t, filepath.Join(tree, ".adamap", ".gitignore"), "*\n")
+			writeFile(t, filepath.Join(tree, "new.go"), "package a\n")
+		}, true},
+		{"subdirectory, untracked file inside", "sub", func(t *testing.T, tree string) {
+			writeFile(t, filepath.Join(tree, "sub", "new.go"), "package sub\n")
+		}, true},
+		{"subdirectory, untracked file outside", "sub", func(t *testing.T, tree string) {
+			writeFile(t, filepath.Join(tree, "new.go"), "package a\n")
+		}, false},
+		{"subdirectory, tracked change outside", "sub", func(t *testing.T, tree string) {
+			writeFile(t, filepath.Join(tree, "a.txt"), "two\n")
+		}, false},
+		{"subdirectory, tracked change inside", "sub", func(t *testing.T, tree string) {
+			writeFile(t, filepath.Join(tree, "sub", "b.go"), "package sub // two\n")
+		}, true},
+		{"subdirectory, store", "sub", func(t *testing.T, tree string) {
+			mustMkdir(t, filepath.Join(tree, "sub", ".adamap"))
+			writeFile(t, filepath.Join(tree, "sub", ".adamap", "header.json"), "{}\n")
+		}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tree := t.TempDir()
+			git(t, tree, "init", "-q")
+			mustMkdir(t, filepath.Join(tree, "sub"))
+			writeFile(t, filepath.Join(tree, ".gitignore"), "*.log\n")
+			writeFile(t, filepath.Join(tree, "a.txt"), "one\n")
+			writeFile(t, filepath.Join(tree, "sub", "b.go"), "package sub\n")
+			git(t, tree, "add", ".")
+			git(t, tree, "commit", "-q", "-m", "one")
+			tc.setup(t, tree)
+			_, dirty, err := resolveCommit(filepath.Join(tree, tc.repo), "")
+			if err != nil || dirty != tc.want {
+				t.Fatalf("resolveCommit(%q) = dirty %v, %v; want dirty %v", tc.repo, dirty, err, tc.want)
+			}
+		})
+	}
+}
+
+func mustMkdir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
 	}
 }
 

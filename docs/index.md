@@ -26,9 +26,12 @@ prints the flags.
 ## Which commit
 
 Without `--commit`, adamap asks git for `HEAD` in `--repo`. If tracked files have uncommitted
-changes, the store is still filed under `HEAD`, but its header says `dirty: true` and the summary
-line says `(dirty)`. Untracked files do not count. With `--commit`, git is not asked: the index is
-taken to describe that commit, as the caller says.
+changes, or there are untracked files that `.gitignore` does not hide (a new source file is
+compiled by the indexer, so it is part of what the store describes), the store is still filed under
+`HEAD`, but its header says `dirty: true` and the summary line says `(dirty)`. Only `--repo` is
+looked at: when it is a subdirectory of the work tree, changes elsewhere in the work tree do not
+count. The store's own `.adamap` directory never counts. With `--commit`, git is not asked: the
+index is taken to describe that commit, as the caller says.
 
 adamap runs git with `--no-optional-locks` and with `core.fsmonitor` and `core.hooksPath` overridden,
 so the `core.fsmonitor` command and the hooks in the repository's own `.git` do not run. It also
@@ -150,7 +153,7 @@ opened is not the file that was checked, is refused as well.
 | `format` | The store format, an integer: 1 for now. |
 | `adamap` | The version of adamap that wrote the store. |
 | `commit` | The full commit hash. |
-| `dirty` | `true` when tracked files had uncommitted changes; left out otherwise. |
+| `dirty` | `true` when tracked files had uncommitted changes, or there were untracked files git does not ignore; left out otherwise. |
 | `indexer` | `name` and `version` of the indexer, from the SCIP metadata. |
 | `project_root` | The project root from the SCIP metadata, a URI. |
 | `created` | When the store was written, UTC, RFC 3339. |
@@ -178,6 +181,11 @@ lists other symbols with the flags `implementation`, `reference` and `type_defin
 
 Local symbols (`local N` in SCIP) are kept in their document's `locals`: the same `local 0` in two
 documents is two symbols.
+
+The file is written one document and one symbol at a time, straight into the compressor, so writing
+a store holds the model and one element of it, never the whole JSON. `<`, `>` and `&` are written as
+they are rather than as `\u003c`, `\u003e` and `\u0026`; both forms are the same JSON string, so
+stores written before this still load, and adamap versions from before it load the new ones.
 
 An occurrence has a `range`, a `symbol`, its `roles` and, when the indexer gives one, an `enclosing`
 range (the whole construct around it, such as a function body around its name). A range is

@@ -17,9 +17,11 @@ adamap map [--tokens n] [--for words] [--repo dir] [--commit sha] [--json]
 | `--json` | off | Print the map as JSON (below) instead of text. |
 
 The exit code is 0 on success, 1 when the store cannot be read (none yet says to run
-`adamap index`), and 2 for a usage error. `adamap map -h` prints the flags. A note goes to stderr,
-with exit 0, when `--for` matches nothing (the map is then not personalised), when the store
-defines no symbols, and when not even one symbol fits in `--tokens`.
+`adamap index`), and 2 for a usage error. `adamap map -h` prints the flags. At most one note goes
+to stderr, with exit 0: the first of these that applies, in this order. `--for` matches nothing
+(the map is then not personalised); the store defines no symbols; not even one symbol fits in
+`--tokens`. A later note is not printed beside an earlier one: with `--for` matching nothing and a
+`--tokens` too small for one symbol, only the first is said.
 
 ## The output
 
@@ -50,9 +52,15 @@ symbols, namespaces (packages, modules) and parameters. Fields and enum members 
 shown either: the line of the struct, class or enum that holds them is the one to read, and a
 member would take a line of the budget from a symbol that matters more. A file that defines only
 members is left out. References to a member still link the files, so they count in the ranking
-(see below); `adamap find`, `outline` and `refs` still list members. A path holding a control or format
-character (bidi overrides, zero-width characters) is printed quoted, so each line stays one line
-and shows what it holds; the same characters in a name, signature or doc become a space.
+(see below); `adamap find`, `outline` and `refs` still list members.
+
+A path is printed quoted, so each line stays one line and shows what it holds, when it holds a
+control or format character (bidi overrides, zero-width characters) or a line or paragraph
+separator (U+2028, U+2029), when it is not UTF-8, or when it starts with a space (a symbol line
+starts with two, so such a path would pass for one). The same characters in a name, signature or
+doc become a space. That includes the zero-width joiner and non-joiner (U+200D, U+200C), so a
+name that uses them (an emoji sequence, a word in Persian or an Indic script) shows split at that
+point: `a` + U+200D + `b` reads as `a b`. The `--json` form keeps the original (see below).
 
 ## How it ranks
 
@@ -153,3 +161,10 @@ pkg/a.go
 | `name` | The display name, or the last name in `id` when the indexer gave none. |
 | `refs` | References to the symbol from other files. |
 | `score` | The symbol's share of its file's rank. |
+
+`path`, `name` and `id` are the strings as the store holds them: unlike the text form, which quotes
+a path and blanks the characters in a name, the JSON does not neutralise them. It is JSON-escaped
+as `encoding/json` does (control characters and U+2028, U+2029 become `\u` escapes, and invalid
+UTF-8 becomes U+FFFD), but a bidi override or a zero-width character stays in the string. A reader
+that shows these fields in a terminal has to neutralise them itself. `kind` and `detail` are the
+text form's, with those characters already blanked.

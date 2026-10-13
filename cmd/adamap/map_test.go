@@ -84,6 +84,23 @@ func TestMapSaysWhenForMatchesNothing(t *testing.T) {
 	}
 }
 
+func TestMapPrintsAtMostOneNote(t *testing.T) {
+	// More than one note could apply; the first one that does is the only one printed (docs/map.md).
+	repo := indexedRepo(t)
+	code, out, errOut := runMapCmd("--repo", repo, "--for", "Zebra", "--tokens", "8")
+	if code != 0 || out != "" || strings.Count(errOut, "\n") != 1 || !strings.Contains(errOut, "nothing matches") {
+		t.Errorf("--for matching nothing and nothing fitting: exit %d, stdout %q, stderr %q, want the one note about --for", code, out, errOut)
+	}
+	empty := t.TempDir()
+	if _, err := store.Write(empty, store.Header{Adamap: Version, Commit: testCommit, Created: time.Now().UTC()}, &model.Index{}); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut = runMapCmd("--repo", empty, "--for", "Zebra")
+	if code != 0 || out != "" || strings.Count(errOut, "\n") != 1 || !strings.Contains(errOut, "nothing matches") {
+		t.Errorf("--for on a store without symbols: exit %d, stdout %q, stderr %q, want the one note about --for", code, out, errOut)
+	}
+}
+
 func TestMapJSONHasTheSameContent(t *testing.T) {
 	repo := indexedRepo(t)
 	code, out, errOut := runMapCmd("--repo", repo, "--json", "--for", "impl")
@@ -117,6 +134,34 @@ func TestMapJSONHasTheSameContent(t *testing.T) {
 	add := got.Files[0].Symbols[0]
 	if got.Files[0].Path != "pkg/a.go" || add.Name != "Add" || add.Refs != 1 || add.ID == "" || add.Score <= 0 || got.Files[0].Rank <= 0 {
 		t.Errorf("first file %+v", got.Files[0])
+	}
+}
+
+func TestMapJSONKeepsPathNameAndIDRaw(t *testing.T) {
+	// The text form quotes a path and blanks a name; the JSON holds both as stored (docs/map.md),
+	// except that encoding/json escapes ESC and the like. Kind and detail are the text form's.
+	out := mustRun(t, "map", "--repo", hostileRepo(t), "--json")
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Errorf("JSON holds a raw control character: %q", out)
+	}
+	var got mapJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not the map's JSON: %v\n%s", err, out)
+	}
+	if len(got.Files) != 1 || got.Files[0].Path != "d\u202e/f.go" {
+		t.Fatalf("files %+v, want d\\u202e/f.go raw", got.Files)
+	}
+	var found bool
+	for _, s := range got.Files[0].Symbols {
+		if s.ID == "s m p v esc()." {
+			found = true
+			if s.Name != "ev\x1b[2Jil" || s.Kind != "fun ction" || s.Detail != "ev [2Jil" {
+				t.Errorf("symbol %+v, want the raw name and the blanked kind and detail", s)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no symbol with the stored ID in %+v", got.Files[0].Symbols)
 	}
 }
 

@@ -128,6 +128,11 @@ repository); a fail-closed push guard (#8).
   scopes with strictly growing ends (skip pointers) instead of walking every nesting level.
   `impact` given an absolute path outside the repository that is no symbol either answers with the
   path error. `Safe` relies on `strconv.IsPrint` alone, which already refuses format characters.
+- 2026-10-13 (#10): `store.json.gz` is written as it is encoded, one document and one symbol at a
+  time (`internal/store/encode.go`), with encoding/json's field order and omitempty rules, so the
+  bytes are what `json.Encoder` gives for the whole index with `SetEscapeHTML(false)`. The format
+  is unchanged: `<`, `>` and `&` are no longer escaped, which any JSON reader decodes the same.
+  Issue #10's text was taken from the task brief, as `gh` had no valid credentials in this session.
 - 2026-10-13 (#67, the pilot's preparation): a run that meets the plan's usage limit, or a
   rate-limit or overload error the CLI stopped retrying, stops the execution with no record and
   no retry. It leaves `<run id>.limited` instead of the `.started` marker, so resume runs it again.

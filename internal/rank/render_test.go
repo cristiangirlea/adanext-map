@@ -93,6 +93,38 @@ func TestTextIsPathsThenIndentedSymbols(t *testing.T) {
 	}
 }
 
+func TestTextQuotesAPathThatLooksLikeASymbolLine(t *testing.T) {
+	// A symbol line starts with two spaces: a path that does would read as one under the wrong file.
+	files := []File{{Path: "  func  Fake\n.go", Symbols: []Symbol{{Name: "X", Kind: "Variable"}}},
+		{Path: "  fake.go", Symbols: []Symbol{{Name: "Y", Kind: "Variable"}}},
+		{Path: " one.go", Symbols: []Symbol{{Name: "Z", Kind: "Variable"}}}}
+	want := "\"  func  Fake\\n.go\"\n  var  X\n\"  fake.go\"\n  var  Y\n\" one.go\"\n  var  Z\n"
+	if got := Text(files); got != want {
+		t.Errorf("Text:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestTextQuotesAPathThatIsNotUTF8(t *testing.T) {
+	// A lone 0xff is no control or format character, only invalid UTF-8: it must not reach the terminal raw.
+	files := []File{{Path: "a\xffb.go", Symbols: []Symbol{{Name: "X", Kind: "Variable"}}}}
+	want := "\"a\\xffb.go\"\n  var  X\n"
+	if got := Text(files); got != want {
+		t.Errorf("Text %q, want %q", got, want)
+	}
+}
+
+func TestTextQuotesAPathWithALineOrParagraphSeparator(t *testing.T) {
+	// U+2028 and U+2029 break a line on some terminals and viewers, though they are not Cc or Cf.
+	files := []File{
+		{Path: "a\u2028b.go", Symbols: []Symbol{{Name: "X", Kind: "Variable"}}},
+		{Path: "c\u2029d.go", Symbols: []Symbol{{Name: "Y\u2028Z", Kind: "Variable"}}},
+	}
+	want := "\"a\\u2028b.go\"\n  var  X\n\"c\\u2029d.go\"\n  var  Y Z\n"
+	if got := Text(files); got != want {
+		t.Errorf("Text %q, want %q", got, want)
+	}
+}
+
 func TestFitNeverExceedsTheBudget(t *testing.T) {
 	files := Rank(synthetic(120, 8, 30), nil).Files
 	all, prev := Text(files), 0
@@ -163,12 +195,61 @@ func TestFitChoosesBySymbolScoreAndKeepsFileOrder(t *testing.T) {
 	}
 }
 
+func TestFitStopsAtTheFirstSymbolThatDoesNotFit(t *testing.T) {
+	long := strings.Repeat("L", 40)
+	files := []File{{Path: "a.go", Symbols: []Symbol{
+		{Name: "A", Kind: "Variable", Score: 0.5},
+		{Name: long, Kind: "Variable", Score: 0.3},
+		{Name: "C", Kind: "Variable", Score: 0.1},
+	}}}
+	// "a.go\n  var  A\n" is 14 bytes; the long symbol's line takes 49 more, so it misses a budget of
+	// 8 tokens (32 bytes). C's line is 9 bytes and would still fit, but it scores lower than the
+	// symbol that missed: filling stops there, as docs/map.md says, and C is not taken.
+	if got := Text(Fit(files, 8)); got != "a.go\n  var  A\n" {
+		t.Errorf("budget 8: %q, want only A", got)
+	}
+}
+
 func TestFitIsDeterministic(t *testing.T) {
 	idx := synthetic(300, 8, 40)
 	a := Text(Fit(Rank(idx, nil).Files, 2000))
 	b := Text(Fit(Rank(idx, nil).Files, 2000))
 	if a != b || a == "" {
 		t.Fatalf("two maps differ, or are empty:\n%s\n---\n%s", a, b)
+	}
+}
+
+func TestDetailLooksForTheNameInTheFirst480BytesOfASignature(t *testing.T) {
+	// Detail cuts a signature at 4*maxDetail = 480 bytes before it drops keywords. A name that ends
+	// at byte 480 is found and the keywords before it dropped; one byte further and it is not.
+	if 4*maxDetail != 480 {
+		t.Fatalf("maxDetail is %d: the test is written for a cut at 480 bytes", maxDetail)
+	}
+	in := strings.Repeat("a ", 238) + "Name" // Name ends at byte 480
+	if got := Detail(Symbol{Name: "Name", Signature: in}); got != "Name" {
+		t.Errorf("name ending at byte 480: Detail = %q, want %q", got, "Name")
+	}
+	out := strings.Repeat("a ", 239) + "Name" // Name would end at byte 482
+	got := Detail(Symbol{Name: "Name", Signature: out})
+	if !strings.HasPrefix(got, "Name a a a ") || len(got) != maxDetail || !strings.HasSuffix(got, "...") {
+		t.Errorf("name past byte 480: Detail = %q, want the name put before the cut signature, clipped to %d bytes", got, maxDetail)
+	}
+}
+
+func TestFormatCharactersInANameDocOrKindBecomeASpace(t *testing.T) {
+	// U+202E reverses what follows it on a terminal, U+200B takes no room, U+2028 breaks the line.
+	files := []File{{Path: "a.go", Symbols: []Symbol{
+		{Name: "Ru\u202en", Kind: "Function"},
+		{Name: "Hub", Doc: "joins\u200bthe\u2028spokes"},
+		{Name: "K", Kind: "Fancy\u202eKind"},
+	}}}
+	text := Text(files)
+	if strings.ContainsAny(text, "\u202e\u200b\u2028") {
+		t.Errorf("format characters reach the text: %q", text)
+	}
+	want := "a.go\n  func  Ru n\n  sym  Hub  // joins the spokes\n  fancy kind  K\n"
+	if text != want {
+		t.Errorf("text %q, want %q", text, want)
 	}
 }
 
