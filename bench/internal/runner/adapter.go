@@ -328,8 +328,8 @@ func limitCategory(raw json.RawMessage) string {
 
 // limitWords are the phrases of a usage limit, a rate limit or an overload in an error's text:
 // Claude Code's own ("Claude AI usage limit reached|<reset>", "You've hit your session limit"),
-// and the API's 429 and 529 as it relays them.
-var limitWords = regexp.MustCompile(`(?i)\b(usage|session|weekly|rate)[ _-]?limit|\bhit your (\w+ )?limit|overloaded|\b(429|529)\b`)
+// and the API's 429 and 529 as it relays them ("API Error: 429", "status 529"), never a bare number.
+var limitWords = regexp.MustCompile(`(?i)\b(usage|session|weekly|rate)[ _-]?limit|\bhit your (\w+ )?limit|overloaded|\b(error|status|code)\W{1,3}(429|529)\b`)
 
 // limitText is the first line of an error text that names a limit, trimmed; "" when it names none.
 // Only error texts are read: a successful answer may well talk about rate limits.

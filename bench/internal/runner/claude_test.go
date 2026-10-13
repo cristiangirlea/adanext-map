@@ -191,6 +191,9 @@ func TestClaudeParseNamesThePlansLimit(t *testing.T) {
 		{"retried, got through, then timed out", `{"type":"system","subtype":"api_retry","error":"overloaded","attempt":1,"max_retries":10,"error_status":529}` + "\n" +
 			`{"type":"assistant","message":{"content":[{"type":"text","text":"Looking."}]}}`, false},
 		{"answer mentions a rate limit", `{"type":"result","subtype":"success","is_error":false,"result":"The client retries on HTTP 429 and on a rate limit; it handles overloaded servers."}`, false},
+		{"status 429", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"request failed with status 429"}`, true},
+		{"a process id 529", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"(node:529) Warning: a deprecated option"}`, false},
+		{"a count of 429", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"429 tests failed"}`, false},
 		{"max turns", `{"type":"result","subtype":"error_max_turns","is_error":true,"result":""}`, false},
 		{"another error", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Tool permission denied in 4290 ms"}`, false},
 		{"no result at all", `{"type":"assistant","message":{"content":[{"type":"text","text":"working on the rate limit code"}]}}`, false},
