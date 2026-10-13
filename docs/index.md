@@ -50,6 +50,10 @@ For any other language, run its SCIP indexer yourself and pass the output with `
 An indexer builds the project, and building runs the project's code: `rust-analyzer` runs build
 scripts and procedural macros. Index only repositories whose code you would build.
 
+The indexers may download the project's dependencies from the network through `cargo` and the Go
+module proxy, so `adamap index` can use the network even though adamap itself does not. Using
+`--scip` with an index built elsewhere avoids both the dependency downloads and indexer invocations.
+
 ## What is checked
 
 A SCIP index is untrusted input. adamap refuses, with an error naming the document and occurrence:
