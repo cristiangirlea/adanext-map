@@ -104,6 +104,18 @@ func TestTextQuotesAPathThatLooksLikeASymbolLine(t *testing.T) {
 	}
 }
 
+func TestTextQuotesAPathWithALineOrParagraphSeparator(t *testing.T) {
+	// U+2028 and U+2029 break a line on some terminals and viewers, though they are not Cc or Cf.
+	files := []File{
+		{Path: "a\u2028b.go", Symbols: []Symbol{{Name: "X", Kind: "Variable"}}},
+		{Path: "c\u2029d.go", Symbols: []Symbol{{Name: "Y\u2028Z", Kind: "Variable"}}},
+	}
+	want := "\"a\\u2028b.go\"\n  var  X\n\"c\\u2029d.go\"\n  var  Y Z\n"
+	if got := Text(files); got != want {
+		t.Errorf("Text %q, want %q", got, want)
+	}
+}
+
 func TestFitNeverExceedsTheBudget(t *testing.T) {
 	files := Rank(synthetic(120, 8, 30), nil).Files
 	all, prev := Text(files), 0
