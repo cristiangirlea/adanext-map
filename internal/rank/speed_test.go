@@ -1,6 +1,7 @@
 package rank
 
 import (
+	"runtime"
 	"testing"
 	"time"
 )
@@ -18,7 +19,13 @@ func TestRankAndFitALargeIndexInUnderASecond(t *testing.T) {
 	if text == "" || Tokens(text) > 1024 {
 		t.Fatalf("the map takes %d tokens: %q", Tokens(text), text)
 	}
-	if took > time.Second && !raceEnabled {
-		t.Errorf("took %v, want under 1s", took)
+	// A guard against a slowdown by orders of magnitude, not a benchmark: hosted Windows runners
+	// are slow and noisy, so they get ten times as long. Under the race detector it is not checked.
+	limit := time.Second
+	if runtime.GOOS == "windows" {
+		limit *= 10
+	}
+	if took > limit && !raceEnabled {
+		t.Errorf("took %v, want under %v", took, limit)
 	}
 }

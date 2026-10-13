@@ -124,9 +124,11 @@ The store comes from an indexer's output of the repository, so its names and pat
 terminal escapes. Text content escapes them as the CLI does: a path, name or kind holding a
 control or format character is printed in Go quotes, and the map blanks such characters in
 details. Every line of a result or an error is also checked, and quoted when it still holds one.
-Structured content is JSON and keeps the raw values, as `--json` does, except the error fields of
-`status` (`store_error`, `newer_store_error`, `git_error`): they carry text a repository can shape
-(git echoes its ref names, a store error names a path), so they are quoted like the text output.
+Structured content is JSON and keeps the raw values, as `--json` does (which also writes DEL and the C1
+controls as unicode escapes; the structured content is the SDK's encoding and does not), except the
+error fields of `status` (`store_error`, `newer_store_error`, `git_error`): they carry text a
+repository can shape (git echoes its ref names, a store error names a path), so they are quoted like
+the text output.
 
 ## adamap install
 

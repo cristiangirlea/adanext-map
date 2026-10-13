@@ -127,9 +127,7 @@ func runMap(args []string, stdout, stderr io.Writer) int {
 		}
 		out.Files = append(out.Files, fj)
 	}
-	enc := json.NewEncoder(stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(out); err != nil {
+	if err := writeJSON(stdout, out, func(e *json.Encoder) { e.SetIndent("", "  ") }); err != nil {
 		return fail(err)
 	}
 	return 0
