@@ -58,7 +58,9 @@ A path is printed quoted, so each line stays one line and shows what it holds, w
 control or format character (bidi overrides, zero-width characters) or a line or paragraph
 separator (U+2028, U+2029), when it is not UTF-8, or when it starts with a space (a symbol line
 starts with two, so such a path would pass for one). The same characters in a name, signature or
-doc become a space.
+doc become a space. That includes the zero-width joiner and non-joiner (U+200D, U+200C), so a
+name that uses them (an emoji sequence, a word in Persian or an Indic script) shows split at that
+point: `a` + U+200D + `b` reads as `a b`. The `--json` form keeps the original (see below).
 
 ## How it ranks
 
