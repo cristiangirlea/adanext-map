@@ -163,6 +163,7 @@ func (v *validator) conditions(m *Manifest) {
 			}
 			v.noKeysInArgs(p+".mcp.args", c.MCP.Args)
 			v.noKeys(p+".mcp.env", c.MCP.Env)
+			v.noSettingsHome(p+".mcp.env", c.MCP.Env)
 		}
 		if c.Index != nil {
 			if len(c.Index.Command) == 0 {
@@ -178,6 +179,7 @@ func (v *validator) conditions(m *Manifest) {
 		v.noKeysInArgs(p+".probe", c.Probe)
 		v.noKeys(p+".settings", c.Settings)
 		v.noKeys(p+".env", c.Env)
+		v.noSettingsHome(p+".env", c.Env)
 	}
 	if m.Scale == "pilot" || len(m.Conditions) == 0 {
 		for _, k := range ConditionKinds {
@@ -214,6 +216,7 @@ func (v *validator) backends(m *Manifest) {
 		}
 		v.noKeys(p+".settings", b.Settings)
 		v.noKeys(p+".env", b.Env)
+		v.noSettingsHome(p+".env", b.Env)
 	}
 }
 
@@ -512,6 +515,23 @@ func (v *validator) noKeys(path string, kv map[string]string) {
 		if json.Unmarshal([]byte(kv[k]), &x) == nil {
 			v.noKeysIn(path+"."+k, x)
 		}
+	}
+}
+
+// settingsHomeNames are the variables that move where a CLI looks for its user settings. Authorize
+// scans the runner's own, so an env that moved them would send the CLI to files it never read.
+var settingsHomeNames = []string{"CLAUDE_CONFIG_DIR", "HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA"}
+
+func (v *validator) noSettingsHome(path string, kv map[string]string) {
+	names := make([]string, 0, len(kv))
+	for k := range kv {
+		if slices.Contains(settingsHomeNames, strings.ToUpper(k)) {
+			names = append(names, k)
+		}
+	}
+	sort.Strings(names)
+	for _, k := range names {
+		v.add(path+"."+k, "changes where Claude Code reads its settings: the user settings the run is authorized on must be the ones that were scanned")
 	}
 }
 

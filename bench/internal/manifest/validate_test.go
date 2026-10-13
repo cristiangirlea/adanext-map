@@ -161,6 +161,37 @@ func TestValidateRefusesAnyAPIKeyConfiguration(t *testing.T) {
 	}
 }
 
+// The claude process gets the backend's and the condition's env, but Authorize reads the user
+// settings from the runner's own: an env that moves the settings' home would let a manifest point
+// the CLI at files the scan never read.
+func TestValidateRefusesAnEnvThatMovesTheSettingsHome(t *testing.T) {
+	for _, name := range []string{"CLAUDE_CONFIG_DIR", "HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "claude_config_dir"} {
+		for _, site := range []struct {
+			where  string
+			mutate func(m *manifest.Manifest, env map[string]string)
+		}{
+			{"backends[0].env.", func(m *manifest.Manifest, env map[string]string) { m.Backends[0].Env = env }},
+			{"conditions[1].env.", func(m *manifest.Manifest, env map[string]string) { m.Conditions[1].Env = env }},
+			{"conditions[4].mcp.env.", func(m *manifest.Manifest, env map[string]string) { m.Conditions[4].MCP.Env = env }},
+		} {
+			m := benchtest.Pilot()
+			site.mutate(m, map[string]string{name: "/elsewhere"})
+			found := false
+			for _, i := range m.Validate() {
+				if i.Path == site.where+name {
+					found = true
+					if !strings.Contains(i.Msg, "where Claude Code reads its settings") || strings.Contains(i.Msg, "elsewhere") {
+						t.Errorf("%s%s: message %q", site.where, name, i.Msg)
+					}
+				}
+			}
+			if !found {
+				t.Errorf("%s%s: not refused", site.where, name)
+			}
+		}
+	}
+}
+
 func TestPlannedRunsCountsEveryCell(t *testing.T) {
 	m := benchtest.Pilot()
 	if got := m.PlannedRuns(); got != 10*5*3 {
