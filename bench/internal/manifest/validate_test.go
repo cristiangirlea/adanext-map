@@ -1,6 +1,7 @@
 package manifest_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -89,6 +90,9 @@ func TestValidateRejects(t *testing.T) {
 		{"an unknown cache treatment", func(m *manifest.Manifest) { m.Cache = "hot" }, "cache", "unknown", false},
 		{"no timeout", func(m *manifest.Manifest) { m.Execution.TimeoutSeconds = 0 }, "execution.timeout_seconds", "at least 1", false},
 		{"no attempts", func(m *manifest.Manifest) { m.Execution.MaxAttempts = 0 }, "execution.max_attempts", "at least 1", false},
+		{"a zero plan reserve", func(m *manifest.Manifest) { m.Execution.PlanReserve = ptr(0.0) }, "execution.plan_reserve", "above 0 and at most 1", false},
+		{"a negative plan reserve", func(m *manifest.Manifest) { m.Execution.PlanReserve = ptr(-0.5) }, "execution.plan_reserve", "above 0 and at most 1", false},
+		{"a plan reserve above 1", func(m *manifest.Manifest) { m.Execution.PlanReserve = ptr(1.2) }, "execution.plan_reserve", "above 0 and at most 1", false},
 		{"a token threshold below the issue's", func(m *manifest.Manifest) { m.Adoption.MinTokenReduction = 0.05 }, "adoption.min_token_reduction", "at least 0.10", false},
 		{"an adoption candidate that is not adamap", func(m *manifest.Manifest) { m.Adoption.Candidate = "serena" }, "adoption.candidate", `"adamap" condition`, false},
 		{"an adoption baseline that is not none", func(m *manifest.Manifest) { m.Adoption.Baseline = "lsp" }, "adoption.baseline", `"none" condition`, false},
@@ -352,5 +356,31 @@ func TestNoCommittedBenchFileNamesAMachinePath(t *testing.T) {
 				t.Errorf("%s names a machine path (%s)", f, n)
 			}
 		}
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// plan_reserve is the share of a plan window's use at which the runner stops before the next run:
+// 0.8 when absent, and any fraction above 0 up to 1 when set.
+func TestPlanReserve(t *testing.T) {
+	m := benchtest.Pilot()
+	if got := m.Execution.Reserve(); got != 0.8 {
+		t.Fatalf("default reserve %v", got)
+	}
+	for _, v := range []float64{0.5, 1} {
+		m.Execution.PlanReserve = ptr(v)
+		if got := m.Execution.Reserve(); got != v {
+			t.Fatalf("reserve %v, set %v", got, v)
+		}
+		for _, i := range m.Validate() {
+			if strings.HasPrefix(i.Path, "execution.plan_reserve") {
+				t.Fatalf("%v refused: %v", v, i)
+			}
+		}
+	}
+	var e manifest.Execution
+	if err := json.Unmarshal([]byte(`{"plan_reserve": 0.6}`), &e); err != nil || e.Reserve() != 0.6 {
+		t.Fatalf("decoded %v (%v)", e.PlanReserve, err)
 	}
 }

@@ -70,6 +70,9 @@ type Record struct {
 	// limit (each time with no record, its work directory gone); the attempts are the last start's.
 	LimitRestarts int       `json:"limit_restarts,omitempty"`
 	Attempts      []Attempt `json:"attempts"`
+	// PlanMeter is the last reading of each plan window (five_hour, seven_day, ...) that the CLI's
+	// meter (Claude Code's rate_limit_event) gave during the run's attempts.
+	PlanMeter map[string]PlanWindow `json:"plan_meter,omitempty"`
 	// Answer is the final attempt's final answer, as the adapter read it.
 	Answer       string        `json:"answer,omitempty"`
 	AnswerSHA256 string        `json:"answer_sha256,omitempty"`
@@ -104,6 +107,13 @@ type Index struct {
 // Refresh is one rebuild of the index after a source edit.
 type Refresh struct {
 	MS int64 `json:"ms"`
+}
+
+// PlanWindow is one reading of a plan window: the share of it used, and when it resets (Unix
+// seconds; 0 when the meter did not say).
+type PlanWindow struct {
+	Utilization float64 `json:"utilization"`
+	ResetsAt    int64   `json:"resets_at,omitempty"`
 }
 
 // Attempt is one try at the run. Failed attempts stay in the record and in every total.

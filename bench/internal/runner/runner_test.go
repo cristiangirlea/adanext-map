@@ -130,6 +130,32 @@ func TestMain(m *testing.M) {
 		os.Stdout.WriteString(`{"type":"system","subtype":"api_retry","error":"overloaded","session_id":"rh"}` + "\n")
 		time.Sleep(20 * time.Second)
 		os.Exit(0)
+	case "agent-overage": // a CLI whose plan's meter shows overage in use, then works on
+		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"o","apiKeySource":"none"}` + "\n")
+		os.Stdout.WriteString(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","isUsingOverage":true},"session_id":"o"}` + "\n")
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
+	case "agent-meter": // a worker whose plan's meter rises by BENCH_TEST_STEP with each session
+		n := 1
+		count := os.Getenv("BENCH_TEST_COUNT")
+		if data, err := os.ReadFile(count); err == nil {
+			n, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+			n++
+		}
+		os.WriteFile(count, []byte(strconv.Itoa(n)), 0o644)
+		step, _ := strconv.ParseFloat(os.Getenv("BENCH_TEST_STEP"), 64)
+		resets := os.Getenv("BENCH_TEST_RESETS")
+		u := strconv.FormatFloat(step*float64(n), 'f', -1, 64)
+		os.Stdout.WriteString(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":` + u +
+			`,"resetsAt":` + resets + `,"isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":` + u + `,"resetsAt":` + resets +
+			`},"seven_day":{"utilization":0.1,"resetsAt":` + resets + `}}}}` + "\n")
+		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
+		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
+	case "agent-rejected": // a CLI whose plan refused the request, then waits
+		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"r","apiKeySource":"none"}` + "\n")
+		os.Stdout.WriteString(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1792317600,"isUsingOverage":false},"session_id":"r"}` + "\n")
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
 	case "agent-hang": // a worker that says it started, then works until stopped
 		os.WriteFile(os.Getenv("BENCH_TEST_WHERE"), []byte("started\n"), 0o644)
 		time.Sleep(20 * time.Second)
@@ -1109,5 +1135,170 @@ func TestARestartAfterALimitIsCountedInTheRecord(t *testing.T) {
 		if r.LimitRestarts != want {
 			t.Errorf("%s: limit_restarts %d, want %d", r.RunID, r.LimitRestarts, want)
 		}
+	}
+}
+
+// A session whose plan's meter shows overage in use is spending beyond the plan: the CLI is killed,
+// no record is written, the execution stops, and the .started marker stays, so resume does not run
+// it again on its own.
+func TestOverageStopsTheExecutionAndKeepsTheMarker(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-overage"}
+	start := time.Now()
+	err := runner.Execute(context.Background(), o)
+	if !errors.Is(err, runner.ErrOverage) || errors.Is(err, runner.ErrPlanLimit) || !strings.Contains(err.Error(), "overage") {
+		t.Fatalf("err %v", err)
+	}
+	if d := time.Since(start); d > 15*time.Second {
+		t.Fatalf("the CLI was not stopped (%s)", d)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	started, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+	if len(recs) != 0 || len(started) != 1 || len(limited) != 0 {
+		t.Fatalf("%d records, started %v, limited %v", len(recs), started, limited)
+	}
+	if text, _ := os.ReadFile(started[0]); !strings.Contains(string(text), "overage") {
+		t.Fatalf("the marker does not say why: %q", text)
+	}
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent"}
+	if err := runner.Execute(context.Background(), o); err == nil || !strings.Contains(err.Error(), ".started") {
+		t.Fatalf("resume: err %v", err)
+	}
+	if recs, _ := record.ReadDir(o.RecordsDir); len(recs) != 7 {
+		t.Fatalf("resume: %d records", len(recs))
+	}
+}
+
+// A rate_limit_event whose status is "rejected" is the plan refusing the request: the plan's
+// limit. The CLI is stopped, no record is written, the run leaves a .limited note and no marker,
+// and resume runs it again.
+func TestARejectedMeterIsThePlansLimit(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-rejected"}
+	start := time.Now()
+	err := runner.Execute(context.Background(), o)
+	if !errors.Is(err, runner.ErrPlanLimit) || !strings.Contains(err.Error(), "rejected") || !strings.Contains(err.Error(), "again") {
+		t.Fatalf("err %v", err)
+	}
+	if d := time.Since(start); d > 15*time.Second {
+		t.Fatalf("the CLI was not stopped (%s)", d)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	started, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+	if len(recs) != 0 || len(started) != 0 || len(limited) != 1 {
+		t.Fatalf("%d records, started %v, limited %v", len(recs), started, limited)
+	}
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent"}
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if recs, _ := record.ReadDir(o.RecordsDir); len(recs) != 8 {
+		t.Fatalf("resume: %d records", len(recs))
+	}
+}
+
+// meterEnv is the fake agent whose meter's five_hour window rises by step with each session and
+// resets at resets (Unix seconds).
+func meterEnv(t *testing.T, step float64, resets int64) []string {
+	return []string{"BENCH_TEST_HELPER=agent-meter", "BENCH_TEST_COUNT=" + filepath.Join(t.TempDir(), "count"),
+		"BENCH_TEST_STEP=" + strconv.FormatFloat(step, 'f', -1, 64), "BENCH_TEST_RESETS=" + strconv.FormatInt(resets, 10)}
+}
+
+// Each record keeps the last reading of every plan window its sessions' meter gave.
+func TestARecordKeepsThePlansMeter(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	resets := time.Now().Add(time.Hour).Unix()
+	o.Fake.Env = meterEnv(t, 0.01, resets)
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatalf("%v\nlog:\n%s", err, o.Log)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	if len(recs) != 8 {
+		t.Fatalf("%d records", len(recs))
+	}
+	seen := map[float64]bool{}
+	for _, r := range recs {
+		five, week := r.PlanMeter["five_hour"], r.PlanMeter["seven_day"]
+		if len(r.PlanMeter) != 2 || five.Utilization <= 0 || five.Utilization > 0.08+1e-9 || five.ResetsAt != resets || week.Utilization != 0.1 || week.ResetsAt != resets {
+			t.Fatalf("%s: meter %+v", r.RunID, r.PlanMeter)
+		}
+		seen[five.Utilization] = true
+	}
+	if len(seen) != 8 {
+		t.Fatalf("the records do not keep their own run's reading: %v", seen)
+	}
+}
+
+// Before each run the runner reads the plan's meter as the execution's runs left it (the records
+// included): a window at or above the plan reserve that has not reset yet stops the execution
+// cleanly, with no record and no marker for the run it did not start. Resume stops there again
+// until the window resets, then goes on.
+func TestThePlanReserveStopsBeforeTheNextRun(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	resets := time.Now().Add(time.Hour).Unix()
+	o.Fake.Env = meterEnv(t, 0.3, resets)
+	count := strings.TrimPrefix(o.Fake.Env[1], "BENCH_TEST_COUNT=")
+	err := runner.Execute(context.Background(), o)
+	local := time.Unix(resets, 0).Local().Format("2006-01-02 15:04")
+	if !errors.Is(err, runner.ErrPlanReserve) || !strings.Contains(err.Error(), "five_hour") || !strings.Contains(err.Error(), "90%") ||
+		!strings.Contains(err.Error(), "80%") || !strings.Contains(err.Error(), local) {
+		t.Fatalf("err %v", err)
+	}
+	stopped := func(when string, want int) {
+		t.Helper()
+		recs, _ := record.ReadDir(o.RecordsDir)
+		started, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+		limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
+		if len(recs) != want || len(started) != 0 || len(limited) != 0 {
+			t.Fatalf("%s: %d records, started %v, limited %v", when, len(recs), started, limited)
+		}
+	}
+	// 0.3, 0.6, 0.9: the third run's reading stops the fourth.
+	stopped("first", 3)
+	if err := runner.Execute(context.Background(), o); !errors.Is(err, runner.ErrPlanReserve) {
+		t.Fatalf("resume before the reset: err %v", err)
+	}
+	stopped("resume before the reset", 3)
+	if n, _ := os.ReadFile(count); string(n) != "3" {
+		t.Fatalf("a session was started before the reset: count %q", n)
+	}
+	o.Now = func() time.Time { return time.Unix(resets+60, 0) }
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatalf("resume after the reset: %v", err)
+	}
+	stopped("resume after the reset", 8)
+}
+
+// A reading at the reserve whose window has reset already does not stop anything; the manifest's
+// own reserve is the one in force.
+func TestThePlanReserveIgnoresAResetWindowAndFollowsTheManifest(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Fake.Env = meterEnv(t, 0.3, time.Now().Add(-time.Minute).Unix())
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatalf("a reset window: %v", err)
+	}
+	m = smoke(t, pre, fix)
+	half := 0.5
+	m.Execution.PlanReserve = &half
+	o = options(t, m, src, 8)
+	o.Fake.Env = meterEnv(t, 0.2, time.Now().Add(time.Hour).Unix())
+	err := runner.Execute(context.Background(), o)
+	if !errors.Is(err, runner.ErrPlanReserve) || !strings.Contains(err.Error(), "60%") || !strings.Contains(err.Error(), "50%") {
+		t.Fatalf("reserve 0.5: err %v", err)
+	}
+	if recs, _ := record.ReadDir(o.RecordsDir); len(recs) != 3 {
+		t.Fatalf("reserve 0.5: %d records", len(recs))
 	}
 }

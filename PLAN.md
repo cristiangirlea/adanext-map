@@ -152,3 +152,15 @@ repository); a fail-closed push guard (#8).
   from Anthropic's `gopls-lsp` plugin, enabled through each condition's `enabledPlugins` setting.
   The owner installs that plugin and adamap at the pinned commit before the wiring smoke.
   `max_latency_ratio` stays 1.25.
+- 2026-10-13 (#70, the plan's meter): Claude Code 2.1.284 writes its hooks' `system` events and a
+  `rate_limit_event` before its init event, so the init watch lets `system` events of any subtype
+  and `rate_limit_event` through before the init; anything else before it is still refused, and
+  only apiKeySource `"none"` goes on. The `rate_limit_event` is read as the plan's meter: overage
+  in use (`isUsingOverage`, or any other true or in-use field named for overage) kills the CLI and
+  stops the execution with the `.started` marker kept, since that run may have spent; a
+  `"rejected"` status is the plan's limit and takes the `.limited` path. `execution.plan_reserve`
+  (0.8 when absent, set explicitly in `pilot-1.json`) stops the execution before a run when any
+  window is at or above it and resets later; the meter starts from the records already written,
+  so a resume before the reset starts nothing, and each record keeps its last reading per window
+  as `plan_meter`. A reading without `resetsAt` stops nothing, since it cannot be waited out.
+  Issue #70's text was taken from the task brief, as `gh` had no valid credentials in this session.

@@ -2,6 +2,10 @@ package runner_test
 
 import (
 	"encoding/json"
+	"errors"
+	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -245,5 +249,142 @@ func TestClaudeWatchGoesOnOnlyOnTheSubscriptionLogin(t *testing.T) {
 		if (got == nil) != c.ok {
 			t.Fatalf("%s: watch says %v", c.name, got)
 		}
+	}
+}
+
+// watchLines feeds lines to a fresh claude watch and returns the first error, with its line's index.
+func watchLines(t *testing.T, lines []string) (int, error) {
+	t.Helper()
+	inv, err := runner.Claude{}.Command(cell(benchtest.Pilot(), "none"))
+	if err != nil || inv.Watch == nil {
+		t.Fatalf("no watch (%v)", err)
+	}
+	for i, l := range lines {
+		if err := inv.Watch([]byte(l)); err != nil {
+			return i, err
+		}
+	}
+	return len(lines), nil
+}
+
+// fixtureLines is a saved real stream, one event per line.
+func fixtureLines(t *testing.T, name string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimRight(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n"), "\n")
+}
+
+// Claude Code 2.1.284 writes its hooks' events and a rate_limit_event before its init event (the
+// owner's wiring smoke stopped there). The watch accepts that stream up to its end and waits for
+// the init; a turn, a result or another event type before the init is still refused, and the init
+// still decides.
+func TestClaudeWatchAcceptsTheMeterAndHooksBeforeInit(t *testing.T) {
+	real := fixtureLines(t, "claude-2.1.284-start.jsonl")
+	if i, err := watchLines(t, real); err != nil {
+		t.Fatalf("the real stream is refused at line %d: %v", i+1, err)
+	}
+	cases := []struct {
+		name string
+		then []string
+		ok   bool
+	}{
+		{"then the subscription init and a turn", []string{`{"type":"system","subtype":"init","apiKeySource":"none"}`, `{"type":"assistant","message":{}}`}, true},
+		{"then an api key init", []string{`{"type":"system","subtype":"init","apiKeySource":"ANTHROPIC_API_KEY"}`}, false},
+		{"then an init without a source", []string{`{"type":"system","subtype":"init"}`}, false},
+		{"then a turn", []string{`{"type":"assistant","message":{}}`}, false},
+		{"then a user event", []string{`{"type":"user","message":{}}`}, false},
+		{"then a result", []string{`{"type":"result","subtype":"success","is_error":false,"result":"x"}`}, false},
+		{"then an unknown event", []string{`{"type":"stream_event"}`}, false},
+		{"then another system event and the init", []string{`{"type":"system","subtype":"status"}`, `{"type":"system","subtype":"init","apiKeySource":"none"}`}, true},
+	}
+	for _, c := range cases {
+		_, err := watchLines(t, append(slices.Clone(real), c.then...))
+		if (err == nil) != c.ok {
+			t.Errorf("%s: watch says %v", c.name, err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "apiKeySource") {
+			t.Errorf("%s: the refusal does not name the login: %v", c.name, err)
+		}
+	}
+}
+
+// Overage is billed beyond the plan: a rate_limit_event with any flag that says overage is in use
+// stops the session, before the init or after it. Overage that is only allowed, or off, does not.
+func TestClaudeWatchRefusesOverage(t *testing.T) {
+	real := fixtureLines(t, "claude-2.1.284-start.jsonl")
+	meter := real[len(real)-1]
+	if !strings.Contains(meter, `"isUsingOverage":false`) {
+		t.Fatalf("the fixture's meter line changed: %s", meter)
+	}
+	init := `{"type":"system","subtype":"init","apiKeySource":"none"}`
+	event := func(info string) string { return `{"type":"rate_limit_event","rate_limit_info":` + info + `}` }
+	cases := []struct {
+		name  string
+		lines []string
+		ok    bool
+	}{
+		{"the real stream, overage in use", append(slices.Clone(real[:len(real)-1]), strings.Replace(meter, `"isUsingOverage":false`, `"isUsingOverage":true`, 1)), false},
+		{"in use after the init", []string{init, `{"type":"assistant","message":{}}`, event(`{"status":"allowed","isUsingOverage":true}`)}, false},
+		{"an overage status in use", []string{init, event(`{"status":"allowed","overageStatus":"in_use"}`)}, false},
+		{"a nested overage flag", []string{init, event(`{"status":"allowed","overage":{"inUse":true}}`)}, false},
+		{"a window's overage flag", []string{init, event(`{"unifiedWindows":{"five_hour":{"utilization":0.2,"isUsingOverage":true}}}`)}, false},
+		{"overage allowed, not used", []string{init, event(`{"status":"allowed","isUsingOverage":false,"overageStatus":"allowed"}`)}, true},
+		{"overage disabled", []string{init, event(`{"status":"allowed","overageDisabled":true,"overageStatus":"rejected"}`)}, true},
+		{"a turn quoting the meter", []string{init, `{"type":"user","message":{"content":[{"type":"tool_result","content":"{\"type\":\"rate_limit_event\",\"isUsingOverage\":true}"}]}}`}, true},
+	}
+	for _, c := range cases {
+		_, err := watchLines(t, c.lines)
+		if (err == nil) != c.ok {
+			t.Errorf("%s: watch says %v", c.name, err)
+		}
+		if err != nil && (!errors.Is(err, runner.ErrOverage) || errors.Is(err, runner.ErrPlanLimit)) {
+			t.Errorf("%s: not an overage refusal: %v", c.name, err)
+		}
+	}
+}
+
+// A rejected meter is the plan's limit, not a refusal for billing; overage in use wins over it.
+func TestClaudeWatchTakesARejectedMeterForThePlansLimit(t *testing.T) {
+	init := `{"type":"system","subtype":"init","apiKeySource":"none"}`
+	rejected := `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"seven_day","resetsAt":1792317600}}`
+	for _, lines := range [][]string{{rejected}, {init, rejected}} {
+		if _, err := watchLines(t, lines); !errors.Is(err, runner.ErrPlanLimit) || errors.Is(err, runner.ErrOverage) || !strings.Contains(err.Error(), "seven_day") {
+			t.Errorf("%q: watch says %v", lines, err)
+		}
+	}
+	both := `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","isUsingOverage":true}}`
+	if _, err := watchLines(t, []string{init, both}); !errors.Is(err, runner.ErrOverage) || errors.Is(err, runner.ErrPlanLimit) {
+		t.Errorf("overage and rejected: watch says %v", err)
+	}
+	for _, status := range []string{"allowed", "allowed_warning"} {
+		if _, err := watchLines(t, []string{init, `{"type":"rate_limit_event","rate_limit_info":{"status":"` + status + `"}}`}); err != nil {
+			t.Errorf("%s: watch says %v", status, err)
+		}
+	}
+}
+
+// The parser keeps the last reading of each plan window the meter gave: the unified windows, and
+// the event's own window when it names one.
+func TestClaudeParseReadsThePlansMeter(t *testing.T) {
+	b := benchtest.Pilot().Backends[0]
+	real := fixtureLines(t, "claude-2.1.284-start.jsonl")
+	o := runner.Claude{}.Parse([]byte(strings.Join(real, "\n")), b)
+	want := map[string]record.PlanWindow{"five_hour": {Utilization: 0.16, ResetsAt: 1791899400}, "seven_day": {Utilization: 0.72, ResetsAt: 1792317600}}
+	if !maps.Equal(o.Meter, want) {
+		t.Fatalf("meter %+v", o.Meter)
+	}
+	later := `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.3,"resetsAt":1791899400}}`
+	weekly := `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"opus_weekly","utilization":0.5}}`
+	o = runner.Claude{}.Parse([]byte(strings.Join(append(real, later, weekly, "not json"), "\n")), b)
+	want["five_hour"] = record.PlanWindow{Utilization: 0.3, ResetsAt: 1791899400}
+	want["opus_weekly"] = record.PlanWindow{Utilization: 0.5}
+	if !maps.Equal(o.Meter, want) {
+		t.Fatalf("meter %+v", o.Meter)
+	}
+	if o := (runner.Claude{}).Parse([]byte(syntheticTranscript), b); o.Meter != nil {
+		t.Fatalf("a transcript without a meter: %+v", o.Meter)
 	}
 }

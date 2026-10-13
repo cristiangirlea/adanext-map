@@ -88,7 +88,8 @@
     "permission_mode": "acceptEdits",
     "tools": ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
     "context_edit": "none (Harness#116 owns provider context editing)",
-    "check_timeout_seconds": 900
+    "check_timeout_seconds": 900,
+    "plan_reserve": 0.8
   },
   "budget": {"max_runs": 240},
   "adoption": {

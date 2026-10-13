@@ -70,6 +70,10 @@ func TestThePilotManifestIsReadyAndHoldsTheApprovedCandidates(t *testing.T) {
 	if m.Scale != "pilot" || m.PlannedRuns() != 240 || m.Budget.MaxRuns != 240 {
 		t.Fatalf("scale %s, %d planned runs, budget %d", m.Scale, m.PlannedRuns(), m.Budget.MaxRuns)
 	}
+	// The plan reserve is set, not left to the default, so the pilot says what it runs under.
+	if r := m.Execution.PlanReserve; r == nil || *r != 0.8 {
+		t.Fatalf("plan_reserve %v", r)
+	}
 	ex, err := manifest.Load("../../manifest.example.json")
 	if err != nil {
 		t.Fatal(err)

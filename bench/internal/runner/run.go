@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -98,6 +99,10 @@ func Execute(ctx context.Context, o Options) error {
 		backends[b.ID] = b
 	}
 	env := scrub(o.Environ)
+	meter, err := lastMeter(o.RecordsDir)
+	if err != nil {
+		return err
+	}
 	var started []string
 	for _, run := range m.Plan() {
 		if err := ctx.Err(); err != nil {
@@ -113,6 +118,9 @@ func Execute(ctx context.Context, o Options) error {
 				run.ID, marker, filepath.Join(o.WorkDir, run.ID, "state"))
 			started = append(started, run.ID)
 			continue
+		}
+		if err := reserveReached(meter, m.Execution.Reserve(), o.Now()); err != nil {
+			return fmt.Errorf("run %s not started: %w; no record was written and nothing marked: run the same command again after that", run.ID, err)
 		}
 		limited := o.limitedNote(run.ID)
 		hits := 0
@@ -148,6 +156,7 @@ func Execute(ctx context.Context, o Options) error {
 		if err := record.Write(o.RecordsDir, r); err != nil {
 			return err
 		}
+		maps.Copy(meter, r.PlanMeter)
 		for _, f := range []string{marker, limited} {
 			if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
@@ -176,6 +185,39 @@ func Execute(ctx context.Context, o Options) error {
 // CLI stopped retrying: it says nothing about the task, so the run is not recorded and the
 // execution stops.
 var ErrPlanLimit = errors.New("the plan's usage limit (or a rate-limit or overload error)")
+
+// lastMeter is the plan's meter as the records in dir left it: each window's reading from the
+// latest run that has one, so a resumed execution starts from where the last one stopped.
+func lastMeter(dir string) (map[string]record.PlanWindow, error) {
+	meter := map[string]record.PlanWindow{}
+	recs, err := record.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	slices.SortStableFunc(recs, func(a, b record.Record) int { return strings.Compare(a.StartedAt, b.StartedAt) })
+	for _, r := range recs {
+		maps.Copy(meter, r.PlanMeter)
+	}
+	return meter, nil
+}
+
+// reserveReached says which plan window, if any, is at or above the reserve and resets after now.
+// A reading that does not say when its window resets cannot be waited out, so it stops nothing.
+func reserveReached(meter map[string]record.PlanWindow, reserve float64, now time.Time) error {
+	names := slices.Sorted(maps.Keys(meter))
+	for _, name := range names {
+		w := meter[name]
+		if w.Utilization >= reserve && w.ResetsAt > now.Unix() {
+			return fmt.Errorf("the plan's %s window is at %.0f%% of its use, at or above %w (%.0f%%), until it resets at %s",
+				name, w.Utilization*100, ErrPlanReserve, reserve*100, time.Unix(w.ResetsAt, 0).Local().Format("2006-01-02 15:04 MST"))
+		}
+	}
+	return nil
+}
+
+// ErrPlanReserve is a plan window whose use reached the manifest's plan reserve and has not reset:
+// the execution stops before its next run, with nothing to record or mark for it.
+var ErrPlanReserve = errors.New("the plan reserve")
 
 // limitedNote is the file that says a run met the plan's limit: <run id>.limited beside its record.
 // Unlike the .started marker it does not keep resume from running it again.
@@ -321,6 +363,12 @@ func (o *Options) one(ctx context.Context, c Cell, env []string, restarts int) (
 			return nil, fmt.Errorf("attempt %d stopped: %w", n, res.refused)
 		}
 		out := ad.Parse(res.stdout, c.Backend)
+		for name, w := range out.Meter {
+			if r.PlanMeter == nil {
+				r.PlanMeter = map[string]record.PlanWindow{}
+			}
+			r.PlanMeter[name] = w
+		}
 		limit := out.Limit
 		if limit == "" && (out.Err != "" || res.exit != 0) {
 			// A CLI that stopped at the limit before its result may say so only on stderr.

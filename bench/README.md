@@ -80,9 +80,30 @@ A limit is read from the CLI's own account only:
 - for an attempt with no result or an error result, an `api_retry` event or an assistant message
   whose `error` is `rate_limit`, `overloaded` or `billing_error`, unless a later turn got through,
   and for an error result only when its text is empty (text naming another error is that error);
-- the stderr of a failed attempt naming the same.
+- the stderr of a failed attempt naming the same;
+- a `rate_limit_event` whose `status` is `"rejected"` (the plan refused the request): the CLI is
+  stopped there, and the run takes this same path.
 
 Beyond that whole-answer message, a successful answer is never read for these words.
+
+The runner also reads the plan's meter: Claude Code's `rate_limit_event`, which gives the plan's
+`status`, `isUsingOverage`, and each window's `utilization` (the share used, 0 to 1) and `resetsAt`
+in `unifiedWindows` (`five_hour`, `seven_day`, any other) and for the event's own `rateLimitType`.
+
+- **Overage is refused.** Overage is usage billed beyond the plan. A meter that shows it in use
+  (`isUsingOverage: true`, or any other field named for overage that is true or reads as in use;
+  a flag named for overage being disabled does not count) stops the CLI at once, before the init
+  event or after it. No record is written, the execution stops, and the run keeps its `.started`
+  marker: it may have spent, so resume does not start it again. Turn overage off in the plan's
+  settings, then remove the marker to run it again.
+- **The plan reserve.** `execution.plan_reserve` (a fraction above 0 and at most 1; 0.8 when
+  absent) keeps part of the plan for the owner. The runner keeps each window's latest reading from
+  the execution's runs, starting from the records already written, and each record keeps its own
+  last reading per window as `plan_meter`. Before it starts a run, a window at or above the
+  reserve whose `resetsAt` is still ahead stops the execution cleanly: no record for the run it
+  did not start and nothing marked. It prints the window, its use and its reset in local time.
+  Run the same command again after that reset: it resumes there. A reading with no `resetsAt`
+  cannot be waited out and stops nothing; overage and a rejected request still do.
 
 Transcripts and the warm index
 cache go to `--work` (default: a temp directory). Each workspace is a directory of its own in the
@@ -109,7 +130,7 @@ JSON, read strictly: an unknown key is an error. `manifest.example.json` is the 
 | `backends[]` | `cli` (`claude`; `codex` and `gemini` validate but have no adapter yet), and an exact `version`, `model` (no alias like `sonnet`), `effort`, `plan: subscription`, `settings` (written to the CLI's settings file), and `env`. |
 | `tasks[]` or `tasks_file` | The tasks, inline or in a file relative to the manifest. |
 | `repeats`, `order`, `cache` | Repeats per cell; `latin-square` with a `seed`; `cold` (every run builds its index) or `warm` (repeat 1 builds and the later repeats reuse it). |
-| `execution` | Held fixed across cells: `timeout_seconds`, `max_attempts` (the retry policy), `permission_mode`, the `tools` every condition has, `context_edit`, `check_timeout_seconds`. |
+| `execution` | Held fixed across cells: `timeout_seconds`, `max_attempts` (the retry policy), `permission_mode`, the `tools` every condition has, `context_edit`, `check_timeout_seconds`, `plan_reserve` (the share of any plan window's use at which the runner stops before the next run; above 0, at most 1, 0.8 when absent). |
 | `budget.max_runs` | The upper bound, at least the plan's run count. |
 | `adoption` | The pre-registered rule: `candidate` (the adamap condition), `baseline` (the none condition), `min_token_reduction` (at least 0.10), `max_latency_ratio` (the acceptable trade-off, set before any run), `min_tasks`. |
 
@@ -157,7 +178,9 @@ The claude adapter runs `claude -p --output-format stream-json --verbose --model
 the session has, and the task repository's own `.claude/settings.json` is never loaded. The runner
 reads the transcript as it streams: unless the `system`/`init` event gives `apiKeySource` `"none"`
 (the subscription login), the CLI is killed there, no record is written and the execution stops.
-A missing `apiKeySource`, or a turn before the init event, counts as API billing. The watch is a
+A missing `apiKeySource`, or a turn (any event but a `system` one or a `rate_limit_event`) before
+the init event, counts as API billing; hooks' events and the meter may come first, as they do in
+Claude Code 2.1.284, and an init that never comes is bounded by `timeout_seconds`. The watch is a
 backstop, not a gate: the CLI starts its first request right after it writes the init event, so
 at most one request can get through before the process is stopped. `Authorize`'s checks of the
 environment and the user settings are what keep a run off API billing in the first place.
@@ -173,7 +196,8 @@ observable.
 A record carries the run's identity, the manifest's name and its synthetic flag, the source and
 after fingerprints, the index (digest, the tree it was built from, reused or built, build time,
 size, refreshes), every attempt, the answer and its hash, the check results with output hashes,
-the isolation outcome, and any model-based overhead. It has no success field: success is
+the isolation outcome, the last plan meter reading per window (`plan_meter`, when the CLI gave
+one), and any model-based overhead. It has no success field: success is
 recomputed from the check outputs.
 
 Usage is kept with its provider's semantics:
@@ -275,4 +299,5 @@ go run ./bench/cmd/adamap-bench run --manifest bench/pilot-1.json --records benc
 ```
 
 `--source` fetches the four harness tasks from the local clone, which holds their revisions. If it
-stops at the plan's usage limit, run the same command again once the limit resets: it resumes.
+stops at the plan's usage limit or at the plan reserve, run the same command again once the limit
+or the window it names resets: it resumes.

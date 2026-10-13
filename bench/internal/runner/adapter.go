@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -57,6 +58,8 @@ type Outcome struct {
 	// Limit says the attempt ended at the plan's usage limit, or at a rate-limit or overload error
 	// the CLI stopped retrying: not a task failure, so the run is not recorded.
 	Limit string
+	// Meter is the last reading of each plan window the CLI's meter gave; nil when it gave none.
+	Meter map[string]record.PlanWindow
 }
 
 // Adapter is one coding CLI.
@@ -120,17 +123,42 @@ func (Claude) Command(c Cell) (Invocation, error) {
 
 // subscriptionOnly watches a stream-json transcript for its init event and lets the session go on
 // only when the init shows the subscription login (apiKeySource "none"). Any other source, a
-// missing one, or a turn before the init stops it. It is a backstop, not a gate: the CLI starts
-// its first request right after writing the init, so at most one request can get through before
-// the process is stopped.
+// missing one, or a turn (or any event but a system or rate_limit_event one) before the init stops
+// it; an init that never comes is bounded by the attempt's timeout. Before the init and after it,
+// a rate_limit_event (the plan's meter) that shows overage in use stops it too, and one whose
+// status is "rejected" stops it as the plan's limit (ErrPlanLimit). It is a backstop,
+// not a gate: the CLI starts its first request right after writing the init, so at most one
+// request can get through before the process is stopped.
 func subscriptionOnly() func(line []byte) error {
 	seen := false
 	return func(line []byte) error {
+		// After the init only the meter matters: skip the turns, which can be large, unread.
+		if seen && !bytes.Contains(line, []byte(`"rate_limit_event"`)) {
+			return nil
+		}
 		var e struct {
 			Type, Subtype string
-			APIKeySource  *string `json:"apiKeySource"`
+			APIKeySource  *string        `json:"apiKeySource"`
+			Info          map[string]any `json:"rate_limit_info"`
 		}
-		if seen || json.Unmarshal(line, &e) != nil {
+		if json.Unmarshal(line, &e) != nil {
+			return nil
+		}
+		if e.Type == "rate_limit_event" {
+			if field := overageInUse(e.Info, false, "rate_limit_info"); field != "" {
+				return fmt.Errorf("the plan's meter shows %w at %s: the CLI was stopped", ErrOverage, field)
+			}
+			if e.Info["status"] == "rejected" {
+				// The plan refused the request: its limit, which resume runs again after.
+				window, _ := e.Info["rateLimitType"].(string)
+				reset := "unknown"
+				if at, ok := e.Info["resetsAt"].(float64); ok && at > 0 {
+					reset = time.Unix(int64(at), 0).Local().Format("2006-01-02 15:04 MST")
+				}
+				return fmt.Errorf("the plan's meter says the request was rejected (window %q, resets %s): %w", window, reset, ErrPlanLimit)
+			}
+		}
+		if seen {
 			return nil
 		}
 		switch {
@@ -143,11 +171,58 @@ func subscriptionOnly() func(line []byte) error {
 			}
 			seen = true
 			return nil
-		case e.Type == "system":
+		case e.Type == "system", e.Type == "rate_limit_event":
+			// Hooks' events and the plan's meter come before the init in Claude Code 2.1.284; none is a turn.
 			return nil
 		}
 		return fmt.Errorf("a %q event came before the CLI's init event, so its login (apiKeySource) is unknown: refused as possible API billing", e.Type)
 	}
+}
+
+// ErrOverage is a session whose plan's meter (a rate_limit_event) shows overage in use: usage
+// billed beyond the plan. The CLI is stopped, and the run keeps its .started marker.
+var ErrOverage = errors.New("overage in use (usage billed beyond the plan)")
+
+// overageInUse is the path of the first field in a rate_limit_event's info that may say overage
+// is in use, "" when none does. Claude Code documents isUsingOverage only, so any field named for
+// overage (or inside one) that is true, or a status that reads as in use, counts; a flag named
+// for overage being disabled does not.
+func overageInUse(v any, under bool, path string) string {
+	switch x := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			key := strings.ToLower(k)
+			if strings.Contains(key, "disabled") {
+				continue
+			}
+			if p := overageInUse(x[k], under || strings.Contains(key, "overage"), path+"."+k); p != "" {
+				return p
+			}
+		}
+	case []any:
+		for i, y := range x {
+			if p := overageInUse(y, under, fmt.Sprintf("%s[%d]", path, i)); p != "" {
+				return p
+			}
+		}
+	case bool:
+		if under && x {
+			return path
+		}
+	case string:
+		switch strings.ToLower(strings.TrimSpace(x)) {
+		case "in_use", "in use", "inuse", "using", "active":
+			if under {
+				return path
+			}
+		}
+	}
+	return ""
 }
 
 func (Claude) Parse(stdout []byte, b manifest.Backend) Outcome { return parseStreamJSON(stdout, b) }
@@ -197,6 +272,41 @@ type event struct {
 	// Error is a string on an api_retry event and on an assistant message that failed; read raw so
 	// that another shape does not cost the event.
 	Error json.RawMessage `json:"error"`
+	// RateLimitInfo is a rate_limit_event's reading of the plan's meter.
+	RateLimitInfo *rateLimitInfo `json:"rate_limit_info"`
+}
+
+// rateLimitInfo is the part of Claude Code's rate_limit_event the runner reads: the event's own
+// window, and every window in unifiedWindows.
+type rateLimitInfo struct {
+	RateLimitType  string                 `json:"rateLimitType"`
+	Utilization    *float64               `json:"utilization"`
+	ResetsAt       *float64               `json:"resetsAt"`
+	UnifiedWindows map[string]meterWindow `json:"unifiedWindows"`
+}
+
+type meterWindow struct {
+	Utilization *float64 `json:"utilization"`
+	ResetsAt    *float64 `json:"resetsAt"`
+}
+
+// read puts the info's windows into meter, a later reading replacing an earlier one; a window
+// without a utilization is skipped.
+func (i *rateLimitInfo) read(meter map[string]record.PlanWindow) {
+	put := func(name string, w meterWindow) {
+		if name == "" || w.Utilization == nil {
+			return
+		}
+		p := record.PlanWindow{Utilization: *w.Utilization}
+		if w.ResetsAt != nil {
+			p.ResetsAt = int64(*w.ResetsAt)
+		}
+		meter[name] = p
+	}
+	put(i.RateLimitType, meterWindow{Utilization: i.Utilization, ResetsAt: i.ResetsAt})
+	for name, w := range i.UnifiedWindows {
+		put(name, w)
+	}
 }
 
 type message struct {
@@ -243,6 +353,12 @@ func parseStreamJSON(stdout []byte, b manifest.Backend) Outcome {
 		seen = true
 		if e.SessionID != "" {
 			o.SessionID = e.SessionID
+		}
+		if e.Type == "rate_limit_event" && e.RateLimitInfo != nil {
+			if o.Meter == nil {
+				o.Meter = map[string]record.PlanWindow{}
+			}
+			e.RateLimitInfo.read(o.Meter)
 		}
 		if c := limitCategory(e.Error); c != "" && (e.Type == "assistant" || e.Type == "system" && e.Subtype == "api_retry") {
 			limitErr = "the CLI reported a " + c + " error"
