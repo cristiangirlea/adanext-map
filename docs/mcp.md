@@ -78,6 +78,13 @@ stale: the store describes 0123456789ab, not HEAD
 refresh: adamap index --repo /work/project
 ```
 
+The repository path in the `refresh` command is quoted for the shell that will run it: in single
+quotes for a POSIX shell (a `'` in the path is written `'\''`), and in single quotes for PowerShell on
+Windows (a `'` is doubled, as are the typographic single quotes PowerShell also reads as quotes).
+Nothing inside the quotes is special to either shell, so `$`, backticks, `"` and `;` are safe. A
+path of letters, digits and `_-./:` (and `\` on Windows) is left bare, as in the example above;
+`cmd.exe` is not catered for.
+
 A store is stale when it does not describe the working tree: it is for a commit other than HEAD,
 tracked files have uncommitted changes and the store was indexed from a clean tree, or the other way
 round. A store indexed from a dirty tree at HEAD, asked about while the tree is still dirty, is not

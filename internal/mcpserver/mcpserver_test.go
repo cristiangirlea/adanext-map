@@ -2,17 +2,21 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	scippb "github.com/scip-code/scip/bindings/go/scip"
@@ -766,4 +770,111 @@ func TestReindexingTheSameCommitIsNoticedWhenLatestLooksUnchanged(t *testing.T) 
 		t.Fatal(err)
 	}
 	ok(t, cs, "outline", map[string]any{"file": "calls/a.go"})
+}
+
+// hardPath is a path that holds what a shell would act on: a space, $, a backtick, ", ;, ', and
+// non-ASCII text. (Windows cannot name a file with a " in it, but the quoting must hold anyway.)
+const hardPath = "/work/my proj $HOME `id` \"q\" a;b 'c' ünï"
+
+// runShell runs script in the shell named, which the test skips without, and returns what it printed.
+func runShell(t *testing.T, name string, args ...string) string {
+	t.Helper()
+	exe, err := exec.LookPath(name)
+	if err != nil {
+		t.Skipf("no %s here: %v", name, err)
+	}
+	cmd := exec.Command(exe, args...)
+	cmd.Env = append(os.Environ(), "MSYS_NO_PATHCONV=1", "MSYS2_ARG_CONV_EXCL=*")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %q: %v\n%s", name, args, err, out)
+	}
+	return string(out)
+}
+
+// shellReads is what the shell on this system reads back from the argument shellArg made of p.
+func shellReads(t *testing.T, p string) string {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return runShell(t, "sh", "-c", "printf %s "+shellArg(p))
+	}
+	// PowerShell: pass it to a function as a command argument, as the refresh command passes it to
+	// adamap, and print its UTF-16 code units, which survive any console code page.
+	script := "function f { $args[0] }; $s = f " + shellArg(p) + "; ($s.ToCharArray() | ForEach-Object { [int]$_ }) -join ','"
+	units := utf16.Encode([]rune(script))
+	raw := make([]byte, 0, 2*len(units))
+	for _, u := range units {
+		raw = append(raw, byte(u), byte(u>>8))
+	}
+	out := runShell(t, "powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(raw))
+	var b strings.Builder
+	if strings.TrimSpace(out) == "" {
+		return "" // no code units: an empty argument
+	}
+	for _, f := range strings.Split(strings.TrimSpace(out), ",") {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("PowerShell printed %q: %v", out, err)
+		}
+		b.WriteRune(rune(n))
+	}
+	return b.String()
+}
+
+func TestTheRefreshCommandQuotesThePathForTheShell(t *testing.T) {
+	for _, p := range []string{hardPath, "/work/plain", "/work/it's", `/work/back\slash`, "/work/tab\there", ""} {
+		if got := shellReads(t, p); got != p {
+			t.Errorf("shellArg(%q) is read back by the shell as %q", p, got)
+		}
+	}
+}
+
+func TestPOSIXAndPowerShellQuotingHaveTheirExactForms(t *testing.T) {
+	for _, tc := range []struct{ in, posix, powershell string }{
+		{"/work/plain", "/work/plain", "/work/plain"},
+		{`C:\work\plain`, `'C:\work\plain'`, `C:\work\plain`},
+		{"", "''", "''"},
+		{"/work/it's", `'/work/it'\''s'`, "'/work/it''s'"},
+		{"a b", "'a b'", "'a b'"},
+		{"$HOME `id`", "'$HOME `id`'", "'$HOME `id`'"},
+		{`a"b;c`, `'a"b;c'`, `'a"b;c'`},
+		{"a\u2019b", "'a\u2019b'", "'a\u2019\u2019b'"}, // PowerShell reads a typographic quote as a quote
+		{hardPath, `'/work/my proj $HOME ` + "`id`" + ` "q" a;b '\''c'\'' ünï'`, `'/work/my proj $HOME ` + "`id`" + ` "q" a;b ''c'' ünï'`},
+	} {
+		if got := posixArg(tc.in); got != tc.posix {
+			t.Errorf("posixArg(%q) = %s, want %s", tc.in, got, tc.posix)
+		}
+		if got := powershellArg(tc.in); got != tc.powershell {
+			t.Errorf("powershellArg(%q) = %s, want %s", tc.in, got, tc.powershell)
+		}
+	}
+}
+
+func TestPOSIXQuotingIsReadBackByASh(t *testing.T) {
+	for _, p := range []string{hardPath, "/work/plain", "/work/it's", `/work/back\slash`, "/work/new\nline", ""} {
+		if got := runShell(t, "sh", "-c", "printf %s "+posixArg(p)); got != p {
+			t.Errorf("posixArg(%q) is read back by sh as %q", p, got)
+		}
+	}
+}
+
+func TestStatusQuotesARepositoryPathThatHoldsWhatAShellActsOn(t *testing.T) {
+	// No " in the name: Windows cannot have one in a file name.
+	repo := filepath.Join(t.TempDir(), "my proj $HOME `id` a;b 'c' ünï")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cs := connect(t, Config{Repo: repo})
+	a := ok(t, cs, "status", nil)
+	abs, err := filepath.Abs(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "adamap index --repo " + shellArg(abs)
+	if a.structured["refresh"] != want || !strings.Contains(a.text, "refresh: "+want+"\n") {
+		t.Errorf("refresh %v in %q, want %q", a.structured["refresh"], a.text, want)
+	}
+	if got := shellReads(t, abs); got != abs {
+		t.Errorf("the shell reads the path back as %q, want %q", got, abs)
+	}
 }

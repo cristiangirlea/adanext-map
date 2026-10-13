@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -571,11 +572,45 @@ func short(commit string) string {
 	return commit
 }
 
-// shellArg is p as one argument of a shell command line: in double quotes when it holds a space.
-// Backslashes stay as they are, since they are Windows' separators.
+// shellArg is p as one argument of the command line the refresh command is: quoted for PowerShell on
+// Windows, for a POSIX shell elsewhere. A path of plain characters is left as it is.
 func shellArg(p string) string {
-	if strings.ContainsAny(p, " \t") {
-		return `"` + p + `"`
+	if runtime.GOOS == "windows" {
+		return powershellArg(p)
 	}
-	return p
+	return posixArg(p)
+}
+
+// plainRune says whether r needs no quoting in a path on either shell's command line.
+func plainRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("_-./:", r)
+}
+
+// posixArg is p in single quotes, in which a POSIX shell reads every character as itself, but for
+// the quote itself, which is written as quote, backslash, quote, quote (end the quotes, an escaped quote,
+// begin them again).
+func posixArg(p string) string {
+	if p != "" && !strings.ContainsFunc(p, func(r rune) bool { return !plainRune(r) }) {
+		return p
+	}
+	return "'" + strings.ReplaceAll(p, "'", `'\''`) + "'"
+}
+
+// powershellArg is p as a PowerShell single-quoted string, in which every character is itself but
+// the quotes: PowerShell reads ' and the typographic quotes U+2018 to U+201B as one, and a doubled
+// one stands for itself. Backslash, the Windows separator, needs no quoting.
+func powershellArg(p string) string {
+	if p != "" && !strings.ContainsFunc(p, func(r rune) bool { return !plainRune(r) && r != '\\' }) {
+		return p
+	}
+	var b strings.Builder
+	b.WriteByte('\'')
+	for _, r := range p {
+		b.WriteRune(r)
+		if r == 0x27 || r >= 0x2018 && r <= 0x201b {
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('\'')
+	return b.String()
 }
