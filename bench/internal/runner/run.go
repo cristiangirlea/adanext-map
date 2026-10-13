@@ -321,6 +321,12 @@ func (o *Options) one(ctx context.Context, c Cell, env []string, restarts int) (
 			return nil, fmt.Errorf("attempt %d stopped: %w", n, res.refused)
 		}
 		out := ad.Parse(res.stdout, c.Backend)
+		for name, w := range out.Meter {
+			if r.PlanMeter == nil {
+				r.PlanMeter = map[string]record.PlanWindow{}
+			}
+			r.PlanMeter[name] = w
+		}
 		limit := out.Limit
 		if limit == "" && (out.Err != "" || res.exit != 0) {
 			// A CLI that stopped at the limit before its result may say so only on stderr.

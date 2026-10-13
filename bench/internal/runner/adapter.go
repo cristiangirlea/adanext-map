@@ -58,6 +58,8 @@ type Outcome struct {
 	// Limit says the attempt ended at the plan's usage limit, or at a rate-limit or overload error
 	// the CLI stopped retrying: not a task failure, so the run is not recorded.
 	Limit string
+	// Meter is the last reading of each plan window the CLI's meter gave; nil when it gave none.
+	Meter map[string]record.PlanWindow
 }
 
 // Adapter is one coding CLI.
@@ -270,6 +272,41 @@ type event struct {
 	// Error is a string on an api_retry event and on an assistant message that failed; read raw so
 	// that another shape does not cost the event.
 	Error json.RawMessage `json:"error"`
+	// RateLimitInfo is a rate_limit_event's reading of the plan's meter.
+	RateLimitInfo *rateLimitInfo `json:"rate_limit_info"`
+}
+
+// rateLimitInfo is the part of Claude Code's rate_limit_event the runner reads: the event's own
+// window, and every window in unifiedWindows.
+type rateLimitInfo struct {
+	RateLimitType  string                 `json:"rateLimitType"`
+	Utilization    *float64               `json:"utilization"`
+	ResetsAt       *float64               `json:"resetsAt"`
+	UnifiedWindows map[string]meterWindow `json:"unifiedWindows"`
+}
+
+type meterWindow struct {
+	Utilization *float64 `json:"utilization"`
+	ResetsAt    *float64 `json:"resetsAt"`
+}
+
+// read puts the info's windows into meter, a later reading replacing an earlier one; a window
+// without a utilization is skipped.
+func (i *rateLimitInfo) read(meter map[string]record.PlanWindow) {
+	put := func(name string, w meterWindow) {
+		if name == "" || w.Utilization == nil {
+			return
+		}
+		p := record.PlanWindow{Utilization: *w.Utilization}
+		if w.ResetsAt != nil {
+			p.ResetsAt = int64(*w.ResetsAt)
+		}
+		meter[name] = p
+	}
+	put(i.RateLimitType, meterWindow{Utilization: i.Utilization, ResetsAt: i.ResetsAt})
+	for name, w := range i.UnifiedWindows {
+		put(name, w)
+	}
 }
 
 type message struct {
@@ -316,6 +353,12 @@ func parseStreamJSON(stdout []byte, b manifest.Backend) Outcome {
 		seen = true
 		if e.SessionID != "" {
 			o.SessionID = e.SessionID
+		}
+		if e.Type == "rate_limit_event" && e.RateLimitInfo != nil {
+			if o.Meter == nil {
+				o.Meter = map[string]record.PlanWindow{}
+			}
+			e.RateLimitInfo.read(o.Meter)
 		}
 		if c := limitCategory(e.Error); c != "" && (e.Type == "assistant" || e.Type == "system" && e.Subtype == "api_retry") {
 			limitErr = "the CLI reported a " + c + " error"

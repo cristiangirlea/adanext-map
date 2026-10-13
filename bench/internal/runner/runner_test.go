@@ -135,6 +135,22 @@ func TestMain(m *testing.M) {
 		os.Stdout.WriteString(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","isUsingOverage":true},"session_id":"o"}` + "\n")
 		time.Sleep(20 * time.Second)
 		os.Exit(0)
+	case "agent-meter": // a worker whose plan's meter rises by BENCH_TEST_STEP with each session
+		n := 1
+		count := os.Getenv("BENCH_TEST_COUNT")
+		if data, err := os.ReadFile(count); err == nil {
+			n, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+			n++
+		}
+		os.WriteFile(count, []byte(strconv.Itoa(n)), 0o644)
+		step, _ := strconv.ParseFloat(os.Getenv("BENCH_TEST_STEP"), 64)
+		resets := os.Getenv("BENCH_TEST_RESETS")
+		u := strconv.FormatFloat(step*float64(n), 'f', -1, 64)
+		os.Stdout.WriteString(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":` + u +
+			`,"resetsAt":` + resets + `,"isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":` + u + `,"resetsAt":` + resets +
+			`},"seven_day":{"utilization":0.1,"resetsAt":` + resets + `}}}}` + "\n")
+		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
+		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
 	case "agent-rejected": // a CLI whose plan refused the request, then waits
 		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"r","apiKeySource":"none"}` + "\n")
 		os.Stdout.WriteString(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1792317600,"isUsingOverage":false},"session_id":"r"}` + "\n")
@@ -1184,5 +1200,39 @@ func TestARejectedMeterIsThePlansLimit(t *testing.T) {
 	}
 	if recs, _ := record.ReadDir(o.RecordsDir); len(recs) != 8 {
 		t.Fatalf("resume: %d records", len(recs))
+	}
+}
+
+// meterEnv is the fake agent whose meter's five_hour window rises by step with each session and
+// resets at resets (Unix seconds).
+func meterEnv(t *testing.T, step float64, resets int64) []string {
+	return []string{"BENCH_TEST_HELPER=agent-meter", "BENCH_TEST_COUNT=" + filepath.Join(t.TempDir(), "count"),
+		"BENCH_TEST_STEP=" + strconv.FormatFloat(step, 'f', -1, 64), "BENCH_TEST_RESETS=" + strconv.FormatInt(resets, 10)}
+}
+
+// Each record keeps the last reading of every plan window its sessions' meter gave.
+func TestARecordKeepsThePlansMeter(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	resets := time.Now().Add(time.Hour).Unix()
+	o.Fake.Env = meterEnv(t, 0.01, resets)
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatalf("%v\nlog:\n%s", err, o.Log)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	if len(recs) != 8 {
+		t.Fatalf("%d records", len(recs))
+	}
+	seen := map[float64]bool{}
+	for _, r := range recs {
+		five, week := r.PlanMeter["five_hour"], r.PlanMeter["seven_day"]
+		if len(r.PlanMeter) != 2 || five.Utilization <= 0 || five.Utilization > 0.08+1e-9 || five.ResetsAt != resets || week.Utilization != 0.1 || week.ResetsAt != resets {
+			t.Fatalf("%s: meter %+v", r.RunID, r.PlanMeter)
+		}
+		seen[five.Utilization] = true
+	}
+	if len(seen) != 8 {
+		t.Fatalf("the records do not keep their own run's reading: %v", seen)
 	}
 }

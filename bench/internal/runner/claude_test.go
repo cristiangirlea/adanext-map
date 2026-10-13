@@ -3,6 +3,7 @@ package runner_test
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -362,5 +363,28 @@ func TestClaudeWatchTakesARejectedMeterForThePlansLimit(t *testing.T) {
 		if _, err := watchLines(t, []string{init, `{"type":"rate_limit_event","rate_limit_info":{"status":"` + status + `"}}`}); err != nil {
 			t.Errorf("%s: watch says %v", status, err)
 		}
+	}
+}
+
+// The parser keeps the last reading of each plan window the meter gave: the unified windows, and
+// the event's own window when it names one.
+func TestClaudeParseReadsThePlansMeter(t *testing.T) {
+	b := benchtest.Pilot().Backends[0]
+	real := fixtureLines(t, "claude-2.1.284-start.jsonl")
+	o := runner.Claude{}.Parse([]byte(strings.Join(real, "\n")), b)
+	want := map[string]record.PlanWindow{"five_hour": {Utilization: 0.16, ResetsAt: 1791899400}, "seven_day": {Utilization: 0.72, ResetsAt: 1792317600}}
+	if !maps.Equal(o.Meter, want) {
+		t.Fatalf("meter %+v", o.Meter)
+	}
+	later := `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.3,"resetsAt":1791899400}}`
+	weekly := `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"opus_weekly","utilization":0.5}}`
+	o = runner.Claude{}.Parse([]byte(strings.Join(append(real, later, weekly, "not json"), "\n")), b)
+	want["five_hour"] = record.PlanWindow{Utilization: 0.3, ResetsAt: 1791899400}
+	want["opus_weekly"] = record.PlanWindow{Utilization: 0.5}
+	if !maps.Equal(o.Meter, want) {
+		t.Fatalf("meter %+v", o.Meter)
+	}
+	if o := (runner.Claude{}).Parse([]byte(syntheticTranscript), b); o.Meter != nil {
+		t.Fatalf("a transcript without a meter: %+v", o.Meter)
 	}
 }
