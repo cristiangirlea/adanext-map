@@ -126,7 +126,7 @@ func Convert(x *scippb.Index) (*model.Index, Skipped, error) {
 		}
 		for j, si := range d.GetSymbols() {
 			if si.GetSymbol() == "" {
-				return nil, Skipped{}, fmt.Errorf("document %s: symbol information %d has no symbol", path, j)
+				return nil, Skipped{}, fmt.Errorf("document %q: symbol information %d has no symbol", path, j)
 			}
 			if scippb.IsLocalSymbol(si.GetSymbol()) {
 				merge(doc.locals, rels, si)
@@ -140,7 +140,7 @@ func Convert(x *scippb.Index) (*model.Index, Skipped, error) {
 			}
 			occ, err := occurrence(o)
 			if err != nil {
-				return nil, Skipped{}, fmt.Errorf("document %s: occurrence %d: %w", path, j, err)
+				return nil, Skipped{}, fmt.Errorf("document %q: occurrence %d: %w", path, j, err)
 			}
 			doc.Occurrences = append(doc.Occurrences, occ)
 			if occ.Roles.Has(model.RoleDefinition) {
