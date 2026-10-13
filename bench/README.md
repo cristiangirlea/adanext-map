@@ -64,6 +64,8 @@ system temp directory, away from `--work`, and is removed after its record unles
 given. The grader's checkout of the fix is always removed, and the fix's files a `fix-tests` check
 lays over the workspace are taken back out right after that check (added ones removed, replaced
 ones restored as the worker left them), so a later check and a kept workspace see the worker's tree.
+`--keep` is refused for a plan with a `fix-tests` check: the worker is not sandboxed, so a kept
+workspace is within every later worker's reach.
 
 ## The manifest
 

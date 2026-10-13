@@ -71,6 +71,15 @@ func Execute(ctx context.Context, o Options) error {
 			return err
 		}
 	}
+	if o.Keep {
+		// The worker is not sandboxed: no place on disk is out of a later worker's reach, and a
+		// kept workspace graded against the fix is not left where one could find it.
+		for _, t := range m.Tasks {
+			if slices.ContainsFunc(t.Checks, func(ch manifest.Check) bool { return ch.Type == manifest.CheckFixTests }) {
+				return fmt.Errorf("--keep leaves each workspace where later workers can reach it, and task %s has a fix-tests check: run without --keep", t.ID)
+			}
+		}
+	}
 	for _, dir := range []string{o.RecordsDir, o.WorkDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err

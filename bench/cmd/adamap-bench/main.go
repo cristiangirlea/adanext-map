@@ -170,7 +170,7 @@ func runRun(args, environ []string, stdout, stderr io.Writer) int {
 	rdir := fl.String("records", "", "the directory for the run records (a real run)")
 	work := fl.String("work", "", "the directory for workspaces, transcripts and the warm cache (default: a temp directory)")
 	approval := fl.Int(strings.TrimPrefix(runner.ApprovalFlag, "--"), 0, "the plan's run count, as the owner approved it")
-	keep := fl.Bool("keep", false, "leave each workspace in place")
+	keep := fl.Bool("keep", false, "leave each workspace in place (refused when a task has a fix-tests check)")
 	src := sources{}
 	fl.Var(src, "source", "where to fetch a repository from, as name=path-or-url (repeatable)")
 	if err := fl.Parse(args); err != nil {

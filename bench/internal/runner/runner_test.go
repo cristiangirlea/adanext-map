@@ -473,7 +473,8 @@ func realPath(t *testing.T, p string) string {
 }
 
 // The worker runs in a directory of its own, away from the work directory that holds the other
-// runs' transcripts and the warm cache; the grader's checkout of the fix never stays, --keep or not.
+// runs' transcripts and the warm cache; the grader's checkout of the fix never stays. (--keep
+// refuses a fix-tests check, so the kept round grades the fix task with a plain command.)
 func TestTheWorkspaceIsAwayFromTheOtherRunsState(t *testing.T) {
 	src, pre, fix := repo(t)
 	// A temp directory of this test's own, so another run on the machine cannot leave its
@@ -484,6 +485,9 @@ func TestTheWorkspaceIsAwayFromTheOtherRunsState(t *testing.T) {
 	}
 	for _, keep := range []bool{false, true} {
 		m := smoke(t, pre, fix)
+		if keep {
+			m.Tasks[1].Checks[0].Type = manifest.CheckCommand
+		}
 		o := options(t, m, src, 8)
 		o.Keep = keep
 		where := filepath.Join(t.TempDir(), "where.txt")
@@ -791,5 +795,21 @@ func TestTheFixOverlayIsTakenBackAfterItsCheck(t *testing.T) {
 		if len(r.Checks) != 2 || !r.Checks[0].Passed || !r.Checks[1].Passed {
 			t.Fatalf("%s: checks %+v", id, r.Checks)
 		}
+	}
+}
+
+// A kept workspace stays where every later worker can reach it, so a plan with a fix-tests check
+// cannot keep them: the execution refuses before any workspace is made.
+func TestKeepIsRefusedWithAFixTestsCheck(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Keep = true
+	err := runner.Execute(context.Background(), o)
+	if err == nil || !strings.Contains(err.Error(), "--keep") || !strings.Contains(err.Error(), m.Tasks[1].ID) {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := os.Stat(o.WorkDir); err == nil {
+		t.Fatal("a workspace was made")
 	}
 }
