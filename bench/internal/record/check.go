@@ -231,7 +231,7 @@ func (c *checker) checks(r *Record, task manifest.Task) {
 		if ch.Type == manifest.CheckReview && res.Passed && res.Reviewer == "" {
 			c.add(id, fmt.Sprintf("check %q passed without a reviewer", res.ID))
 		}
-		if want := passes(ch, res, r); ch.Type != manifest.CheckReview && res.Passed != want {
+		if want := Passes(ch, res, r); ch.Type != manifest.CheckReview && res.Passed != want {
 			c.add(id, fmt.Sprintf("check %q says passed=%v, its output says %v", res.ID, res.Passed, want))
 		}
 	}
@@ -242,8 +242,10 @@ func (c *checker) checks(r *Record, task manifest.Task) {
 	}
 }
 
-// passes recomputes an executable check from what it recorded, never from its passed flag.
-func passes(ch manifest.Check, res CheckResult, r *Record) bool {
+// Passes recomputes an executable check from what it recorded, never from its passed flag: the
+// exit code against the expected one, the answer against the expected strings, the tree against
+// its commit. The runner sets a result's Passed with it, and Check holds the record to it.
+func Passes(ch manifest.Check, res CheckResult, r *Record) bool {
 	switch ch.Type {
 	case manifest.CheckCommand, manifest.CheckFixTests:
 		want := 0
@@ -290,7 +292,7 @@ func Success(m *manifest.Manifest, r *Record) bool {
 		}
 		i := slices.IndexFunc(r.Checks, func(res CheckResult) bool { return res.ID == ch.ID })
 		if i < 0 || r.Checks[i].Type != ch.Type || r.Checks[i].OutputSHA256 != SHA256(r.Checks[i].Output) ||
-			r.Checks[i].Content != r.After.Content || !passes(ch, r.Checks[i], r) {
+			r.Checks[i].Content != r.After.Content || !Passes(ch, r.Checks[i], r) {
 			return false
 		}
 		gates++

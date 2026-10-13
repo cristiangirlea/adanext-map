@@ -1,0 +1,351 @@
+package runner_test
+
+import (
+	"bytes"
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/cristiangirlea/adanext-map/bench/internal/benchtest"
+	"github.com/cristiangirlea/adanext-map/bench/internal/manifest"
+	"github.com/cristiangirlea/adanext-map/bench/internal/record"
+	"github.com/cristiangirlea/adanext-map/bench/internal/reduce"
+	"github.com/cristiangirlea/adanext-map/bench/internal/runner"
+)
+
+// The test binary stands in for the programs a run starts: the fake agent, an indexer, a probe
+// that fails, and a check that passes only when the fix's test file was laid over the tree.
+func TestMain(m *testing.M) {
+	role := os.Getenv("BENCH_TEST_HELPER")
+	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "bench-helper-") {
+		role = strings.TrimPrefix(os.Args[1], "bench-helper-") // an indexer or a probe, named by its argv
+	}
+	switch role {
+	case "agent":
+		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
+		failUntil, _ := strconv.Atoi(os.Getenv("BENCH_TEST_FAIL"))
+		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, failUntil))
+	case "index":
+		if err := os.MkdirAll(".idx", 0o755); err != nil {
+			os.Exit(1)
+		}
+		data, _ := os.ReadFile("a.go")
+		if err := os.WriteFile(filepath.Join(".idx", "data"), append([]byte("index of "), data...), 0o644); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	case "fail":
+		os.Exit(3)
+	case "check":
+		if _, err := os.Stat("a_test.go"); err != nil {
+			os.Stdout.WriteString("no a_test.go\n")
+			os.Exit(1)
+		}
+		os.Stdout.WriteString("a_test.go present\n")
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func needGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+}
+
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com",
+		"-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// repo is a source repository with a pre-fix commit and a fix that adds a test.
+func repo(t *testing.T) (dir, pre, fix string) {
+	t.Helper()
+	needGit(t)
+	dir = t.TempDir()
+	gitIn(t, dir, "init", "-q")
+	write(t, filepath.Join(dir, "a.go"), "package a\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-q", "-m", "pre")
+	pre = gitIn(t, dir, "rev-parse", "HEAD")
+	write(t, filepath.Join(dir, "a.go"), "package a\n\nfunc A() {}\n")
+	write(t, filepath.Join(dir, "a_test.go"), "package a\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-q", "-m", "fix")
+	fix = gitIn(t, dir, "rev-parse", "HEAD")
+	return dir, pre, fix
+}
+
+func write(t *testing.T, path, text string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// smoke is a synthetic smoke over the repo: a navigation task and a fix task, under none and
+// adamap (with an index), two repeats, warm.
+func smoke(t *testing.T, pre, fix string) *manifest.Manifest {
+	// Children of this test (the checks) act as the check helper unless told otherwise.
+	t.Setenv("BENCH_TEST_HELPER", "check")
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := benchtest.Synthetic()
+	m.Scale = "smoke"
+	m.Repeats = 2
+	m.Budget.MaxRuns = 8
+	m.Execution.TimeoutSeconds = 60
+	m.Adoption.MinTasks = 1
+	m.Conditions = []manifest.Condition{m.Conditions[0], m.Conditions[4]}
+	m.Conditions[1].Index = &manifest.Index{Command: []string{self, "bench-helper-index"}, Output: ".idx"}
+	nav := benchtest.Task(0, manifest.TaskNavigation)
+	nav.Prompt = "Which file defines package a? pkg/a.go and pkg/b.go"
+	nav.Repository = manifest.Repository{Name: "local/a", URL: "unused", Visibility: "private"}
+	nav.Revision = pre
+	fx := benchtest.Task(1, manifest.TaskFix)
+	fx.Prompt = "Add func A."
+	fx.Repository = nav.Repository
+	fx.Revision = pre
+	fx.Provenance.FixRevision = fix
+	fx.Leakage.HiddenRevisions = []string{fix}
+	fx.Checks[0].Command = []string{self}
+	m.Tasks = []manifest.Task{nav, fx}
+	return m
+}
+
+func options(t *testing.T, m *manifest.Manifest, source string, approval int) runner.Options {
+	self, _ := os.Executable()
+	return runner.Options{
+		Manifest: m, Approval: approval, Environ: os.Environ(),
+		RecordsDir: filepath.Join(t.TempDir(), "records"), WorkDir: filepath.Join(t.TempDir(), "work"),
+		Sources: map[string]string{"local/a": source},
+		Fake:    runner.Fake{Program: []string{self}, Env: []string{"BENCH_TEST_HELPER=agent"}},
+		Log:     &bytes.Buffer{},
+	}
+}
+
+func TestExecuteRefusesWithoutMatchingApproval(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	for _, n := range []int{0, 7, 9} {
+		o := options(t, m, src, n)
+		err := runner.Execute(context.Background(), o)
+		if err == nil || !strings.Contains(err.Error(), "--i-have-approval-for-N-runs 8") {
+			t.Fatalf("approval %d: err %v", n, err)
+		}
+		if _, err := os.Stat(o.WorkDir); err == nil {
+			t.Fatalf("approval %d: a workspace was made", n)
+		}
+	}
+}
+
+func TestExecuteRefusesProviderKeys(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Environ = append(o.Environ, "ANTHROPIC_API_KEY=sk-secret-value", "OPENAI_API_KEY=x")
+	err := runner.Execute(context.Background(), o)
+	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") || !strings.Contains(err.Error(), "OPENAI_API_KEY") {
+		t.Fatalf("err %v", err)
+	}
+	if strings.Contains(err.Error(), "sk-secret") {
+		t.Fatalf("the error prints the key: %v", err)
+	}
+	if got := runner.ProviderKeysSet([]string{"ANTHROPIC_API_KEY=", "GH_TOKEN=x", "GEMINI_API_KEY=y"}); strings.Join(got, ",") != "GEMINI_API_KEY" {
+		t.Fatalf("ProviderKeysSet = %v", got)
+	}
+}
+
+func TestExecuteRefusesAManifestWithBlockers(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	m.Tasks[0].Status = "candidate"
+	err := runner.Execute(context.Background(), options(t, m, src, 8))
+	if err == nil || !strings.Contains(err.Error(), "not approved") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestExecuteRunsEveryPlannedCellWithTheFakeAdapter(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatalf("%v\nlog:\n%s", err, o.Log)
+	}
+	recs, err := record.ReadDir(o.RecordsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 8 {
+		t.Fatalf("%d records", len(recs))
+	}
+	if p := record.Check(m, recs); len(p) != 0 {
+		t.Fatalf("problems %v", p)
+	}
+	for _, r := range recs {
+		if !r.Synthetic || !record.Success(m, &r) {
+			t.Errorf("%s: synthetic %v success %v, checks %+v attempts %+v", r.RunID, r.Synthetic, record.Success(m, &r), r.Checks, r.Attempts)
+		}
+		if tok, ok := r.Attempts[0].Usage.Tokens(); !ok || tok.Total == 0 {
+			t.Errorf("%s: usage %+v", r.RunID, r.Attempts[0].Usage)
+		}
+		obs := r.Attempts[0].Observed
+		if !obs.Observable || obs.ToolCalls["Read"] != 1 || obs.SourceReads == nil || *obs.SourceReads != 1 || obs.SourceBytes == nil || *obs.SourceBytes == 0 {
+			t.Errorf("%s: observed %+v", r.RunID, obs)
+		}
+	}
+	build := benchtest.Find(recs, "t01.adamap.fake.r1")
+	reuse := benchtest.Find(recs, "t01.adamap.fake.r2")
+	if build.Index == nil || build.Index.Reused || build.Index.BuildMS == nil || reuse.Index == nil || !reuse.Index.Reused ||
+		reuse.Index.Digest != build.Index.Digest {
+		t.Fatalf("index build %+v reuse %+v", build.Index, reuse.Index)
+	}
+	fx := benchtest.Find(recs, "t01.none.fake.r1")
+	if fx.Checks[0].Overlay != fix || !strings.Contains(fx.Checks[0].Output, "a_test.go present") {
+		t.Fatalf("fix-tests %+v", fx.Checks[0])
+	}
+	if fx.After.Content != record.CleanContent {
+		t.Fatalf("the fake agent changed nothing, yet the tree differs: %s", fx.After.Content)
+	}
+	rep, err := reduce.Reduce(m, recs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md := rep.Markdown(); !strings.Contains(md, "SYNTHETIC") {
+		t.Fatal("a fake run's report is not labelled synthetic")
+	}
+	// The workspaces go; each run's state (its transcripts) and the warm cache stay.
+	for _, r := range recs {
+		if _, err := os.Stat(filepath.Join(o.WorkDir, r.RunID, "ws")); err == nil {
+			t.Fatalf("%s: workspace left behind", r.RunID)
+		}
+		data, err := os.ReadFile(filepath.Join(o.WorkDir, r.RunID, "state", "attempt-1.jsonl"))
+		if err != nil || record.SHA256(string(data)) != r.Attempts[0].TranscriptSHA256 {
+			t.Fatalf("%s: transcript %v does not match its hash", r.RunID, err)
+		}
+	}
+}
+
+func TestExecuteRetriesAFailedAttempt(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Fake.Env = append(o.Fake.Env, "BENCH_TEST_FAIL=1")
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	for _, r := range recs {
+		if len(r.Attempts) != 2 || r.Attempts[0].Completed() || !r.Attempts[1].Completed() {
+			t.Fatalf("%s: attempts %+v", r.RunID, r.Attempts)
+		}
+		if r.Attempts[0].Usage.Source != record.Unavailable {
+			t.Fatalf("%s: a failed attempt without a result reports usage %+v", r.RunID, r.Attempts[0].Usage)
+		}
+	}
+	if p := record.Check(m, recs); len(p) != 0 {
+		t.Fatalf("problems %v", p)
+	}
+}
+
+func TestExecuteRecordsAnUnsupportedCondition(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	self, _ := os.Executable()
+	lsp := benchtest.Synthetic().Conditions[1]
+	lsp.Probe = []string{self, "bench-helper-fail"}
+	m.Conditions = append(m.Conditions, lsp)
+	m.Budget.MaxRuns = 12
+	o := options(t, m, src, 12)
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	r := benchtest.Find(recs, "t00.lsp.fake.r1")
+	if r.Unsupported == "" || len(r.Attempts) != 0 || record.Success(m, r) {
+		t.Fatalf("unsupported run %+v", r)
+	}
+	if p := record.Check(m, recs); len(p) != 0 {
+		t.Fatalf("problems %v", p)
+	}
+}
+
+// The workspace holds the pre-fix revision only: the fix is not reachable from it, and its files
+// are absent. Its fingerprint is clean until it changes, and excluded paths do not count.
+func TestCheckoutHidesTheFixAndFingerprintSeesEdits(t *testing.T) {
+	src, pre, fix := repo(t)
+	ws := filepath.Join(t.TempDir(), "ws")
+	if err := runner.Checkout(src, pre, ws); err != nil {
+		t.Fatal(err)
+	}
+	if runner.Reachable(ws, fix) {
+		t.Fatal("the fix revision is reachable from the workspace")
+	}
+	if !runner.Reachable(ws, pre) {
+		t.Fatal("the revision itself is not reachable")
+	}
+	if _, err := os.Stat(filepath.Join(ws, "a_test.go")); err == nil {
+		t.Fatal("the fix's test file is in the workspace")
+	}
+	fp, err := runner.Fingerprint(ws, nil)
+	if err != nil || fp.Commit != pre || fp.Content != record.CleanContent {
+		t.Fatalf("fingerprint %+v, %v", fp, err)
+	}
+	if err := os.MkdirAll(filepath.Join(ws, ".idx"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(ws, ".idx", "x"), "index")
+	if fp, _ := runner.Fingerprint(ws, []string{".idx"}); fp.Content != record.CleanContent {
+		t.Fatal("an excluded path changes the fingerprint")
+	}
+	write(t, filepath.Join(ws, "a.go"), "package a // edited\n")
+	edited, _ := runner.Fingerprint(ws, []string{".idx"})
+	write(t, filepath.Join(ws, "a.go"), "package a // edited again\n")
+	again, _ := runner.Fingerprint(ws, []string{".idx"})
+	if edited.Content == record.CleanContent || edited.Content == again.Content || edited.Commit != pre {
+		t.Fatal("the fingerprint does not follow the content of a dirty tree")
+	}
+}
+
+func TestDryRunPrintsEveryPlannedCellAndRunsNothing(t *testing.T) {
+	m := benchtest.Pilot()
+	var out bytes.Buffer
+	runner.DryRun(m, &out, runner.Fake{}, []string{"ANTHROPIC_API_KEY=sk-x", "PATH=/bin"})
+	text := out.String()
+	for _, want := range []string{"150 planned runs", "--i-have-approval-for-N-runs 150", "ANTHROPIC_API_KEY", "t09.adamap.claude.r3", "claude -p"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("no %q in the dry run", want)
+		}
+	}
+	if strings.Contains(text, "sk-x") {
+		t.Error("the dry run prints a key")
+	}
+	runs := 0
+	for _, l := range strings.Split(text, "\n") {
+		if strings.HasPrefix(l, "run ") {
+			runs++
+		}
+	}
+	if runs != 150 {
+		t.Fatalf("%d run lines", runs)
+	}
+	out.Reset()
+	runner.DryRun(benchtest.Synthetic(), &out, runner.Fake{Program: []string{"adamap-bench", "fake-agent"}}, nil)
+	if !strings.Contains(out.String(), "SYNTHETIC") {
+		t.Fatal("a synthetic dry run is not labelled")
+	}
+}
