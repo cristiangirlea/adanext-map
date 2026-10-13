@@ -38,6 +38,16 @@ func TestMain(m *testing.M) {
 		}
 		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
 		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
+	case "agent-where": // a worker that says where it runs
+		wd, _ := os.Getwd()
+		f, err := os.OpenFile(os.Getenv("BENCH_TEST_WHERE"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			os.Exit(1)
+		}
+		f.WriteString(wd + "\n")
+		f.Close()
+		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
+		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
 	case "index":
 		if err := os.MkdirAll(".idx", 0o755); err != nil {
 			os.Exit(1)
@@ -390,5 +400,57 @@ func TestCheckoutRefusesASourceReadAsAnOption(t *testing.T) {
 	err := runner.Checkout("--upload-pack=touch pwned", benchtest.Rev(1), filepath.Join(t.TempDir(), "ws"))
 	if err == nil || !strings.Contains(err.Error(), "option") {
 		t.Fatalf("err %v", err)
+	}
+}
+
+func realPath(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// The worker runs in a directory of its own, away from the work directory that holds the other
+// runs' transcripts and the warm cache; the grader's checkout of the fix never stays, --keep or not.
+func TestTheWorkspaceIsAwayFromTheOtherRunsState(t *testing.T) {
+	src, pre, fix := repo(t)
+	for _, keep := range []bool{false, true} {
+		m := smoke(t, pre, fix)
+		o := options(t, m, src, 8)
+		o.Keep = keep
+		where := filepath.Join(t.TempDir(), "where.txt")
+		o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-where", "BENCH_TEST_WHERE=" + where}
+		if err := runner.Execute(context.Background(), o); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(where)
+		if err != nil {
+			t.Fatal(err)
+		}
+		work := realPath(t, o.WorkDir)
+		dirs := strings.Fields(string(data))
+		if len(dirs) != 8 {
+			t.Fatalf("keep %v: %d workspaces", keep, len(dirs))
+		}
+		for _, d := range dirs {
+			if keep {
+				d = realPath(t, d)
+				if rel, err := filepath.Rel(work, d); err == nil && !strings.HasPrefix(rel, "..") {
+					t.Fatalf("workspace %s is inside the work directory %s", d, work)
+				}
+				siblings, _ := os.ReadDir(filepath.Dir(d))
+				if len(siblings) != 1 {
+					t.Fatalf("the workspace has neighbours: %v", siblings)
+				}
+				os.RemoveAll(filepath.Dir(d))
+			} else if _, err := os.Stat(d); err == nil {
+				t.Fatalf("workspace %s left behind", d)
+			}
+		}
+		if matches, _ := filepath.Glob(filepath.Join(os.TempDir(), "adamap-bench-grader-*")); len(matches) > 0 {
+			t.Fatalf("keep %v: grader checkouts left behind: %v", keep, matches)
+		}
 	}
 }

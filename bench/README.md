@@ -46,9 +46,10 @@ A real `run` refuses unless every one of these holds:
   Only the names are printed, never the values.
 
 Records go to `--records`, one `<run id>.json` per run. A run whose record exists is skipped, so an
-interrupted run resumes; the approval still names the whole plan. Workspaces, transcripts and the
-warm index cache go to `--work` (default: a temp directory). Every workspace is removed after its
-record unless `--keep` is given.
+interrupted run resumes; the approval still names the whole plan. Transcripts and the warm index
+cache go to `--work` (default: a temp directory). Each workspace is a directory of its own in the
+system temp directory, away from `--work`, and is removed after its record unless `--keep` is
+given. The grader's checkout of the fix is always removed.
 
 ## The manifest
 
@@ -112,7 +113,8 @@ The claude adapter runs `claude -p --output-format stream-json --verbose --model
 
 Not yet controlled, and to settle in the wiring smoke before the pilot: the CLI also reads the
 user's own settings and memory files, and the worker is not sandboxed from the network or from
-paths outside its workspace beyond the CLI's permission mode. Isolation records only what is
+paths outside its workspace beyond the CLI's permission mode: keeping the other runs' state away
+from the workspace hides nothing from a worker that searches the disk. Isolation records only what is
 observable.
 
 ## Records and the reducer

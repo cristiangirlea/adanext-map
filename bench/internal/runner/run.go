@@ -125,13 +125,21 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 	if err := os.RemoveAll(dir); err != nil {
 		return nil, err
 	}
-	c.Workspace, c.StateDir = filepath.Join(dir, "ws"), filepath.Join(dir, "state")
+	// The workspace is a directory of its own in the system temp dir, so the worker has no
+	// neighbours: the other runs' transcripts and the warm cache stay in WorkDir, away from it.
+	// (The worker is not sandboxed; see bench/README.md.)
+	wsRoot, err := os.MkdirTemp("", "adamap-bench-ws-")
+	if err != nil {
+		return nil, err
+	}
+	c.Workspace, c.StateDir = filepath.Join(wsRoot, "ws"), filepath.Join(dir, "state")
 	if err := os.MkdirAll(c.StateDir, 0o755); err != nil {
 		return nil, err
 	}
-	if !o.Keep {
-		defer os.RemoveAll(c.Workspace)
-		defer os.RemoveAll(filepath.Join(dir, "grader"))
+	if o.Keep {
+		fmt.Fprintf(o.Log, "run %s: workspace kept at %s\n", run.ID, c.Workspace)
+	} else {
+		defer os.RemoveAll(wsRoot)
 	}
 	source := o.Sources[c.Task.Repository.Name]
 	if source == "" {
@@ -366,10 +374,13 @@ func (o *Options) check(ctx context.Context, c Cell, ch manifest.Check, r *recor
 // overlay lays the fix's matching files over the workspace, from a grader checkout made outside
 // it after the worker finished.
 func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]string, error) {
-	grader := filepath.Join(filepath.Dir(c.Workspace), "grader")
-	if err := os.RemoveAll(grader); err != nil {
+	// The grader's checkout holds the fix: it never stays behind, --keep or not.
+	root, err := os.MkdirTemp("", "adamap-bench-grader-")
+	if err != nil {
 		return nil, err
 	}
+	defer os.RemoveAll(root)
+	grader := filepath.Join(root, "grader")
 	if err := Checkout(source, fix, grader); err != nil {
 		return nil, err
 	}
