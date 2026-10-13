@@ -61,7 +61,8 @@ func CheckCommit(c string) error {
 
 // Write stores idx for h.Commit in repo and points latest at it, returning the store's directory.
 // It fills in h.Format and h.Counts. Each file is replaced atomically, and header.json goes last:
-// a store without one is incomplete and does not load.
+// a store without one is incomplete and does not load. The model is encoded as it is compressed,
+// one element at a time (encodeIndex).
 func Write(repo string, h Header, idx *model.Index) (string, error) {
 	if err := CheckCommit(h.Commit); err != nil {
 		return "", err
@@ -87,7 +88,7 @@ func Write(repo string, h Header, idx *model.Index) (string, error) {
 	}
 	err := writeAtomic(dir, storeFile, func(w io.Writer) error {
 		gz := gzip.NewWriter(w)
-		if err := json.NewEncoder(gz).Encode(idx); err != nil {
+		if err := encodeIndex(gz, idx); err != nil {
 			return err
 		}
 		return gz.Close()
