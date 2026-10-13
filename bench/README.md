@@ -157,10 +157,12 @@ reads, and the adoption rule's verdict.
 
 The adoption rule (issue #6), for adamap against none, per backend:
 
+- **inconclusive** for a smoke, always: the rule is evaluated on the pilot only;
 - **fail** on any new deterministic correctness failure (a check that passed in every baseline run
   of a task fails in an adamap run) or new isolation failure, whatever the coverage;
-- **inconclusive** for a smoke, when any adamap or none cell is incomplete (missing coverage
-  prevents a measured-savings claim), or when fewer than `min_tasks` tasks are comparable;
+- **inconclusive** when any adamap or none cell is incomplete (missing coverage prevents a
+  measured-savings claim), when fewer than `min_tasks` tasks are comparable, or when the
+  baseline's median tokens or p50 latency is zero (nothing to compare against);
 - otherwise **pass** when adamap's success is equal or better, its median total model tokens are
   at least `min_token_reduction` lower, and its p50 latency (preparation amortized at the observed
   reuse) is at most `max_latency_ratio` times the baseline's; **fail** if not.
