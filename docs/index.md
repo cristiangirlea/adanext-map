@@ -122,8 +122,10 @@ short has no header and does not load: run `adamap index` again. A `.adamap` or 
 that is a symbolic link is refused, for reading and writing, so a cloned repository cannot point the
 store outside itself, and so is a `header.json` or `store.json.gz` that is not a regular file; a
 `header.json` over 1 MiB is refused. A document path or a symbol's definition path that is absolute
-or leaves the project is refused at load. `latest` must be a regular file of a commit hash; one that is a link or holds
-anything else is refused. Loading stops with an error once `store.json.gz` inflates past 4 GiB.
+or leaves the project is refused at load. `latest` must be a regular file of a commit hash; one
+that is a link or holds anything else is refused. Loading stops with an error once `store.json.gz`
+inflates past 4 GiB. A store file that is replaced while it is being opened, so that what was
+opened is not the file that was checked, is refused as well.
 
 ### header.json
 
