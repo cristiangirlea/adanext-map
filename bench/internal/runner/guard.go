@@ -53,13 +53,14 @@ func Authorize(m *manifest.Manifest, approval int, environ []string) error {
 	return nil
 }
 
-// scrub is environ without any variable that could hand a CLI an API key, as a second layer
-// behind Authorize.
+// scrub is environ without any variable that would hand a CLI an API key or a pay-per-token
+// route, as a second layer behind Authorize. The subscription's own login
+// (CLAUDE_CODE_OAUTH_TOKEN) stays: a headless CLI needs it.
 func scrub(environ []string) []string {
 	var out []string
 	for _, kv := range environ {
 		k, _, _ := strings.Cut(kv, "=")
-		if manifest.IsProviderKeyVar(k) || manifest.IsAPIKeyName(k) {
+		if manifest.IsProviderKeyVar(k) {
 			continue
 		}
 		out = append(out, kv)
