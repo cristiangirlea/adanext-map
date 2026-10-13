@@ -104,3 +104,19 @@ repository); a fail-closed push guard (#8).
   xargs, an encoded PowerShell command), and fails closed only for input that mentions a push, a
   tag, a release, a merge or the API, so a fault in the hook never blocks other commands. Scripts
   run by name (`sh x.sh`, `-File x.ps1`) are not read.
+- 2026-10-13 (slice 6, the framework only): the benchmark lives under `bench/`: the command
+  `bench/cmd/adamap-bench` and its packages in `bench/internal/` (manifest, record, reduce, runner),
+  standard library only. The manifest is strict JSON; run IDs are derived from the cell
+  (`<task>.<condition>.<backend>.r<n>`) and IDs are unique across conditions, tasks and backends, so
+  a swapped record names no planned run. The conditions are counterbalanced by a seeded Latin
+  square over blocks of one task, repeat and backend. Records carry no success flag: the reducer
+  recomputes it from check outputs whose hashes it verifies. Usage keeps each provider's semantics
+  (Anthropic input without the cache; Codex and Gemini input with it), and missing usage stays
+  missing. A real run needs `--i-have-approval-for-N-runs` equal to the plan's run count and no
+  provider key variable set; the fake backend runs only in a synthetic manifest, whose outputs say
+  SYNTHETIC and never go to `RESULTS.md`. The adoption rule's latency bound is `max_latency_ratio`
+  in the manifest (1.25 in the example, to confirm before any run). The example manifest leaves
+  every identity `UNPINNED` and its 16 tasks `candidate`, so it cannot run until the owner pins and
+  approves them. Slice 6 stays open for the authorized pilot. Issue #6's text was read from its
+  public page, since `gh` had no valid credentials in this session; the candidate tasks were taken
+  from merge commits in git history, for the same reason.

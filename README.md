@@ -26,6 +26,9 @@ once per commit, and ship its benchmark: `bench/RESULTS.md` is to hold tokens, t
 correctness against no tool, the host's built-in LSP, Serena and CodeGraph, reproducible from this
 repository. Until those numbers exist, this README makes no claim.
 
+Benchmark status: the framework exists ([bench/README.md](bench/README.md): the manifest, the
+runner behind an approval gate, the records and the reducer); no measured results exist yet.
+
 ## How it will work
 
 1. `adamap index` runs the indexer that fits the repository (or reads a given `index.scip`) and
