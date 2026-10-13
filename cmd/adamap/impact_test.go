@@ -104,3 +104,12 @@ func TestImpactJSONHasTheDocumentedShape(t *testing.T) {
 		t.Errorf("impacted = %#v, want an empty list", m["impacted"])
 	}
 }
+
+func TestImpactOfAPathOutsideTheRepositorySaysSoAndNotThatNoSymbolFits(t *testing.T) {
+	repo := queryRepo(t)
+	outside := filepath.Join(t.TempDir(), "elsewhere.go")
+	code, out, errOut := runCmd("impact", outside, "--repo", repo)
+	if code != 1 || out != "" || !strings.Contains(errOut, "outside the repository") || strings.Contains(errOut, "no such symbol") {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+}

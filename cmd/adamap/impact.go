@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -29,7 +30,8 @@ func runImpact(args []string, stdout, stderr io.Writer) int {
 		target string // what the notes call the target
 		err    error
 	)
-	// A path the index has a document for is a file; anything else is a symbol.
+	// A path the index has a document for is a file; anything else is a symbol. An argument that is
+	// neither, and is a path the index cannot hold, gets the path's error.
 	if p, perr := indexPath(c.repo, arg); perr == nil && c.x.HasDocument(p) {
 		target = p
 		res, err = c.x.ImpactFile(p, *depth)
@@ -38,6 +40,8 @@ func runImpact(args []string, stdout, stderr io.Writer) int {
 		if sym, err = c.resolve(arg); err == nil {
 			target = sym.Name
 			res, err = c.x.Impact(sym.ID, *depth)
+		} else if perr != nil && errors.Is(err, query.ErrNoSymbol) {
+			err = perr
 		}
 	}
 	if err != nil {

@@ -448,7 +448,8 @@ func (s *server) impact(_ context.Context, _ *mcp.CallToolRequest, in impactIn) 
 		res    query.ImpactResult
 		target string // what the note calls the target
 	)
-	// A path the index has a document for is a file; anything else is a symbol, as in the CLI.
+	// A path the index has a document for is a file; anything else is a symbol, as in the CLI, and
+	// an argument that is neither, and a path the index cannot hold, gets the path's error.
 	if p, perr := s.cfg.Path(in.Target); perr == nil && snap.x.HasDocument(p) {
 		target = p
 		res, err = snap.x.ImpactFile(p, in.Depth)
@@ -457,6 +458,8 @@ func (s *server) impact(_ context.Context, _ *mcp.CallToolRequest, in impactIn) 
 		if sym, err = resolve(snap.x, in.Target); err == nil {
 			target = sym.Name
 			res, err = snap.x.Impact(sym.ID, in.Depth)
+		} else if perr != nil && errors.Is(err, query.ErrNoSymbol) {
+			err = perr
 		}
 	}
 	if err != nil {

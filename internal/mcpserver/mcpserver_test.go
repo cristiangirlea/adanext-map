@@ -889,7 +889,7 @@ func TestImpactOfAnAbsolutePathOutsideTheRepositoryIsAToolError(t *testing.T) {
 		}
 		return arg, nil
 	}})
-	wantToolError(t, cs, "impact", map[string]any{"target": outside}, "elsewhere.go")
+	wantToolError(t, cs, "impact", map[string]any{"target": outside}, "elsewhere.go", "outside the repository")
 	// With the default path function the path is no document and no symbol either.
 	cs = connect(t, Config{Repo: repo})
 	wantToolError(t, cs, "impact", map[string]any{"target": outside}, "elsewhere.go")
