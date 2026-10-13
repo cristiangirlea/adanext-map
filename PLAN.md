@@ -12,7 +12,8 @@ updates this file in that pull request. Tracking issue: #7.
   Done: PR #23, 2026-10-13.
 - [x] 3. query: outline, find, refs, callers and impact (#3)
   Done: PR #31, 2026-10-13.
-- [ ] 4. map: a ranked repo map within a token budget (#4)
+- [x] 4. map: a ranked repo map within a token budget (#4)
+  Done: PR #32, 2026-10-13.
 - [ ] 5. mcp: serve the queries to agents (#5)
 - [ ] 6. bench: measure against no tool, LSP, Serena and CodeGraph (#6)
 
@@ -61,3 +62,12 @@ repository); a fail-closed push guard (#8).
   span to the next global definition, clipped to the scope around it (docs/queries.md). `impact` lists each
   symbol once at its shallowest depth, never the target, default depth 3, and does not cap the list.
   Answers are one JSON object per line with `commit` first; lines are one-based; the standard library only.
+- 2026-10-13 (slice 4): the map's edge from file A to file B adds, per symbol of B that A uses, the
+  square root of that symbol's reference count, so the damping works per symbol as its reason
+  asks. Dangling files spread their rank uniformly even when `--for` personalises the jump, as the
+  slice asked; the jump is then 15% of the rank, so a matched file rises without always leading.
+  The budget is filled by symbol score across files (Aider's way), not file by file, and the chosen
+  symbols are printed under their files in rank order: walking files strictly in order lets one
+  large file take the whole budget. Filling stops at the first symbol that does not fit. Local
+  symbols, namespaces and parameters are not shown and add no edges. `internal/rank` is the map's
+  own package and does not use `internal/query`.
