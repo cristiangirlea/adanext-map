@@ -895,3 +895,23 @@ func TestImpactOfAnAbsolutePathOutsideTheRepositoryIsAToolError(t *testing.T) {
 	wantToolError(t, cs, "impact", map[string]any{"target": outside}, "elsewhere.go")
 	wantToolError(t, cs, "outline", map[string]any{"file": outside}, "elsewhere.go")
 }
+
+func TestAWronglyTypedArgumentIsAToolError(t *testing.T) {
+	cs := connect(t, Config{Repo: callGraphRepo(t)})
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"map", map[string]any{"tokens": "many"}, "tokens"},
+		{"map", map[string]any{"tokens": 1.5}, "tokens"},
+		{"map", map[string]any{"for": 7}, "for"},
+		{"find_symbol", map[string]any{"name": 5}, "name"},
+		{"find_symbol", map[string]any{"name": "A", "limit": []string{"3"}}, "limit"},
+		{"outline", map[string]any{"file": true}, "file"},
+		{"refs", map[string]any{"symbol": map[string]any{"a": 1}}, "symbol"},
+		{"impact", map[string]any{"target": "C", "depth": "deep"}, "depth"},
+	} {
+		wantToolError(t, cs, tc.tool, tc.args, tc.want)
+	}
+}
