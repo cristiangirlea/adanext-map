@@ -31,8 +31,10 @@ line says `(dirty)`. Untracked files do not count. With `--commit`, git is not a
 taken to describe that commit, as the caller says.
 
 adamap runs git with `--no-optional-locks` and with `core.fsmonitor` and `core.hooksPath` overridden,
-so the `core.fsmonitor` command and the hooks in the repository's own `.git` do not run. A clean
-filter the repository defines still can, when git compares a file whose timestamp changed: for a
+so the `core.fsmonitor` command and the hooks in the repository's own `.git` do not run. It also
+sets `GIT_NO_LAZY_FETCH=1`, so a partial clone with a missing object fails instead of fetching it
+through the repository's `remote.<name>.uploadpack` or `core.sshCommand`. A clean filter the
+repository defines still can run, when git compares a file whose timestamp changed: for a
 repository you do not trust, pass `--commit` and git is not run at all.
 
 ## Which indexer

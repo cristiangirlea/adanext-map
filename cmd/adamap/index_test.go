@@ -412,3 +412,40 @@ func TestIndexDoesNotRunProgramsNamedByTheRepository(t *testing.T) {
 		})
 	}
 }
+
+// In a partial clone, git status fetches a missing HEAD tree from the promisor remote, and that runs
+// the remote's uploadpack program from the repository's config. No -c option turns the fetch off:
+// GIT_NO_LAZY_FETCH does.
+func TestIndexDoesNotLazyFetchFromThePromisorRemote(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	repo := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "ran")
+	git(t, repo, "init", "-q")
+	writeFile(t, filepath.Join(repo, "a.txt"), "one\n")
+	git(t, repo, "add", "a.txt")
+	git(t, repo, "commit", "-q", "-m", "one")
+	tree := git(t, repo, "rev-parse", "HEAD^{tree}")
+	git(t, repo, "config", "extensions.partialClone", "origin")
+	git(t, repo, "config", "remote.origin.promisor", "true")
+	git(t, repo, "config", "remote.origin.url", filepath.ToSlash(t.TempDir()))
+	git(t, repo, "config", "remote.origin.uploadpack", "echo x > '"+filepath.ToSlash(marker)+"'; false")
+	obj := filepath.Join(repo, ".git", "objects", tree[:2], tree[2:])
+	if err := os.Remove(obj); err != nil {
+		t.Fatalf("cannot make HEAD's tree missing: %v", err)
+	}
+
+	exec.Command("git", "-C", repo, "status", "--porcelain", "--untracked-files=no").Run() // may fail; only the marker matters
+	if _, err := os.Stat(marker); err != nil {
+		t.Skipf("a plain git status does not lazily fetch here (%v), so there is nothing to guard against", err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+
+	runIndexCmd("--scip", fixtureFile(t), "--repo", repo) // its exit code is not the point
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("adamap index ran the uploadpack program the repository names for its promisor remote")
+	}
+}

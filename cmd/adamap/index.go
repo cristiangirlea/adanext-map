@@ -162,6 +162,7 @@ var gitSafely = []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-
 // gitOutput is the output of `git args` in repo, run with gitSafely. Every git call goes through it.
 func gitOutput(repo string, args ...string) (string, error) {
 	cmd := exec.Command("git", slices.Concat([]string{"-C", repo}, gitSafely, args)...)
+	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1") // a missing promisor object is an error, not a fetch
 	var errOut strings.Builder
 	cmd.Stderr = &errOut
 	out, err := cmd.Output()
