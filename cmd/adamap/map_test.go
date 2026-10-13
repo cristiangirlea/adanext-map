@@ -84,6 +84,23 @@ func TestMapSaysWhenForMatchesNothing(t *testing.T) {
 	}
 }
 
+func TestMapPrintsAtMostOneNote(t *testing.T) {
+	// More than one note could apply; the first one that does is the only one printed (docs/map.md).
+	repo := indexedRepo(t)
+	code, out, errOut := runMapCmd("--repo", repo, "--for", "Zebra", "--tokens", "8")
+	if code != 0 || out != "" || strings.Count(errOut, "\n") != 1 || !strings.Contains(errOut, "nothing matches") {
+		t.Errorf("--for matching nothing and nothing fitting: exit %d, stdout %q, stderr %q, want the one note about --for", code, out, errOut)
+	}
+	empty := t.TempDir()
+	if _, err := store.Write(empty, store.Header{Adamap: Version, Commit: testCommit, Created: time.Now().UTC()}, &model.Index{}); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut = runMapCmd("--repo", empty, "--for", "Zebra")
+	if code != 0 || out != "" || strings.Count(errOut, "\n") != 1 || !strings.Contains(errOut, "nothing matches") {
+		t.Errorf("--for on a store without symbols: exit %d, stdout %q, stderr %q, want the one note about --for", code, out, errOut)
+	}
+}
+
 func TestMapJSONHasTheSameContent(t *testing.T) {
 	repo := indexedRepo(t)
 	code, out, errOut := runMapCmd("--repo", repo, "--json", "--for", "impl")

@@ -17,9 +17,11 @@ adamap map [--tokens n] [--for words] [--repo dir] [--commit sha] [--json]
 | `--json` | off | Print the map as JSON (below) instead of text. |
 
 The exit code is 0 on success, 1 when the store cannot be read (none yet says to run
-`adamap index`), and 2 for a usage error. `adamap map -h` prints the flags. A note goes to stderr,
-with exit 0, when `--for` matches nothing (the map is then not personalised), when the store
-defines no symbols, and when not even one symbol fits in `--tokens`.
+`adamap index`), and 2 for a usage error. `adamap map -h` prints the flags. At most one note goes
+to stderr, with exit 0: the first of these that applies, in this order. `--for` matches nothing
+(the map is then not personalised); the store defines no symbols; not even one symbol fits in
+`--tokens`. A later note is not printed beside an earlier one: with `--for` matching nothing and a
+`--tokens` too small for one symbol, only the first is said.
 
 ## The output
 
