@@ -406,6 +406,72 @@ func TestConvertKeepsAnEmptyPathFatalEvenNextToSkippedOnes(t *testing.T) {
 	}
 }
 
+func TestDecodeRefusesMoreItemsThanTheCountLimitsBeforeConverting(t *testing.T) {
+	rel := func(n int) []*scippb.Relationship {
+		var out []*scippb.Relationship
+		for i := range n {
+			out = append(out, &scippb.Relationship{Symbol: "r" + strconv.Itoa(i), IsReference: true})
+		}
+		return out
+	}
+	occs := func(n int, symbol string) []*scippb.Occurrence {
+		var out []*scippb.Occurrence
+		for range n {
+			out = append(out, &scippb.Occurrence{Range: []int32{0, 0, 1}, Symbol: symbol})
+		}
+		return out
+	}
+	lim := model.Limits{Documents: 2, Symbols: 2, Occurrences: 2, Relationships: 2}
+	for _, tc := range []struct {
+		name string
+		x    *scippb.Index
+		want string
+	}{
+		{"documents", &scippb.Index{Documents: []*scippb.Document{
+			{RelativePath: "a.go"}, {RelativePath: "b.go"}, {RelativePath: "c.go"}}}, "2 documents"},
+		{"occurrences", &scippb.Index{Documents: []*scippb.Document{
+			{RelativePath: "a.go", Occurrences: occs(3, "s")}}}, "2 occurrences"},
+		{"occurrences without a symbol count too", &scippb.Index{Documents: []*scippb.Document{
+			{RelativePath: "a.go", Occurrences: occs(3, "")}}}, "2 occurrences"},
+		{"symbols in documents and external", &scippb.Index{
+			Documents: []*scippb.Document{{RelativePath: "a.go", Symbols: []*scippb.SymbolInformation{
+				{Symbol: "s0"}, {Symbol: "local 1"}}}},
+			ExternalSymbols: []*scippb.SymbolInformation{{Symbol: "e"}}}, "2 symbols"},
+		{"relationships over all symbols", &scippb.Index{
+			Documents: []*scippb.Document{{RelativePath: "a.go", Symbols: []*scippb.SymbolInformation{
+				{Symbol: "s0", Relationships: rel(2)}}}},
+			ExternalSymbols: []*scippb.SymbolInformation{{Symbol: "e", Relationships: rel(1)}}}, "2 relationships"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := decode(sciptest.Bytes(t, tc.x), lim)
+			if err == nil || !strings.Contains(err.Error(), "more than the limit of "+tc.want) {
+				t.Fatalf("decode err = %v, want one naming the limit of %s", err, tc.want)
+			}
+		})
+	}
+	// At the limits, nothing is refused.
+	ok := &scippb.Index{Documents: []*scippb.Document{{RelativePath: "a.go", Occurrences: occs(2, "s"),
+		Symbols: []*scippb.SymbolInformation{{Symbol: "s", Relationships: rel(2)}, {Symbol: "t"}}}, {RelativePath: "b.go"}}}
+	if _, _, err := decode(sciptest.Bytes(t, ok), lim); err != nil {
+		t.Errorf("counts at the limits: %v", err)
+	}
+}
+
+func TestDecodeRefusesMoreSymbolsThanTheLimitOnceDefinitionsAreConverted(t *testing.T) {
+	var occs []*scippb.Occurrence
+	for i := range 3 {
+		occs = append(occs, &scippb.Occurrence{Range: []int32{int32(i), 0, 1}, Symbol: "d" + strconv.Itoa(i),
+			SymbolRoles: int32(scippb.SymbolRole_Definition)})
+	}
+	x := &scippb.Index{Documents: []*scippb.Document{{RelativePath: "a.go", Occurrences: occs,
+		Symbols: []*scippb.SymbolInformation{{Symbol: "s"}}}}}
+	lim := model.Limits{Documents: 2, Symbols: 2, Occurrences: 3, Relationships: 2}
+	_, _, err := decode(sciptest.Bytes(t, x), lim)
+	if err == nil || !strings.Contains(err.Error(), "more than the limit of 2 symbols") {
+		t.Fatalf("decode err = %v, want one naming the limit of 2 symbols", err)
+	}
+}
+
 func TestConvertSkipsAPathWindowsCannotHold(t *testing.T) {
 	paths := []string{"a.go:x", "dir/a:x.go", "a\x00b.go", "a\nb.go", "a\x7fb.go",
 		"nul", "con.txt", "pkg/aux.go", `pkg\com1.go`, "LPT9.go", "nul.", "com².go"}
