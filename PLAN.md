@@ -48,5 +48,6 @@ repository); a fail-closed push guard (#8).
   `..` escaping, after normalising) is skipped with its occurrences and symbols instead of failing
   the index: scip-go on Windows also indexes the test main Go generates in its build cache, outside
   the repository. `adamap index` says how many on stderr and still writes the store. An empty path,
-  a malformed range or a symbol without a symbol stay fatal, and `store.Load` still refuses such a
+  and in a kept document a malformed range or a symbol without a symbol, stay fatal; a path that
+  cleans to the project root (`pkg/..`) is skipped too. `store.Load` still refuses such a
   path, since a store adamap wrote never holds one.
