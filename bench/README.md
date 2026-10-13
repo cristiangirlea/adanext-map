@@ -50,6 +50,9 @@ A real `run` refuses unless every one of these holds:
   `awsAuthRefresh` or `awsCredentialExport`, no billing variable in their `env`, no
   `forceLoginMethod` other than `claudeai`, and hold no Console login (`primaryApiKey`). A file
   that cannot be read as JSON refuses too. Again only names are printed.
+  The manifest's own `env` (backend, condition, MCP server) may not set `CLAUDE_CONFIG_DIR`, `HOME`,
+  `USERPROFILE`, `XDG_CONFIG_HOME`, `APPDATA` or `LOCALAPPDATA`: they would move the settings the CLI
+  reads away from the ones scanned.
 
 Records go to `--records`, one `<run id>.json` per run. A run whose record exists is skipped, so an
 interrupted run resumes; the approval still names the whole plan. Before a run's first attempt the
@@ -64,6 +67,8 @@ system temp directory, away from `--work`, and is removed after its record unles
 given. The grader's checkout of the fix is always removed, and the fix's files a `fix-tests` check
 lays over the workspace are taken back out right after that check (added ones removed, replaced
 ones restored as the worker left them), so a later check and a kept workspace see the worker's tree.
+A link or junction the worker left in the way of a fix file, or in its directory path, refuses the
+check and writes nothing outside the workspace.
 `--keep` is refused for a plan with a `fix-tests` check: the worker is not sandboxed, so a kept
 workspace is within every later worker's reach.
 
