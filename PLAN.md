@@ -11,7 +11,7 @@ updates this file in that pull request. Tracking issue: #7.
 - [x] 2. scip: read an index and store it per commit (#2)
   Done: PR #23, 2026-10-13.
 - [x] 3. query: outline, find, refs, callers and impact (#3)
-  Done: PR #?, 2026-10-13.
+  Done: PR #31, 2026-10-13.
 - [ ] 4. map: a ranked repo map within a token budget (#4)
 - [ ] 5. mcp: serve the queries to agents (#5)
 - [ ] 6. bench: measure against no tool, LSP, Serena and CodeGraph (#6)
