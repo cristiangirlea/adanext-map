@@ -159,7 +159,7 @@ func resolveCommit(repo, given string) (string, bool, error) {
 // would otherwise run what they name: core.fsmonitor on every status, and the post-index-change hook
 // whenever status rewrites the index. -c overrides the repository's config, and reaches the git that
 // status starts in a submodule. An empty core.fsmonitor means off on every git version, where
-// "false" is a hook program's name to one before 2.35. core.hooksPath is a directory made for the
+// "false" is a hook program's name to an older one. core.hooksPath is a directory made for the
 // call, as /dev/null is no path on Windows. Filter drivers are switched off by filtersOff, for the
 // one command that runs them.
 func gitSafely(hooks string) []string {
