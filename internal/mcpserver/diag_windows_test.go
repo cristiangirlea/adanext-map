@@ -33,4 +33,5 @@ func TestDiagSharing(t *testing.T) {
 		return -1
 	}())
 	t.Logf("TEMP=%s TMP=%s", os.Getenv("TEMP"), os.Getenv("TMP"))
+	t.Fatal("diagnostic: fail on purpose so the log above prints")
 }
