@@ -115,6 +115,10 @@ func TestMain(m *testing.M) {
 			os.Stdout.WriteString(`{"type":"result","subtype":"success","is_error":true,"result":"You've hit your session limit · resets 3:45pm","session_id":"l"}` + "\n")
 		}
 		os.Exit(1)
+	case "agent-stderr-ok": // a worker that succeeds although its CLI named a limit it got past on stderr
+		os.Stderr.WriteString("API Error: 429 rate limited, retrying\n")
+		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
+		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
 	case "agent-limit-hang": // a worker whose CLI names a limit on stderr, then works until stopped
 		os.Stdout.WriteString(`{"type":"system","subtype":"init","session_id":"lh","apiKeySource":"none"}` + "\n")
 		os.Stderr.WriteString("API Error: 429 rate limited, retrying\n")
@@ -815,6 +819,20 @@ func TestThePlansLimitStopsTheExecutionAndResumeRunsItAgain(t *testing.T) {
 		if len(recs) != 8 || len(limited) != 0 {
 			t.Fatalf("%s: after resume %d records, limited %v", shape, len(recs), limited)
 		}
+	}
+}
+
+// The stderr of an attempt that completed is not read for a limit: the CLI got past it.
+func TestACompletedAttemptIsNotReadForALimit(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	o := options(t, m, src, 8)
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-stderr-ok"}
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if recs, _ := record.ReadDir(o.RecordsDir); len(recs) != 8 {
+		t.Fatalf("%d records", len(recs))
 	}
 }
 
