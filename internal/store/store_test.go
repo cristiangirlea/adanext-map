@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -108,7 +109,7 @@ func TestWriteLeavesNoTempFiles(t *testing.T) {
 	if got, want := names(t, filepath.Join(repo, ".adamap", commitA)), []string{"header.json", "store.json.gz"}; !slices.Equal(got, want) {
 		t.Errorf("store dir holds %v, want %v", got, want)
 	}
-	if got, want := names(t, filepath.Join(repo, ".adamap")), []string{commitA, "latest"}; !slices.Equal(got, want) {
+	if got, want := names(t, filepath.Join(repo, ".adamap")), []string{".gitignore", commitA, "latest"}; !slices.Equal(got, want) {
 		t.Errorf(".adamap holds %v, want %v", got, want)
 	}
 }
@@ -283,6 +284,90 @@ func TestStoreRefusesASymlinkedCommitDirectory(t *testing.T) {
 	}
 	if _, _, err := Load(repo, commitA); err == nil || !strings.Contains(err.Error(), "symbolic link") {
 		t.Fatalf("Load err = %v, want a refusal naming the symbolic link", err)
+	}
+}
+
+func TestWriteKeepsTheStoreOutOfGit(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, ".adamap", ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "*\n" {
+		t.Errorf(".adamap/.gitignore = %q, want %q", got, "*\n")
+	}
+	// The file does not get in the way of reading the store back.
+	if _, _, err := Load(repo, commitA); err != nil {
+		t.Errorf("Load: %v", err)
+	}
+	if c, err := Latest(repo); err != nil || c != commitA {
+		t.Errorf("Latest = %q, %v, want %s", c, err, commitA)
+	}
+}
+
+func TestWriteLeavesAnExistingGitignoreAlone(t *testing.T) {
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".adamap")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const mine = "# the user's own\n*.tmp\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(mine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != mine {
+		t.Errorf(".adamap/.gitignore = %q, want it left as %q", got, mine)
+	}
+}
+
+func TestWriteRefusesASymlinkedGitignore(t *testing.T) {
+	repo, outside := t.TempDir(), t.TempDir()
+	dir := filepath.Join(repo, ".adamap")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(outside, "target")
+	if err := os.WriteFile(target, []byte("untouched\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, target, filepath.Join(dir, ".gitignore"))
+	if _, err := Write(repo, header(commitA), fixture(t)); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("Write err = %v, want a refusal naming the symbolic link", err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "untouched\n" {
+		t.Errorf("Write changed the link's target to %q", got)
+	}
+}
+
+func TestGitSeesNothingUnderTheStore(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("git", "-C", repo, "status", "--porcelain", "--untracked-files=all").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git status: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Errorf("git status lists:\n%s", out)
 	}
 }
 

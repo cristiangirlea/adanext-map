@@ -29,6 +29,8 @@ const (
 	headerFile = "header.json"
 	storeFile  = "store.json.gz"
 	latestFile = "latest"
+
+	gitignoreFile = ".gitignore"
 )
 
 // Header describes a store. Fields are only added, with omitempty.
@@ -72,6 +74,9 @@ func Write(repo string, h Header, idx *model.Index) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
+	if err := ensureGitignore(filepath.Join(repo, DirName)); err != nil {
+		return "", err
+	}
 	if err := os.Remove(filepath.Join(dir, headerFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
@@ -113,6 +118,23 @@ func checkDirs(repo, dir string) error {
 		case !fi.IsDir():
 			return fmt.Errorf("%s is not a directory", d)
 		}
+	}
+	return nil
+}
+
+// ensureGitignore gives dir a .gitignore of `*` unless it has one, so the stores show up in no
+// repository's `git status` and cannot be committed by mistake. An existing file is the user's and
+// is left as it is; a link is refused, as git does not read a .gitignore that is one.
+func ensureGitignore(dir string) error {
+	path := filepath.Join(dir, gitignoreFile)
+	fi, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return writeAtomic(dir, gitignoreFile, writeBytes([]byte("*\n")))
+	case err != nil:
+		return err
+	case fi.Mode()&fs.ModeSymlink != 0:
+		return fmt.Errorf("%s is a symbolic link: adamap will not write a store beside one", path)
 	}
 	return nil
 }
