@@ -644,5 +644,64 @@ func TestExecuteStopsACLIThatIsNotOnTheSubscriptionLogin(t *testing.T) {
 		if recs, _ := record.ReadDir(o.RecordsDir); len(recs) != 0 {
 			t.Fatalf("%s: %d records written", helper, len(recs))
 		}
+		markers, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+		if len(markers) != 1 {
+			t.Fatalf("%s: markers %v", helper, markers)
+		}
+		if text, _ := os.ReadFile(markers[0]); !strings.Contains(string(text), "refused") {
+			t.Fatalf("%s: the marker does not say the run was refused: %q", helper, text)
+		}
+	}
+}
+
+// A run that fails after its first attempt started may have spent a paid session: resume does not
+// start it again. Its .started marker stays and says why, its state stays for the owner to look
+// at, and removing the marker lets it run again. A recorded run leaves no marker.
+func TestResumeDoesNotStartARunThatStartedAgain(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	paths := m.Tasks[1].Checks[0].Paths
+	m.Tasks[1].Checks[0].Paths = []string{"none/*.txt"}
+	o := options(t, m, src, 8)
+	err := runner.Execute(context.Background(), o)
+	if err == nil || !strings.Contains(err.Error(), "changes no file matching") {
+		t.Fatalf("err %v", err)
+	}
+	markers, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
+	if len(markers) != 1 {
+		t.Fatalf("markers %v", markers)
+	}
+	marker := markers[0]
+	id := strings.TrimSuffix(filepath.Base(marker), ".started")
+	if text, _ := os.ReadFile(marker); !strings.Contains(string(text), "changes no file matching") {
+		t.Fatalf("the marker does not say why: %q", text)
+	}
+	look := filepath.Join(o.WorkDir, id, "state", "look")
+	write(t, look, "the owner's note")
+	m.Tasks[1].Checks[0].Paths = paths
+	log := &bytes.Buffer{}
+	o.Log = log
+	err = runner.Execute(context.Background(), o)
+	if err == nil || !strings.Contains(err.Error(), id) || !strings.Contains(err.Error(), ".started") {
+		t.Fatalf("err %v", err)
+	}
+	if !strings.Contains(log.String(), "run "+id+": started before and never recorded") {
+		t.Fatalf("log:\n%s", log)
+	}
+	if _, err := os.Stat(look); err != nil {
+		t.Fatal("the started run was run again")
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	if markers, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started")); len(recs) != 7 || len(markers) != 1 {
+		t.Fatalf("%d records, markers %v", len(recs), markers)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if markers, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started")); len(markers) != 0 {
+		t.Fatalf("markers left %v", markers)
 	}
 }

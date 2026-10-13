@@ -89,20 +89,40 @@ func Execute(ctx context.Context, o Options) error {
 		backends[b.ID] = b
 	}
 	env := scrub(o.Environ)
+	var started []string
 	for _, run := range m.Plan() {
 		if _, err := os.Stat(filepath.Join(o.RecordsDir, run.ID+".json")); err == nil {
 			fmt.Fprintf(o.Log, "run %s: recorded already, skipped\n", run.ID)
+			continue
+		}
+		marker := o.startedMarker(run.ID)
+		if _, err := os.Stat(marker); err == nil {
+			fmt.Fprintf(o.Log, "run %s: started before and never recorded, not started again: look at %s and %s, then remove the marker to run it again\n",
+				run.ID, marker, filepath.Join(o.WorkDir, run.ID, "state"))
+			started = append(started, run.ID)
 			continue
 		}
 		c := Cell{Run: run, Task: tasks[run.Task], Condition: conds[run.Condition], Backend: backends[run.Backend], Execution: m.Execution}
 		fmt.Fprintf(o.Log, "run %d/%d %s\n", run.Seq, m.PlannedRuns(), run.ID)
 		r, err := o.one(ctx, c, env)
 		if err != nil {
+			// A run that got as far as an attempt keeps its marker, which now says why it stopped.
+			if f, ferr := os.OpenFile(marker, os.O_APPEND|os.O_WRONLY, 0); ferr == nil {
+				fmt.Fprintf(f, "stopped: %v\n", err)
+				f.Close()
+			}
 			return fmt.Errorf("run %s: %w", run.ID, err)
 		}
 		if err := record.Write(o.RecordsDir, r); err != nil {
 			return err
 		}
+		if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if len(started) > 0 {
+		return fmt.Errorf("runs started before and never recorded, not started again (each may have spent a session): %s; look at each <run id>.started in %s and its state in %s, and remove the marker to run it again",
+			strings.Join(started, ", "), o.RecordsDir, o.WorkDir)
 	}
 	recs, err := record.ReadDir(o.RecordsDir)
 	if err != nil {
@@ -116,6 +136,11 @@ func Execute(ctx context.Context, o Options) error {
 		return fmt.Errorf("the records fail their own check: %s", strings.Join(ps, "; "))
 	}
 	return nil
+}
+
+// startedMarker is the file that says a run's first attempt began: <run id>.started beside its record.
+func (o *Options) startedMarker(id string) string {
+	return filepath.Join(o.RecordsDir, id+".started")
 }
 
 func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record, error) {
@@ -186,6 +211,13 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 		c.Injected = string(res.stdout)
 	}
 	ad, _ := o.adapter(c.Backend.CLI)
+	// From here a session may be paid for: a run that stops without its record is never started
+	// again on its own.
+	note := fmt.Sprintf("started %s: the first attempt began; a run with this marker and no record is not started again.\n"+
+		"Look at its state in %s, then remove this file to run it again.\n", o.Now().UTC().Format(time.RFC3339), c.StateDir)
+	if err := os.WriteFile(o.startedMarker(run.ID), []byte(note), 0o644); err != nil {
+		return nil, err
+	}
 	var answer string
 	for n := 1; n <= m.Execution.MaxAttempts; n++ {
 		c.Attempt = n

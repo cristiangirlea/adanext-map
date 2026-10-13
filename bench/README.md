@@ -52,7 +52,12 @@ A real `run` refuses unless every one of these holds:
   that cannot be read as JSON refuses too. Again only names are printed.
 
 Records go to `--records`, one `<run id>.json` per run. A run whose record exists is skipped, so an
-interrupted run resumes; the approval still names the whole plan. Transcripts and the warm index
+interrupted run resumes; the approval still names the whole plan. Before a run's first attempt the
+runner writes `<run id>.started` beside the records, and removes it once the record is written. A
+run that stops after that point (a failed check, a refused login, an interruption) may have spent
+a session: its marker stays and says why, resume does not start it again, and the execution ends
+with an error naming it. Look at the marker and the run's state under `--work`, then remove the
+marker to run it again. Transcripts and the warm index
 cache go to `--work` (default: a temp directory). Each workspace is a directory of its own in the
 system temp directory, away from `--work`, and is removed after its record unless `--keep` is
 given. The grader's checkout of the fix is always removed.
