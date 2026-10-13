@@ -1,0 +1,88 @@
+{
+  "format": 1,
+  "name": "pilot-1",
+  "scale": "pilot",
+  "conditions": [
+    {
+      "id": "none",
+      "kind": "none",
+      "description": "No navigation tool beyond the fixed host tools; the host's LSP tool is denied.",
+      "deny": ["LSP"]
+    },
+    {
+      "id": "lsp",
+      "kind": "host-lsp",
+      "description": "Claude Code's built-in LSP tool with gopls. Unsupported (not a baseline success) when the probe fails.",
+      "components": [
+        {"name": "gopls", "version": "UNPINNED", "source": "golang.org/x/tools/gopls"},
+        {"name": "claude-code-lsp-plugin", "version": "UNPINNED"}
+      ],
+      "tools": ["LSP"],
+      "probe": ["gopls", "version"]
+    },
+    {
+      "id": "serena",
+      "kind": "serena",
+      "description": "Serena over MCP with its Go language server. Pin the commit in the component and in the args.",
+      "components": [
+        {"name": "serena", "version": "UNPINNED", "source": "https://github.com/oraios/serena"},
+        {"name": "gopls", "version": "UNPINNED"}
+      ],
+      "mcp": {"name": "serena", "command": "uvx", "args": ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server"]},
+      "deny": ["LSP"]
+    },
+    {
+      "id": "codegraph",
+      "kind": "codegraph",
+      "description": "CodeGraph over MCP. Confirm the commands and the index path when it is pinned.",
+      "components": [
+        {"name": "codegraph", "version": "UNPINNED"}
+      ],
+      "mcp": {"name": "codegraph", "command": "codegraph", "args": ["mcp"]},
+      "index": {"command": ["codegraph", "index", "."], "output": ".codegraph"},
+      "deny": ["LSP"]
+    },
+    {
+      "id": "adamap",
+      "kind": "adamap",
+      "description": "adamap's queries over MCP, the store built by adamap index before the run (mode queries: no map injected).",
+      "components": [
+        {"name": "adamap", "version": "UNPINNED", "source": "github.com/cristiangirlea/adanext-map at the pinned commit"},
+        {"name": "scip-go", "version": "UNPINNED"}
+      ],
+      "mode": "queries",
+      "mcp": {"name": "adamap", "command": "adamap", "args": ["mcp"]},
+      "index": {"command": ["adamap", "index"], "output": ".adamap"},
+      "deny": ["LSP"]
+    }
+  ],
+  "backends": [
+    {
+      "id": "claude",
+      "cli": "claude",
+      "version": "UNPINNED",
+      "model": "UNPINNED",
+      "plan": "subscription"
+    }
+  ],
+  "tasks_file": "tasks.example.json",
+  "repeats": 3,
+  "order": {"scheme": "latin-square", "seed": 20261013},
+  "cache": "warm",
+  "execution": {
+    "timeout_seconds": 1800,
+    "max_attempts": 2,
+    "permission_mode": "acceptEdits",
+    "tools": ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
+    "context_edit": "none (Harness#116 owns provider context editing)",
+    "check_timeout_seconds": 900
+  },
+  "budget": {"max_runs": 240},
+  "adoption": {
+    "candidate": "adamap",
+    "baseline": "none",
+    "min_token_reduction": 0.10,
+    "max_latency_ratio": 1.25,
+    "min_tasks": 10
+  }
+}

@@ -20,7 +20,7 @@ they are written (`queries.md`, `map.md`, `mcp.md`).
 | `internal/query/` | outline, find, refs, callers, impact over a loaded store. |
 | `internal/rank/` | The reference graph and PageRank behind the repo map; the budgeted renderer. |
 | `internal/mcpserver/` | `adamap mcp`: the queries as MCP tools over stdio. |
-| `bench/` | The benchmark: tasks, the runner, `RESULTS.md`. |
+| `bench/` | The benchmark: `cmd/adamap-bench`, its packages in `internal/`, the example manifest and tasks, `RESULTS.md` once measured. |
 
 A package that does not exist yet arrives with its slice in `PLAN.md`.
 
