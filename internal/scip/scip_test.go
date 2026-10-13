@@ -406,10 +406,28 @@ func TestConvertKeepsAnEmptyPathFatalEvenNextToSkippedOnes(t *testing.T) {
 	}
 }
 
-// An index is untrusted, and its text reaches a terminal in an error: a path holding an escape
-// sequence or a right-to-left override must come out quoted, never raw.
+func TestConvertSkipsAPathWindowsCannotHold(t *testing.T) {
+	paths := []string{"a.go:x", "dir/a:x.go", "a\x00b.go", "a\nb.go", "a\x7fb.go",
+		"nul", "con.txt", "pkg/aux.go", `pkg\com1.go`, "LPT9.go", "nul.", "com².go"}
+	x := sciptest.Index()
+	for _, p := range paths {
+		x.Documents = append(x.Documents, &scippb.Document{RelativePath: p})
+	}
+	got, skipped, err := Convert(x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skipped.Count != len(paths) {
+		t.Errorf("skipped %d, want %d", skipped.Count, len(paths))
+	}
+	diff(t, got, wantFixture())
+}
+
+// An index is untrusted, and its text reaches a terminal in an error: a path holding a
+// right-to-left override must come out quoted, never raw. (A path with a control character such as
+// ESC is skipped before any error can name it, so the override is what reaches this far.)
 func TestConvertErrorsQuoteTheDocumentPath(t *testing.T) {
-	const hostile = "a\x1b[31m‮gp.go"
+	const hostile = "a\u202egp.go"
 	cases := []struct {
 		name   string
 		break_ func(x *scippb.Index)
@@ -426,7 +444,7 @@ func TestConvertErrorsQuoteTheDocumentPath(t *testing.T) {
 			if err == nil {
 				t.Fatal("no error")
 			}
-			if strings.ContainsAny(err.Error(), "\x1b‮") {
+			if strings.ContainsAny(err.Error(), "\x1b\u202e") {
 				t.Fatalf("err holds a raw escape or override: %q", err.Error())
 			}
 			if !strings.Contains(err.Error(), strconv.Quote(hostile)) {

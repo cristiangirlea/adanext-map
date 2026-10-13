@@ -72,8 +72,11 @@ A backslash in a document path is read as `/` (SCIP specifies `/`, but indexers 
 
 A document whose path leaves the project (absolute: `/x`, `C:...`, a UNC path; or with a `..` that
 escapes) or names the project root itself (`pkg/..`) is skipped with its occurrences and symbols,
-unread, and `adamap index` prints `skipped N documents outside the project` on stderr and still
+unread, and `adamap index` prints `skipped N documents adamap cannot store (outside the project or not a safe file name)` on stderr and still
 writes the store. Indexers on Windows list such a document: the test main Go builds in its cache.
+A document path with a NUL or other control character, a `:`, or a Windows device name in any
+segment (`nul`, `con.txt`, `pkg/aux.go`, `COM1`, `lpt¹`, `CONIN$`, `CONOUT$`; any case, trailing dots and spaces ignored)
+is skipped the same way and refused at load, on every OS, so a Linux store is safe on Windows.
 The checks above (ranges, symbols) apply to the documents that are kept.
 
 Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice is
