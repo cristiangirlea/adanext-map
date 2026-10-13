@@ -366,7 +366,11 @@ func TestIndexDoesNotRunProgramsNamedByTheRepository(t *testing.T) {
 		}},
 		{"post-index-change hook", func(t *testing.T, repo, marker string) {
 			hook := "#!/bin/sh\necho x > '" + filepath.ToSlash(marker) + "'\n"
-			if err := os.WriteFile(filepath.Join(repo, ".git", "hooks", "post-index-change"), []byte(hook), 0o755); err != nil {
+			hooks := filepath.Join(repo, ".git", "hooks") // absent when git has no templates
+			if err := os.MkdirAll(hooks, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(hooks, "post-index-change"), []byte(hook), 0o755); err != nil {
 				t.Fatal(err)
 			}
 		}},
