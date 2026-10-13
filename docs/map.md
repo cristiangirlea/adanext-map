@@ -45,8 +45,9 @@ first: a label for its kind, then its detail.
   ending in `...` when cut.
 
 Files are in rank order. A file that defines nothing the map shows is left out, and so are local
-symbols, namespaces (packages, modules) and parameters. A path holding a control character is
-printed quoted, so each line stays one line.
+symbols, namespaces (packages, modules) and parameters. A path holding a control or format
+character (bidi overrides, zero-width characters) is printed quoted, so each line stays one line
+and shows what it holds; the same characters in a name, signature or doc become a space.
 
 ## How it ranks
 
