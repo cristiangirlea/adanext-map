@@ -39,6 +39,12 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)"
       - name: hook scripts parse
-        run: bash -n .claude/hooks/go-rules.sh && bash -n .claude/hooks/go-rules.test.sh
+        run: |
+          bash -n .claude/hooks/go-rules.sh && bash -n .claude/hooks/go-rules.test.sh
+          bash -n .claude/hooks/hidden-chars.sh && bash -n .claude/hooks/hidden-chars.test.sh
       - name: the gofmt hook behaves
         run: sh .claude/hooks/go-rules.test.sh
+      - name: no hidden characters in tracked files
+        run: |
+          sh .claude/hooks/hidden-chars.test.sh
+          sh .claude/hooks/hidden-chars.sh
