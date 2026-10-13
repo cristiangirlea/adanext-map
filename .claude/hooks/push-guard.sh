@@ -79,11 +79,57 @@ unescape() {
     -e 's/\\u[0-9a-fA-F]\{4\}/ /g' -e 's/'"$soh"'/\\/g'
 }
 
+# use_lang LANG: how the text is quoted: sh (\ escapes), ps (PowerShell, ` escapes) or cmd (none,
+# and ' is no quote).
+use_lang() {
+  lang=$1
+  case $1 in sh) esc='\' ;; ps) esc='`' ;; *) esc= ;; esac
+}
+
+# words TEXT: sets wl to the words of one simple command, each followed by $soh, with one level of
+# quotes taken off. Outside quotes, blanks, newlines and commas (PowerShell's argument arrays) end
+# a word.
+words() {
+  ws=$1 wl= wd= wq= wm=o
+  while :; do
+    case $wm in
+      o) wp=${ws%%[\"\'\\\`\ \	,$nl]*} ;;
+      s) wp=${ws%%\'*} ;;
+      *) wp=${ws%%[\"\\\`]*} ;;
+    esac
+    wd=$wd$wp ws=${ws#"$wp"}
+    [ -n "$ws" ] || break
+    wc=${ws%"${ws#?}"} ws=${ws#?}
+    case $wm$wc in
+      s\' | d\") wm=o ;;
+      o\') if [ "$lang" = cmd ]; then wd=$wd$wc; else wm=s wq=1; fi ;;
+      o\") wm=d wq=1 ;;
+      [od]\\ | [od]\`)
+        if [ "$wc" = "$esc" ]; then
+          wn=${ws%"${ws#?}"} ws=${ws#?}
+          # In sh's double quotes, \ escapes only " \ $ and `.
+          case $wm$lang$wn in dsh[\"\\\$\`]) ;; dsh*) wn=$wc$wn ;; esac
+          wd=$wd$wn
+        else
+          wd=$wd$wc
+        fi ;;
+      *)
+        [ -z "$wd$wq" ] || wl=$wl$wd$soh
+        wd= wq= ;;
+    esac
+  done
+  [ -z "$wd$wq" ] || wl=$wl$wd$soh
+}
+
 # git_in_dir ARGS: git in the directory the command runs in, with the command's own -C, -c and
 # --git-dir options. Fails when that directory is unknown.
 git_in_dir() {
   [ -n "$dir" ] || return 1
+  IFS=$soh
   git -C "$dir" $gopts "$@" 2>/dev/null
+  gs=$?
+  IFS=' '
+  return $gs
 }
 current_branch() {
   b=$(git_in_dir rev-parse --abbrev-ref HEAD) && [ -n "$b" ] && [ "$b" != HEAD ] && printf '%s' "$b"
@@ -104,12 +150,14 @@ check_cmd() {
   done
 }
 
-# check_part TEXT: one simple command. Quotes and commas (PowerShell's argument arrays) separate
-# words; wrappers (env, sudo, xargs, bash -c, powershell -Command, cmd /c, Invoke-Expression,
-# Start-Process...) are taken off to reach the program.
+# check_part TEXT: one simple command, in words. Wrappers (env, sudo, xargs, Start-Process...) are
+# taken off to reach the program; the code a shell or eval is given (bash -c, powershell -Command,
+# cmd /c, Invoke-Expression...) is checked as commands.
 check_part() {
-  IFS=" 	,\"'"
-  set -- $1
+  words "$1"
+  IFS=$soh
+  set -- $wl
+  IFS=' '
   fromstdin=0 gopts=
   while [ $# -gt 0 ]; do
     case $1 in
@@ -135,8 +183,12 @@ check_part() {
         eval | iex | invoke-expression | start-process | saps | start)
         [ "$w" = xargs ] && fromstdin=1
         shift
-        case $w in eval | iex | invoke-expression)
-          case "$*" in *'$'*) mentions "$*$input" && refuse "$w runs text the hook cannot see: $*" ;; esac ;;
+        case $w in
+          eval | iex | invoke-expression)
+            case "$*" in *'$'*) mentions "$*$input" && refuse "$w runs text the hook cannot see: $*" ;; esac ;;
+          start-process | saps | start)
+            # -ArgumentList 'push origin main' is split as the program will see it.
+            t="$*"; IFS=" 	,"; set -- $t; IFS=' ' ;;
         esac
         while [ $# -gt 0 ]; do
           case $1 in
@@ -146,6 +198,10 @@ check_part() {
           esac
         done
         [ "$w" = timeout ] && [ $# -gt 0 ] && shift # the duration
+        case $w in
+          eval) (use_lang sh; check_cmd "$*") || exit $?; return 0 ;;
+          iex | invoke-expression) (use_lang ps; check_cmd "$*") || exit $?; return 0 ;;
+        esac
         continue ;;
       bash | sh | zsh | dash | ksh | ash | mksh | powershell | pwsh | cmd)
         sh=$w
@@ -165,8 +221,13 @@ check_part() {
           esac
         done
         [ $# -gt 0 ] || return 0
-        case $lc in *.sh | *.bash | *.ps1 | *.bat | *.cmd) return 0 ;; esac # a script file: not read
-        continue ;;
+        case $lc in
+          *[\ \	\;\&\|$nl]*) ;;
+          *.sh | *.bash | *.ps1 | *.bat | *.cmd) return 0 ;; # a script file: not read
+        esac
+        case $sh in powershell | pwsh) l=ps ;; cmd) l=cmd ;; *) l=sh ;; esac
+        (use_lang $l; check_cmd "$*") || exit $?
+        return 0 ;;
     esac
     break
   done
@@ -205,9 +266,9 @@ check_git() {
     case $1 in
       -C | -c | --git-dir | --work-tree | --namespace | --config-env | --attr-source)
         [ $# -ge 2 ] || return 0
-        gopts="$gopts $1 $2"
+        gopts=$gopts$1$soh$2$soh
         shift 2 ;;
-      --*=* | --bare) gopts="$gopts $1"; shift ;;
+      --*=* | --bare) gopts=$gopts$1$soh; shift ;;
       '' | -*) shift ;;
       *) break ;;
     esac
@@ -237,8 +298,8 @@ check_alias() {
   depth=$((depth + 1))
   [ "$depth" -le 5 ] || refuse "git aliases nest too deep to read"
   case $a in
-    '!'*) (check_cmd "${a#!} $*") || exit $? ;;
-    *) (set -- $a "$@"; check_git "$@") || exit $? ;;
+    '!'*) (use_lang sh; check_cmd "${a#!} $*") || exit $? ;;
+    *) (IFS=' 	'; set -- $a "$@"; check_git "$@") || exit $? ;;
   esac
 }
 
@@ -424,6 +485,8 @@ main() {
     exit 0
   fi
   cmd=$val
+  use_lang sh
+  json_string tool_name && [ "$val" = PowerShell ] && use_lang ps
   # Nothing guarded can run without one of these words.
   case $cmd in
     *[Gg][Ii][Tt]* | *[Gg][Hh]* | *[Pp][Uu][Ss][Hh]* | *[Tt][Aa][Gg]* | *[Rr][Ee][Ll][Ee][Aa][Ss][Ee]* | \

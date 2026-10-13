@@ -30,6 +30,10 @@ g -C "$tmp/upmain" checkout -q -b feat && g -C "$tmp/upmain" update-ref refs/rem
   g -C "$tmp/upmain" config branch.feat.merge refs/heads/main &&
   g -C "$tmp/upmain" config push.default upstream || fail "setting up upmain failed"
 onmain=$tmp/onmain onfeat=$tmp/onfeat upmain=$tmp/upmain
+# spaced: on feat, in a directory whose name has a space.
+spaced="$tmp/with space"
+mkdir "$spaced" && g -C "$spaced" init -q && g -C "$spaced" checkout -q -b feat &&
+  g -C "$spaced" commit -q --allow-empty -m init || fail "setting up spaced failed"
 
 n=0
 # run WANT COMMAND [CWD [TOOL]]: COMMAND is already JSON-escaped.
@@ -185,6 +189,9 @@ allowed 'gh api repos/o/r/pulls'
 allowed '$env:GIT_TERMINAL_PROMPT = \"0\"; git status' . PowerShell
 allowed 'Get-ChildItem -Recurse | Select-String push' . PowerShell
 allowed ''
+# A quoted path with a space is one word.
+allowed "cd \\\"$spaced\\\" && git push origin feat"
+allowed "git -C \\\"$spaced\\\" push origin feat"
 
 # The input itself: pretty-printed JSON is read; input the hook cannot read is refused only when
 # it mentions a push, a tag, a release, a merge or the API.
@@ -207,6 +214,8 @@ if command -v cygpath >/dev/null 2>&1; then
   refused 'git push' "$winmain"
   winfeat=$(cygpath -w "$onfeat" | sed 's/\\/\\\\/g')
   allowed 'git push' "$winfeat"
+  winspaced=$(cygpath -m "$spaced")
+  allowed "cd \\\"$winspaced\\\" && git push origin feat"
 fi
 
 # settings.json runs the hook before every Bash and PowerShell call.
