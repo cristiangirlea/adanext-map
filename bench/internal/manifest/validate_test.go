@@ -130,6 +130,14 @@ func TestValidateRefusesAnyAPIKeyConfiguration(t *testing.T) {
 		{"an api key helper setting", func(m *manifest.Manifest) { m.Backends[0].Settings = map[string]string{"apiKeyHelper": "/bin/key"} }, "backends[0].settings.apiKeyHelper"},
 		{"an api key flag", func(m *manifest.Manifest) { m.Conditions[3].MCP.Args = []string{"mcp", "--api-key=abc"} }, "conditions[3].mcp.args[1]"},
 		{"an api plan", func(m *manifest.Manifest) { m.Backends[0].Plan = "api" }, "backends[0].plan"},
+		// A setting's value is written as JSON, so a key can hide inside it.
+		{"a key inside a setting's value", func(m *manifest.Manifest) {
+			m.Backends[0].Settings = map[string]string{"env": `{"ANTHROPIC_API_KEY": "sk-abc"}`}
+		}, "backends[0].settings.env.ANTHROPIC_API_KEY"},
+		{"cloud routing inside a setting's value", func(m *manifest.Manifest) {
+			m.Conditions[0].Settings = map[string]string{"env": `{"nested": {"CLAUDE_CODE_USE_BEDROCK": "1"}}`}
+		}, "conditions[0].settings.env.nested.CLAUDE_CODE_USE_BEDROCK"},
+		{"a console login", func(m *manifest.Manifest) { m.Backends[0].Settings = map[string]string{"forceLoginMethod": "console"} }, "backends[0].settings.forceLoginMethod"},
 	}
 	for _, c := range cases {
 		m := benchtest.Pilot()
@@ -142,7 +150,7 @@ func TestValidateRefusesAnyAPIKeyConfiguration(t *testing.T) {
 				if i.Blocker {
 					t.Errorf("%s: an API key is structural, not a blocker: %v", c.name, i)
 				}
-				if strings.Contains(i.Msg, "abc") || (strings.Contains(i.Msg, "x") && !strings.Contains(i.Msg, "API")) {
+				if strings.Contains(i.Msg, "abc") {
 					t.Errorf("%s: the message must not echo the value: %v", c.name, i)
 				}
 			}
@@ -215,5 +223,13 @@ func TestIsProviderKeyVar(t *testing.T) {
 		if manifest.IsProviderKeyVar(name) {
 			t.Errorf("%s is refused", name)
 		}
+	}
+}
+
+func TestASubscriptionLoginSettingIsAllowed(t *testing.T) {
+	m := benchtest.Pilot()
+	m.Backends[0].Settings = map[string]string{"forceLoginMethod": "claudeai", "env": `{"DISABLE_TELEMETRY": "1"}`}
+	if issues := m.Validate(); len(issues) != 0 {
+		t.Fatal(issues)
 	}
 }

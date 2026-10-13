@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"encoding/json"
 	"fmt"
 	"path"
 	"regexp"
@@ -494,8 +495,40 @@ func (v *validator) noKeys(path string, kv map[string]string) {
 	}
 	sort.Strings(names)
 	for _, k := range names {
-		if IsAPIKeyName(k) {
-			v.add(path+"."+k, "configures provider API access: the benchmark refuses API keys and runs on subscription plans")
+		v.noKey(path+"."+k, k)
+		if k == "forceLoginMethod" && kv[k] != "claudeai" {
+			v.add(path+"."+k, "a login other than claudeai is API billing: the benchmark runs on subscription plans")
+		}
+		// A value that reads as JSON is written as that JSON (runner.settingValue), so the names
+		// inside it count too: {"env": {"ANTHROPIC_API_KEY": ...}} is a key.
+		var x any
+		if json.Unmarshal([]byte(kv[k]), &x) == nil {
+			v.noKeysIn(path+"."+k, x)
+		}
+	}
+}
+
+func (v *validator) noKey(path, name string) {
+	if IsAPIKeyName(name) {
+		v.add(path, "configures provider API access: the benchmark refuses API keys and runs on subscription plans")
+	}
+}
+
+func (v *validator) noKeysIn(path string, x any) {
+	switch x := x.(type) {
+	case map[string]any:
+		names := make([]string, 0, len(x))
+		for k := range x {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		for _, k := range names {
+			v.noKey(path+"."+k, k)
+			v.noKeysIn(path+"."+k, x[k])
+		}
+	case []any:
+		for i, e := range x {
+			v.noKeysIn(fmt.Sprintf("%s[%d]", path, i), e)
 		}
 	}
 }
