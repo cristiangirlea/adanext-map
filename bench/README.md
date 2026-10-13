@@ -44,7 +44,12 @@ A real `run` refuses unless every one of these holds:
 - no provider key variable is set (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
   `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, the Bedrock, Vertex and Foundry switches,
   endpoints and credentials (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, `GOOGLE_APPLICATION_CREDENTIALS`
-  and the like), any `*_API_KEY`). Only the names are printed, never the values.
+  and the like), any `*_API_KEY`). Only the names are printed, never the values;
+- for a claude backend, Claude Code's user settings (`settings.json` and `.claude.json` in
+  `CLAUDE_CONFIG_DIR`, or `~/.claude/settings.json` and `~/.claude.json`) set no `apiKeyHelper`,
+  `awsAuthRefresh` or `awsCredentialExport`, no billing variable in their `env`, no
+  `forceLoginMethod` other than `claudeai`, and hold no Console login (`primaryApiKey`). A file
+  that cannot be read as JSON refuses too. Again only names are printed.
 
 Records go to `--records`, one `<run id>.json` per run. A run whose record exists is skipped, so an
 interrupted run resumes; the approval still names the whole plan. Transcripts and the warm index
