@@ -351,6 +351,26 @@ func TestWriteRefusesASymlinkedGitignore(t *testing.T) {
 	}
 }
 
+func TestPublishNewKeepsAFileThatAppearedFirst(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitignore")
+	tmp := filepath.Join(dir, ".gitignore.1.tmp")
+	if err := os.WriteFile(tmp, []byte("*\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Someone made the file after ensureGitignore looked and before it published.
+	const theirs = "# theirs\n"
+	if err := os.WriteFile(path, []byte(theirs), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishNew(tmp, path, []byte("*\n")); err != nil {
+		t.Fatalf("publishNew over an existing file: %v", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != theirs {
+		t.Errorf("publishNew replaced the file: %q, want %q", got, theirs)
+	}
+}
+
 func TestGitSeesNothingUnderTheStore(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not on PATH")
