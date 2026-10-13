@@ -40,14 +40,14 @@
     {
       "id": "codegraph",
       "kind": "codegraph",
-      "description": "CodeGraph over MCP (serve --mcp, its own Claude Code config), the index built by codegraph init into .codegraph (codegraph index refuses a tree that was never initialised). Started through node and the package's own shim: the npm .cmd wrapper is not on PATH here, and Claude Code cannot start a .cmd file without a shell. Telemetry off.",
+      "description": "CodeGraph over MCP (serve --mcp, its own Claude Code config), the index built by codegraph init into .codegraph (codegraph index refuses a tree that was never initialised). Started as cmd /c codegraph, the npm shim found on PATH (npm's global folder is on PATH in a normal Windows terminal), because Claude Code cannot start a .cmd file without a shell. Telemetry off.",
       "components": [
         {"name": "@colbymchenry/codegraph", "version": "1.6.2", "source": "npm, installed globally with npm install -g @colbymchenry/codegraph@1.6.2"},
         {"name": "node", "version": "v22.16.0", "source": "nodejs.org"}
       ],
-      "mcp": {"name": "codegraph", "command": "node", "args": ["C:/Users/crist/AppData/Roaming/npm/node_modules/@colbymchenry/codegraph/npm-shim.js", "serve", "--mcp"]},
-      "index": {"command": ["node", "C:/Users/crist/AppData/Roaming/npm/node_modules/@colbymchenry/codegraph/npm-shim.js", "init", "-y", "."], "output": ".codegraph"},
-      "probe": ["node", "C:/Users/crist/AppData/Roaming/npm/node_modules/@colbymchenry/codegraph/npm-shim.js", "--version"],
+      "mcp": {"name": "codegraph", "command": "cmd", "args": ["/c", "codegraph", "serve", "--mcp"]},
+      "index": {"command": ["cmd", "/c", "codegraph", "init", "-y", "."], "output": ".codegraph"},
+      "probe": ["cmd", "/c", "codegraph", "--version"],
       "env": {"CODEGRAPH_TELEMETRY": "0"},
       "settings": {"enabledPlugins": "{\"gopls-lsp@claude-plugins-official\": false}"},
       "deny": ["LSP"]

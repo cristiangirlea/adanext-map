@@ -2,6 +2,7 @@ package manifest_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -318,5 +319,35 @@ func TestPathsStayInsideAndURLsAreNotOptions(t *testing.T) {
 	m.Tasks[0].Repository.URL = "--upload-pack=touch x"
 	if !benchtest.HasIssue(m.Validate(), "tasks[0].repository.url", "option") {
 		t.Error("a URL that git would read as an option is accepted")
+	}
+}
+
+// bench/ is committed to a public repository: no tracked file in it names a place on the owner's
+// machine. (The needles are built from pieces so that this file does not contain them.)
+func TestNoCommittedBenchFileNamesAMachinePath(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	needles := []string{"C:/" + "Users/", `C:\` + `Users\`, "E:/" + "__Workdir", `E:\` + `__Workdir`}
+	cmd := exec.Command("git", "ls-files", "-z", "--", ".")
+	cmd.Dir = filepath.Join("..", "..")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := strings.Split(strings.TrimRight(string(out), "\x00"), "\x00")
+	if len(files) < 5 {
+		t.Fatalf("only %d tracked files listed", len(files))
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(filepath.Join(cmd.Dir, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range needles {
+			if strings.Contains(string(data), n) {
+				t.Errorf("%s names a machine path (%s)", f, n)
+			}
+		}
 	}
 }

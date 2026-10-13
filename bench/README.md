@@ -271,7 +271,7 @@ The real run must start from a terminal outside Claude Code. A Claude Code sessi
 repository root, in PowerShell:
 
 ```powershell
-go run ./bench/cmd/adamap-bench run --manifest bench/pilot-1.json --records bench/records/pilot-1 --source cristiangirlea/harness=E:/__Workdir/personal/harness --i-have-approval-for-N-runs 240
+go run ./bench/cmd/adamap-bench run --manifest bench/pilot-1.json --records bench/records/pilot-1 --source cristiangirlea/harness=<your harness clone> --i-have-approval-for-N-runs 240
 ```
 
 `--source` fetches the four harness tasks from the local clone, which holds their revisions. If it
