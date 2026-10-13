@@ -58,8 +58,9 @@ type server struct {
 	stores *stores
 }
 
-// New makes the server. It loads nothing yet: the first call loads the store, and a call made
-// before there is one gets a tool error that says to run `adamap index`.
+// New makes the server and loads the store. When there is no store yet, or it does not load, each
+// call tries again and, until one succeeds, gets a tool error saying why (no store says to run
+// `adamap index`).
 func New(cfg Config) *mcp.Server {
 	if cfg.Path == nil {
 		cfg.Path = func(arg string) (string, error) { return path.Clean(filepath.ToSlash(arg)), nil }
@@ -69,6 +70,7 @@ func New(cfg Config) *mcp.Server {
 		repo = cfg.Repo
 	}
 	s := &server{cfg: cfg, repo: repo, stores: &stores{repo: cfg.Repo, commit: cfg.Commit}}
+	s.stores.get() // the error, if any, is each call's to report
 	srv := mcp.NewServer(
 		&mcp.Implementation{Name: "adamap", Version: cfg.Version},
 		&mcp.ServerOptions{Instructions: instructions, Capabilities: &mcp.ServerCapabilities{}},

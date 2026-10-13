@@ -514,3 +514,13 @@ func TestErrorTextIsEscapedToo(t *testing.T) {
 		t.Errorf("a raw ESC reached the error text: %q", a.text)
 	}
 }
+
+func TestTheStoreIsLoadedWhenTheServerStarts(t *testing.T) {
+	repo := callGraphRepo(t)
+	cs := connect(t, Config{Repo: repo})
+	// With the store gone from disk, only the copy loaded at the start can answer.
+	if err := os.RemoveAll(filepath.Join(repo, store.DirName)); err != nil {
+		t.Fatal(err)
+	}
+	ok(t, cs, "outline", map[string]any{"file": "calls/a.go"})
+}
