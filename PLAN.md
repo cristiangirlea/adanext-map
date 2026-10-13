@@ -41,3 +41,6 @@ repository); a fail-closed push guard (#8).
   the typed ranges SCIP added as well as the packed ones, merges a document listed twice, takes a
   symbol's first definition occurrence as its definition, and counts a forward definition as a
   reference.
+- 2026-10-13 (slice 2): a backslash in a document path is always a separator: SCIP specifies `/`
+  and indexers on Windows (scip-go 0.2.7) write `\`. The converter turns it into `/` and cleans the
+  path (`a/./b.go` and `a//b.go` become `a/b.go`) before checking it, and stores the slash form.
