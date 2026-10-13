@@ -141,3 +141,27 @@ func TestPageRankOfNothingIsNothing(t *testing.T) {
 		t.Errorf("empty graph: rank %v after %d iterations", rank, iters)
 	}
 }
+
+func TestPageRankConvergesOnAGraphThatConverges(t *testing.T) {
+	// A short cycle with a back edge settles well inside the limit.
+	out := [][]Edge{{{1, 1}}, {{2, 1}}, {{0, 1}, {1, 1}}}
+	rank, iters := PageRank(out, nil)
+	if iters >= maxIterations {
+		t.Fatalf("ran %d iterations, did not converge before the limit of %d", iters, maxIterations)
+	}
+	checkStationary(t, out, uniform(3), rank, 1e-5)
+}
+
+func TestPageRankIgnoresAPersonalisationOfTheWrongLength(t *testing.T) {
+	out := [][]Edge{{{1, 1}}, nil, nil}
+	plain, _ := PageRank(out, nil)
+	for _, personal := range [][]float64{{1, 0}, {0, 0, 0, 1}} {
+		got, _ := PageRank(out, personal)
+		for i := range got {
+			if got[i] != plain[i] {
+				t.Errorf("personalisation %v: rank %v, want the uniform %v", personal, got, plain)
+				break
+			}
+		}
+	}
+}
