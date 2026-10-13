@@ -101,6 +101,11 @@ func (s *stores) current() (snap *snapshot, newerErr, err error) {
 		now = stamp{mod: fi.ModTime(), size: fi.Size()}
 		if s.cur != nil {
 			now.header = s.headerTime(s.cur.header.Commit)
+			if now.header.IsZero() {
+				// store.Write removes the header first and writes it last, so no header means the
+				// commit is being indexed again: wait for the new one rather than load a half store.
+				now.header = s.stamp.header
+			}
 		}
 	}
 	if s.cur != nil {

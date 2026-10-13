@@ -955,6 +955,21 @@ func TestStatusOffersTheRefreshOnceWhenTheStoreAndTheTreeAreDirtyAndANewerStoreF
 	}
 }
 
+func TestStatusDoesNotCallAReindexInProgressAFailedNewerStore(t *testing.T) {
+	repo := t.TempDir()
+	writeStore(t, repo, commitA, sciptest.CallGraph())
+	cs := connect(t, Config{Repo: repo})
+	// store.Write removes the header first and writes it last: between the two, with latest as it was,
+	// the commit being served has no header.
+	if err := os.Remove(filepath.Join(store.Dir(repo, commitA), "header.json")); err != nil {
+		t.Fatal(err)
+	}
+	a := ok(t, cs, "status", nil)
+	if a.structured["newer_store_error"] != nil || a.structured["commit"] != commitA || strings.Contains(a.text, "failed to load") {
+		t.Errorf("a store being indexed again is not a newer store that failed: %q %v", a.text, a.structured)
+	}
+}
+
 // corruptStore breaks commit's store.json.gz so that the store no longer loads.
 func corruptStore(t *testing.T, repo, commit string) {
 	t.Helper()
