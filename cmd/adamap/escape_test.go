@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -88,5 +90,57 @@ func TestJSONOutputKeepsTheRawValues(t *testing.T) {
 	}
 	if sym["path"] != "d\u202e/f.go" {
 		t.Errorf("path = %q, want the raw stored value", sym["path"])
+	}
+}
+
+// rawControl reports whether s holds a DEL or a C1 control (U+0080 to U+009F) as it is written: a
+// terminal may act on them, and encoding/json leaves them as they are.
+func rawControl(s string) bool {
+	return strings.Contains(s, "\x7f") || strings.ContainsAny(s, "\u0080\u0085\u008d\u009b\u009d\u009f")
+}
+
+func TestJSONOutputEscapesDELAndTheC1Controls(t *testing.T) {
+	repo := t.TempDir()
+	def := model.Range{StartLine: 3, StartCol: 5, EndLine: 3, EndCol: 9}
+	const id = "s m p v ctl\x7f()."
+	idx := &model.Index{
+		Documents: []model.Document{{Path: "pkg/f.go", Occurrences: []model.Occurrence{
+			{Range: def, Symbol: id, Roles: model.RoleDefinition},
+		}}},
+		Symbols: []model.Symbol{{ID: id, DisplayName: "de\x7fl\u009b[2Jx\u0085", Kind: "Function",
+			Definition: &model.Location{Path: "pkg/f.go", Range: def}}},
+	}
+	if _, err := store.Write(repo, store.Header{Commit: testCommit}, idx); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"find", "de", "--json"}, {"refs", id, "--json"}, {"map", "--json"}} {
+		out := mustRun(t, append(args, "--repo", repo)...)
+		if rawControl(out) {
+			t.Errorf("%v: the JSON holds a raw DEL or C1 control: %q", args, out)
+		}
+		if !strings.Contains(out, `\u007f`) || !strings.Contains(out, `\u009b`) && args[0] != "refs" {
+			t.Errorf("%v: the controls should be written as unicode escapes: %q", args, out)
+		}
+	}
+	// Decoding gives the stored value back.
+	sym := decodeJSON(t, mustRun(t, "find", "de", "--json", "--repo", repo))["symbols"].([]any)[0].(map[string]any)
+	if sym["name"] != "de\x7fl\u009b[2Jx\u0085" || sym["id"] != id {
+		t.Errorf("name %q, id %q: want the raw stored values", sym["name"], sym["id"])
+	}
+}
+
+func TestWriteJSONEscapesOnlyDELAndTheC1Controls(t *testing.T) {
+	in := map[string]string{"s": "\x7f\xc2\x80\xc2\x9f|\xc2\xa0|\xc3\x82|\xc3\xa9|\xe2\x80\xa8|\xe2\x80\xae|\x1b|<>&"}
+	var b bytes.Buffer
+	if err := writeJSON(&b, in, func(e *json.Encoder) { e.SetEscapeHTML(false) }); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"s":"\u007f\u0080\u009f|` + "\xc2\xa0|\xc3\x82|\xc3\xa9|\x5cu2028|\xe2\x80\xae" + `|\u001b|<>&"}` + "\n"
+	if b.String() != want {
+		t.Errorf("got  %q\nwant %q", b.String(), want)
+	}
+	var back map[string]string
+	if err := json.Unmarshal(b.Bytes(), &back); err != nil || back["s"] != in["s"] {
+		t.Errorf("decoding gives %q, %v: want the input back", back["s"], err)
 	}
 }
