@@ -2,7 +2,10 @@ package query
 
 import (
 	"errors"
+	"fmt"
+	"math/rand/v2"
 	"slices"
+	"sort"
 	"testing"
 
 	"github.com/cristiangirlea/adanext-map/internal/model"
@@ -255,5 +258,150 @@ func TestCallersFallbackScopeStartsAtTheStartOfTheNamesLine(t *testing.T) {
 	}
 	if want := []string{handle}; !slices.Equal(callerIDs(got.Callers), want) || got.Unattributed != 0 {
 		t.Errorf("first definition: callers = %v, unattributed %d, want %v and none", callerIDs(got.Callers), got.Unattributed, want)
+	}
+}
+
+// TestScopeAtAgreesWithWalkingTheParentsOnOverlappingRanges checks the search along the up chain
+// against the plain walk along the parent links, on random enclosing ranges that nest and overlap.
+func TestScopeAtAgreesWithWalkingTheParentsOnOverlappingRanges(t *testing.T) {
+	rnd := rand.New(rand.NewPCG(1, 2))
+	for round := range 200 {
+		var occs []model.Occurrence
+		for k := range 1 + rnd.IntN(40) {
+			l0, c0 := rnd.IntN(30), rnd.IntN(4)
+			l1, c1 := l0+rnd.IntN(12), rnd.IntN(4)
+			var enclosing *model.Range
+			if rnd.IntN(4) > 0 {
+				enclosing = span(l0, c0, l1, c1)
+			}
+			occs = append(occs, model.Occurrence{
+				Range: rng(l0+rnd.IntN(3), 5, 6), Symbol: fmt.Sprintf("s m p v f%d().", k),
+				Roles: model.RoleDefinition, Enclosing: enclosing,
+			})
+		}
+		x := New(&model.Index{Documents: []model.Document{{Path: "x.go", Occurrences: occs}}})
+		scopes := x.scopes[0]
+		for range 200 {
+			p := pos{rnd.IntN(45), rnd.IntN(8)}
+			var want *scope
+			i := sort.Search(len(scopes), func(i int) bool { return p.less(scopes[i].start) })
+			for j := int32(i) - 1; j >= 0; j = scopes[j].parent {
+				if scopes[j].contains(p) {
+					want = &scopes[j]
+					break
+				}
+			}
+			if got := x.scopeAt(0, p); got != want {
+				t.Fatalf("round %d: scopeAt(%v) = %+v, walking the parents gives %+v", round, p, got, want)
+			}
+		}
+	}
+}
+
+func TestCallersFallbackStartsAfterAnEnclosingRangeThatEndsOnTheLineOfItsName(t *testing.T) {
+	// `} func g() {` on line 3: P's range ends at column 1 of that line, and g, which has none, starts
+	// after it rather than inside it, so that what follows g's name on the line is still g's.
+	const p, g, target = "s m p v P#", "s m p v g().", "s m p v target()."
+	x := oneDoc(
+		occSpec{sym: p, line: 0, col: 5, def: true, enclosing: span(0, 0, 3, 1)},
+		occSpec{sym: g, line: 3, col: 5, def: true},
+		occSpec{sym: target, line: 1, col: 1},  // in P
+		occSpec{sym: target, line: 3, col: 0},  // the last column of P
+		occSpec{sym: target, line: 3, col: 10}, // on g's line, past P
+		occSpec{sym: target, line: 6, col: 0},  // g runs to the end
+	)
+	got, err := x.Callers(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{p, g}; !slices.Equal(callerIDs(got.Callers), want) || got.Unattributed != 0 {
+		t.Fatalf("callers = %v, unattributed %d, want %v and none", callerIDs(got.Callers), got.Unattributed, want)
+	}
+	if !slices.Equal(lines(got.Callers[0].Sites), []int{2, 4}) || !slices.Equal(lines(got.Callers[1].Sites), []int{4, 7}) {
+		t.Errorf("sites: P %v, g %v", lines(got.Callers[0].Sites), lines(got.Callers[1].Sites))
+	}
+}
+
+func TestCallersTwoDefinitionsAtTheSamePositionLoseNoReference(t *testing.T) {
+	const a, b, h, target = "s m p v a().", "s m p v b().", "s m p v h().", "s m p v target()."
+	// a and b are defined by the same occurrence range, as when an indexer gives one name two symbols.
+	for _, tc := range []struct {
+		name         string
+		first, other string
+	}{{"a then b", a, b}, {"b then a", b, a}} {
+		x := oneDoc(
+			occSpec{sym: tc.first, line: 2, col: 5, def: true},
+			occSpec{sym: tc.other, line: 2, col: 5, def: true},
+			occSpec{sym: h, line: 6, col: 5, def: true},
+			occSpec{sym: target, line: 2, col: 1}, // left of the name: in the first one's span only
+			occSpec{sym: target, line: 3, col: 1}, // in both spans: the one listed last is the inner
+			occSpec{sym: target, line: 7, col: 1}, // in h: the duplicates end where h begins
+		)
+		got, err := x.Callers(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Unattributed != 0 || len(got.Callers) != 3 {
+			t.Fatalf("%s: callers = %v, unattributed %d", tc.name, callerIDs(got.Callers), got.Unattributed)
+		}
+		for _, c := range got.Callers {
+			var want []int
+			switch c.Symbol.ID {
+			case tc.first:
+				want = []int{3}
+			case tc.other:
+				want = []int{4}
+			case h:
+				want = []int{8}
+			}
+			if !slices.Equal(lines(c.Sites), want) {
+				t.Errorf("%s: %s has references on lines %v, want %v", tc.name, c.Symbol.ID, lines(c.Sites), want)
+			}
+		}
+	}
+}
+
+func TestCallersFallbackBeforeAnEnclosingRangeThatStartsAheadOfItsName(t *testing.T) {
+	const f, e, target = "s m p v f().", "s m p v e().", "s m p v target()."
+	// e's range begins on its doc comment, lines 1 and 2, and its name is on line 3. f has no range and
+	// runs up to e's name line, but the doc comment is e's.
+	x := oneDoc(
+		occSpec{sym: f, line: 0, col: 5, def: true},
+		occSpec{sym: e, line: 3, col: 5, def: true, enclosing: span(1, 0, 5, 1)},
+		occSpec{sym: target, line: 0, col: 9}, // on f's line
+		occSpec{sym: target, line: 1, col: 2}, // in e's doc comment
+		occSpec{sym: target, line: 2, col: 0}, // in e's doc comment, still before its name's line
+		occSpec{sym: target, line: 4, col: 0}, // in e
+		occSpec{sym: target, line: 6, col: 0}, // past both
+	)
+	got, err := x.Callers(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{f, e}; !slices.Equal(callerIDs(got.Callers), want) || got.Unattributed != 1 {
+		t.Fatalf("callers = %v, unattributed %d, want %v and 1", callerIDs(got.Callers), got.Unattributed, want)
+	}
+	if !slices.Equal(lines(got.Callers[0].Sites), []int{1}) || !slices.Equal(lines(got.Callers[1].Sites), []int{2, 3, 5}) {
+		t.Errorf("sites: f %v, e %v", lines(got.Callers[0].Sites), lines(got.Callers[1].Sites))
+	}
+}
+
+func TestCallersFallbackDoesNotNestADefinitionInsideOneWithoutAnEnclosingRange(t *testing.T) {
+	// The documented limit (docs/queries.md): with no enclosing ranges there is nothing to say where
+	// Outer ends, so inner's name ends it, and what follows inner is inner's.
+	const outer, inner, target = "s m p v Outer#", "s m p v Outer#inner().", "s m p v target()."
+	x := oneDoc(
+		occSpec{sym: outer, line: 0, col: 5, def: true},
+		occSpec{sym: inner, line: 2, col: 5, def: true},
+		occSpec{sym: target, line: 1, col: 1},  // before inner: in Outer
+		occSpec{sym: target, line: 10, col: 1}, // after inner, still in Outer's body in the source
+	)
+	got, err := x.Callers(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{outer, inner}; !slices.Equal(callerIDs(got.Callers), want) ||
+		!slices.Equal(lines(got.Callers[0].Sites), []int{2}) || !slices.Equal(lines(got.Callers[1].Sites), []int{11}) {
+		t.Errorf("callers = %+v", got.Callers)
 	}
 }

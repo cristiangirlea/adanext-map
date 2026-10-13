@@ -34,7 +34,7 @@ type Config struct {
 	// Path turns a file argument as the model typed it into the index's form: slash-separated and
 	// relative to the repository root. Nil cleans it and turns its separators into slashes.
 	Path func(arg string) (string, error)
-	// Head is the repository's HEAD commit and whether tracked files have uncommitted changes, for
+	// Head is the repository's HEAD commit and whether the tree has uncommitted changes, for
 	// the status tool. Nil means git is not asked.
 	Head func() (commit string, dirty bool, err error)
 }
@@ -220,7 +220,7 @@ type (
 		Indexer    *model.Tool   `json:"indexer,omitempty"`
 		Created    string        `json:"created,omitempty"`
 		Counts     *model.Counts `json:"counts,omitempty"`
-		// Head is the repository's HEAD and Dirty whether tracked files have changes now; GitError
+		// Head is the repository's HEAD and Dirty whether the tree has changes now; GitError
 		// says why they are unknown.
 		Head     string `json:"head,omitempty"`
 		AtHead   bool   `json:"at_head"`
@@ -448,7 +448,8 @@ func (s *server) impact(_ context.Context, _ *mcp.CallToolRequest, in impactIn) 
 		res    query.ImpactResult
 		target string // what the note calls the target
 	)
-	// A path the index has a document for is a file; anything else is a symbol, as in the CLI.
+	// A path the index has a document for is a file; anything else is a symbol, as in the CLI, and
+	// an argument that is neither, and a path the index cannot hold, gets the path's error.
 	if p, perr := s.cfg.Path(in.Target); perr == nil && snap.x.HasDocument(p) {
 		target = p
 		res, err = snap.x.ImpactFile(p, in.Depth)
@@ -457,6 +458,8 @@ func (s *server) impact(_ context.Context, _ *mcp.CallToolRequest, in impactIn) 
 		if sym, err = resolve(snap.x, in.Target); err == nil {
 			target = sym.Name
 			res, err = snap.x.Impact(sym.ID, in.Depth)
+		} else if perr != nil && errors.Is(err, query.ErrNoSymbol) {
+			err = perr
 		}
 	}
 	if err != nil {
@@ -468,6 +471,13 @@ func (s *server) impact(_ context.Context, _ *mcp.CallToolRequest, in impactIn) 
 	}
 	if len(res.Impacted) == 0 {
 		note(&b, "nothing depends on %s within depth %d", query.Safe(target), res.Depth)
+	}
+	switch res.Unattributed {
+	case 0:
+	case 1:
+		note(&b, "1 reference lies outside every definition, so it has no caller")
+	default:
+		note(&b, "%d references lie outside every definition, so they have no caller", res.Unattributed)
 	}
 	return text(b.String()), impactOut{meta(snap), res}, nil
 }
@@ -515,7 +525,7 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 	if known {
 		state := "no uncommitted changes"
 		if out.Dirty {
-			state = "uncommitted changes in tracked files"
+			state = "uncommitted changes"
 		}
 		fmt.Fprintf(&b, "HEAD: %s, %s\n", short(out.Head), state)
 	} else {

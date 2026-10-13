@@ -152,3 +152,27 @@ func TestImpactOfAnUnknownFileIsAnError(t *testing.T) {
 		t.Errorf("err = %v, want ErrNoDocument", err)
 	}
 }
+
+func TestImpactCountsTheReferencesItCouldNotFollow(t *testing.T) {
+	x := fixture(t)
+	// The reference to A in b.go lies in no definition. A is reached at depth 2, and its callers are
+	// looked up at depth 3, so only a walk that deep meets that reference.
+	for depth, want := range map[int]int{1: 0, 2: 0, 3: 1} {
+		got, err := x.Impact(sciptest.FnC, depth)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Unattributed != want {
+			t.Errorf("impact of C at depth %d: unattributed %d, want %d", depth, got.Unattributed, want)
+		}
+	}
+	// The target's own references count too, and a file's walk starts from its symbols.
+	got, err := x.Impact(sciptest.FnA, 1)
+	if err != nil || got.Unattributed != 1 {
+		t.Errorf("impact of A: %+v, %v", got, err)
+	}
+	got, err = x.ImpactFile(sciptest.PathA, 1)
+	if err != nil || got.Unattributed != 1 {
+		t.Errorf("impact of a.go: %+v, %v", got, err)
+	}
+}

@@ -204,7 +204,8 @@ func TestToolsAnswerFromTheStore(t *testing.T) {
 			"calls/a.go:8 Function B refs=10\ncalls/b.go:8 Function Rec refs=11\ncalls/b.go:19 Method A refs=20\n"},
 		{"impact", map[string]any{"target": "C"},
 			"calls/a.go:8 Function B depth=1\ncalls/b.go:8 Function Rec depth=1\ncalls/b.go:19 Method A depth=1\n" +
-				"calls/a.go:2 Function A depth=2\ncalls/b.go:17 Struct Thing depth=2\ncalls/a.go:14 Function D depth=3\n"},
+				"calls/a.go:2 Function A depth=2\ncalls/b.go:17 Struct Thing depth=2\ncalls/a.go:14 Function D depth=3\n" +
+				"(1 reference lies outside every definition, so it has no caller)\n"},
 		{"impact", map[string]any{"target": "C", "depth": 1},
 			"calls/a.go:8 Function B depth=1\ncalls/b.go:8 Function Rec depth=1\ncalls/b.go:19 Method A depth=1\n"},
 		{"refs", map[string]any{"symbol": sciptest.ThingA},
@@ -518,6 +519,10 @@ func TestStatusSaysWhetherTheStoreIsCurrent(t *testing.T) {
 			}
 			if !strings.Contains(a.text, tc.wantInText) || !strings.Contains(a.text, "0123456789ab") {
 				t.Errorf("status text %q, want %q in it", a.text, tc.wantInText)
+			}
+			// Dirty counts untracked files too, so the text must not narrow it to tracked ones.
+			if strings.Contains(a.text, "tracked files") {
+				t.Errorf("status text %q says tracked files; untracked ones count as well", a.text)
 			}
 			refresh, _ := s["refresh"].(string)
 			if tc.wantRefresh != strings.Contains(refresh, "adamap index --repo") ||
@@ -889,7 +894,7 @@ func TestImpactOfAnAbsolutePathOutsideTheRepositoryIsAToolError(t *testing.T) {
 		}
 		return arg, nil
 	}})
-	wantToolError(t, cs, "impact", map[string]any{"target": outside}, "elsewhere.go")
+	wantToolError(t, cs, "impact", map[string]any{"target": outside}, "elsewhere.go", "outside the repository")
 	// With the default path function the path is no document and no symbol either.
 	cs = connect(t, Config{Repo: repo})
 	wantToolError(t, cs, "impact", map[string]any{"target": outside}, "elsewhere.go")
@@ -1025,4 +1030,14 @@ func TestStatusErrorFieldsAreEscaped(t *testing.T) {
 			t.Errorf("newer_store_error = %q, want text with no raw ESC or U+202E", v)
 		}
 	})
+}
+
+func TestImpactStructuredContentCountsTheReferencesOutsideEveryDefinition(t *testing.T) {
+	cs := connect(t, Config{Repo: callGraphRepo(t)})
+	if a := ok(t, cs, "impact", map[string]any{"target": "C"}); a.structured["unattributed"] != 1.0 {
+		t.Errorf("unattributed = %v in %v, want 1", a.structured["unattributed"], a.structured)
+	}
+	if a := ok(t, cs, "impact", map[string]any{"target": "C", "depth": 1}); a.structured["unattributed"] != nil {
+		t.Errorf("unattributed = %v, want it left out when 0", a.structured["unattributed"])
+	}
 }
