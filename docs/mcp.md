@@ -27,6 +27,13 @@ size with what they were at the last load, and loads again when they differ. So 
 server stays on that store. A server started before there is any store answers each call with a
 tool error saying to run `adamap index`, and picks the store up once it exists.
 
+When `latest` changes and the store it names does not load (a damaged file, a format this adamap
+cannot read), the server keeps answering from the store it has, and `status` says the newer store
+failed to load and why. It remembers the `latest` it failed on, so later calls do not load the
+broken store again; it tries again when `latest` changes once more, as after `adamap index`. A
+server with no store loaded yet has nothing to fall back on: it answers each call with the error and
+tries again at the next.
+
 ## The tools
 
 Every tool is read-only and marked so (`readOnlyHint`), and none reaches outside the store and the
@@ -76,6 +83,7 @@ it cannot tell, and `stale` is `false`. Structured content:
 |---|---|
 | `repo` | The repository root, absolute. |
 | `store`, `store_error` | Whether a store loaded, and why not. |
+| `newer_store_error` | Why the store `latest` now names did not load, while an earlier store still serves (see above). The text says so too, and `stale` is `true`. |
 | `commit`, `store_dirty` | The commit the store describes, and whether it was indexed with uncommitted changes. |
 | `pinned` | `true` when `--commit` fixed the store. |
 | `indexer`, `created`, `counts` | From the store's header ([index.md](index.md)). |

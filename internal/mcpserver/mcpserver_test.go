@@ -669,3 +669,77 @@ func TestStatusWithoutGitCannotTell(t *testing.T) {
 		t.Errorf("status text %q", a.text)
 	}
 }
+
+func TestANewStoreThatFailsToLoadLeavesThePreviousOneServing(t *testing.T) {
+	repo := t.TempDir()
+	writeStore(t, repo, commitA, sciptest.Index())
+	cs := connect(t, Config{Repo: repo, Head: func() (string, bool, error) { return commitB, false, nil }})
+	ok(t, cs, "outline", map[string]any{"file": "pkg/a.go"})
+
+	// B is complete, then its store.json.gz is damaged, and latest names it.
+	writeStore(t, repo, commitB, sciptest.CallGraph())
+	file := filepath.Join(store.Dir(repo, commitB), "store.json.gz")
+	good, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("not gzip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touchLatest(t, repo, time.Minute)
+
+	for tool, args := range map[string]map[string]any{"outline": {"file": "pkg/a.go"}, "map": nil, "status": nil} {
+		if a := ok(t, cs, tool, args); a.structured["commit"] != commitA {
+			t.Errorf("%s: the previous store should keep serving while the new one fails: %v", tool, a.structured)
+		}
+	}
+	s := ok(t, cs, "status", nil)
+	failure, _ := s.structured["newer_store_error"].(string)
+	if !strings.Contains(failure, "store.json.gz") || !strings.Contains(s.text, "failed to load") ||
+		!strings.Contains(s.text, "store.json.gz") || s.structured["store"] != true || s.structured["stale"] != true {
+		t.Errorf("status should say the newer store failed to load, and why: %q %v", s.text, s.structured)
+	}
+	if !strings.Contains(s.text, "refresh: adamap index --repo") {
+		t.Errorf("status should offer the refresh: %q", s.text)
+	}
+
+	// The failure is remembered: B mended without latest changing is not tried again.
+	if err := os.WriteFile(file, good, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if a := ok(t, cs, "outline", map[string]any{"file": "pkg/a.go"}); a.structured["commit"] != commitA {
+		t.Errorf("a failed stamp should not be retried: %v", a.structured)
+	}
+	// Once latest changes again, the load is tried again, and succeeds.
+	touchLatest(t, repo, 2*time.Minute)
+	a := ok(t, cs, "outline", map[string]any{"file": "calls/a.go"})
+	if a.structured["commit"] != commitB {
+		t.Errorf("after latest changed, the mended store should serve: %v", a.structured)
+	}
+	if s := ok(t, cs, "status", nil); s.structured["newer_store_error"] != nil || strings.Contains(s.text, "failed to load") {
+		t.Errorf("status should drop the failure once the store loads: %q %v", s.text, s.structured)
+	}
+}
+
+func TestAnUnreadableLatestIsTriedAgainEvenAtTheSameStamp(t *testing.T) {
+	repo := t.TempDir()
+	writeStore(t, repo, commitA, sciptest.Index())
+	writeStore(t, repo, commitB, sciptest.CallGraph())
+	pointLatest(t, repo, commitA, time.Now().Add(-time.Hour))
+	cs := connect(t, Config{Repo: repo})
+	ok(t, cs, "outline", map[string]any{"file": "pkg/a.go"})
+
+	// Latest holds something that is not a commit (as long as one, so its size is unchanged).
+	at := time.Now().Add(time.Minute)
+	pointLatest(t, repo, strings.Repeat("x", len(commitA)), at)
+	a := ok(t, cs, "status", nil)
+	if a.structured["commit"] != commitA || a.structured["newer_store_error"] == nil {
+		t.Errorf("an unreadable latest should leave the previous store serving and be reported: %v", a.structured)
+	}
+
+	// A good latest with the very same stamp: unlike a store that failed to load, this is not remembered.
+	pointLatest(t, repo, commitB, at)
+	if a := ok(t, cs, "outline", map[string]any{"file": "calls/a.go"}); a.structured["commit"] != commitB {
+		t.Errorf("latest was mended at the same stamp and should be read again: %v", a.structured)
+	}
+}

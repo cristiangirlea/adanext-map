@@ -205,9 +205,12 @@ type (
 	}
 	statusOut struct {
 		// Repo is the repository root; Store whether a store could be loaded, and StoreError why not.
-		Repo       string `json:"repo"`
-		Store      bool   `json:"store"`
-		StoreError string `json:"store_error,omitempty"`
+		// NewerStoreError says why the store .adamap/latest now names did not load, when the store
+		// above is an earlier one still serving.
+		Repo            string `json:"repo"`
+		Store           bool   `json:"store"`
+		StoreError      string `json:"store_error,omitempty"`
+		NewerStoreError string `json:"newer_store_error,omitempty"`
 		// Commit is the commit the store describes, Pinned whether --commit fixed it, StoreDirty
 		// whether it was indexed with uncommitted changes.
 		Commit     string        `json:"commit,omitempty"`
@@ -471,7 +474,7 @@ func (s *server) impact(_ context.Context, _ *mcp.CallToolRequest, in impactIn) 
 func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (*mcp.CallToolResult, statusOut, error) {
 	out := statusOut{Repo: s.repo, Pinned: s.cfg.Commit != "", Refresh: "adamap index --repo " + shellArg(s.repo)}
 	var b strings.Builder
-	snap, err := s.stores.get()
+	snap, newerErr, err := s.stores.current()
 	if err != nil {
 		out.StoreError = err.Error()
 		fmt.Fprintf(&b, "no store: %v\n", err)
@@ -493,6 +496,10 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 			fmt.Fprintf(&b, " by %s", query.Safe(strings.TrimSpace(h.Indexer.Name+" "+h.Indexer.Version)))
 		}
 		fmt.Fprintf(&b, ": %d documents, %d symbols, %d occurrences\n", h.Counts.Documents, h.Counts.Symbols, h.Counts.Occurrences)
+		if newerErr != nil {
+			out.NewerStoreError = newerErr.Error()
+			fmt.Fprintf(&b, "a newer store failed to load, so this one still serves: %v\n", newerErr)
+		}
 	}
 
 	known := false
@@ -535,7 +542,7 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 			b.WriteString("stale: the working tree has uncommitted changes the store does not show\n")
 		case out.StoreDirty:
 			b.WriteString("stale: the store was indexed with uncommitted changes, and the tree has none now\n")
-		default:
+		case out.NewerStoreError == "":
 			b.WriteString("the store is current\n")
 		}
 		out.Stale = !out.AtHead || out.Dirty != out.StoreDirty
@@ -543,6 +550,8 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 			fmt.Fprintf(&b, "refresh: %s\n", out.Refresh)
 		}
 	}
+	// A store that did not load is newer than the one serving, whatever git says.
+	out.Stale = out.Stale || out.NewerStoreError != ""
 	if out.Stale {
 		fmt.Fprintf(&b, "refresh: %s\n", out.Refresh)
 		if out.Pinned {
