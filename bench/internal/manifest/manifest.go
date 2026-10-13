@@ -149,6 +149,20 @@ type Execution struct {
 	// ContextEdit is the provider context-edit setting, recorded and held fixed (Harness#116 owns it).
 	ContextEdit         string `json:"context_edit,omitempty"`
 	CheckTimeoutSeconds int    `json:"check_timeout_seconds,omitempty"`
+	// PlanReserve is the share of any plan window's use (the CLI's rate_limit_event meter) at
+	// which the runner stops before starting the next run: above 0, at most 1; 0.8 when absent.
+	PlanReserve *float64 `json:"plan_reserve,omitempty"`
+}
+
+// DefaultPlanReserve is the plan reserve of a manifest that sets none.
+const DefaultPlanReserve = 0.8
+
+// Reserve is the plan reserve in force: PlanReserve, or DefaultPlanReserve when it is absent.
+func (e Execution) Reserve() float64 {
+	if e.PlanReserve == nil {
+		return DefaultPlanReserve
+	}
+	return *e.PlanReserve
 }
 
 // Budget bounds the experiment.

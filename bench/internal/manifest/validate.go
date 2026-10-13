@@ -89,6 +89,9 @@ func (m *Manifest) Validate() []Issue {
 	if e.CheckTimeoutSeconds < 0 {
 		v.add("execution.check_timeout_seconds", "negative")
 	}
+	if r := e.PlanReserve; r != nil && !(*r > 0 && *r <= 1) {
+		v.add("execution.plan_reserve", fmt.Sprintf("%v: a fraction above 0 and at most 1 (0.8 when absent)", *r))
+	}
 	if want := m.PlannedRuns(); m.Budget.MaxRuns < want {
 		v.block("budget.max_runs", fmt.Sprintf("%d is less than the plan's %d runs (tasks x conditions x backends x repeats)", m.Budget.MaxRuns, want))
 	}
