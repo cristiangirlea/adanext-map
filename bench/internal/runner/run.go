@@ -220,6 +220,14 @@ func (o *Options) one(ctx context.Context, c Cell, env []string) (*record.Record
 		}
 	}
 	r.Answer, r.AnswerSHA256 = answer, record.SHA256(answer)
+	// A worker that committed moved HEAD: put it back, keeping the tree and the index, so the
+	// fingerprint and the checks see every change against the task's revision.
+	if head, err := git(c.Workspace, "rev-parse", "HEAD"); err == nil && strings.TrimSpace(head) != r.Source.Commit {
+		r.WorkerHead = strings.TrimSpace(head)
+		if _, err := git(c.Workspace, "reset", "-q", "--soft", r.Source.Commit); err != nil {
+			return nil, err
+		}
+	}
 	after, err := Fingerprint(c.Workspace, exclude)
 	if err != nil {
 		return nil, err

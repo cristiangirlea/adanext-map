@@ -59,7 +59,10 @@ type Record struct {
 	// Source is the workspace before the worker started; After is the tree the checks ran on.
 	Source Fingerprint `json:"source"`
 	After  Fingerprint `json:"after"`
-	Index  *Index      `json:"index,omitempty"`
+	// WorkerHead is the commit the worker left HEAD at when it moved it (a commit of its own);
+	// the runner put HEAD back on the task's revision, keeping the tree, before the checks.
+	WorkerHead string `json:"worker_head,omitempty"`
+	Index      *Index `json:"index,omitempty"`
 	// Unsupported says why the condition could not run on this host (its probe failed); such a
 	// run has no attempts and is a coverage gap, never a success.
 	Unsupported string    `json:"unsupported,omitempty"`

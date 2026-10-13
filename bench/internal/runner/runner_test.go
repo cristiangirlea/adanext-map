@@ -29,6 +29,15 @@ func TestMain(m *testing.M) {
 		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
 		failUntil, _ := strconv.Atoi(os.Getenv("BENCH_TEST_FAIL"))
 		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, failUntil))
+	case "agent-commit": // a worker that commits its change
+		os.WriteFile("b.go", []byte("package a\n\nfunc B() {}\n"), 0o644)
+		for _, args := range [][]string{{"add", "b.go"}, {"-c", "user.name=w", "-c", "user.email=w@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "worker"}} {
+			if err := exec.Command("git", args...).Run(); err != nil {
+				os.Exit(1)
+			}
+		}
+		attempt, _ := strconv.Atoi(os.Getenv("ADAMAP_BENCH_ATTEMPT"))
+		os.Exit(runner.FakeAgent(os.Stdin, os.Stdout, attempt, 0))
 	case "index":
 		if err := os.MkdirAll(".idx", 0o755); err != nil {
 			os.Exit(1)
@@ -347,5 +356,31 @@ func TestDryRunPrintsEveryPlannedCellAndRunsNothing(t *testing.T) {
 	runner.DryRun(benchtest.Synthetic(), &out, runner.Fake{Program: []string{"adamap-bench", "fake-agent"}}, nil)
 	if !strings.Contains(out.String(), "SYNTHETIC") {
 		t.Fatal("a synthetic dry run is not labelled")
+	}
+}
+
+// A worker that commits leaves HEAD elsewhere; the runner puts HEAD back on the task's revision,
+// keeping the tree, so the checks see the change and the record still matches its source.
+func TestExecuteUndoesAWorkersCommit(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	m.Tasks[0].Checks = append(m.Tasks[0].Checks, manifest.Check{ID: "untouched", Type: manifest.CheckNoChanges})
+	o := options(t, m, src, 8)
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-commit"}
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := record.ReadDir(o.RecordsDir)
+	if p := record.Check(m, recs); len(p) != 0 {
+		t.Fatalf("problems %v", p)
+	}
+	r := benchtest.Find(recs, "t00.none.fake.r1")
+	if r.After.Commit != pre || r.After.Content == record.CleanContent || r.WorkerHead == "" || r.WorkerHead == pre {
+		t.Fatalf("after %+v, worker head %q", r.After, r.WorkerHead)
+	}
+	for _, c := range r.Checks {
+		if c.ID == "untouched" && c.Passed {
+			t.Fatal("no-changes passed on a committed change")
+		}
 	}
 }
