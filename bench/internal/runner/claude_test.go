@@ -2,6 +2,8 @@ package runner_test
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -244,6 +246,65 @@ func TestClaudeWatchGoesOnOnlyOnTheSubscriptionLogin(t *testing.T) {
 		}
 		if (got == nil) != c.ok {
 			t.Fatalf("%s: watch says %v", c.name, got)
+		}
+	}
+}
+
+// watchLines feeds lines to a fresh claude watch and returns the first error, with its line's index.
+func watchLines(t *testing.T, lines []string) (int, error) {
+	t.Helper()
+	inv, err := runner.Claude{}.Command(cell(benchtest.Pilot(), "none"))
+	if err != nil || inv.Watch == nil {
+		t.Fatalf("no watch (%v)", err)
+	}
+	for i, l := range lines {
+		if err := inv.Watch([]byte(l)); err != nil {
+			return i, err
+		}
+	}
+	return len(lines), nil
+}
+
+// fixtureLines is a saved real stream, one event per line.
+func fixtureLines(t *testing.T, name string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimRight(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n"), "\n")
+}
+
+// Claude Code 2.1.284 writes its hooks' events and a rate_limit_event before its init event (the
+// owner's wiring smoke stopped there). The watch accepts that stream up to its end and waits for
+// the init; a turn, a result or another event type before the init is still refused, and the init
+// still decides.
+func TestClaudeWatchAcceptsTheMeterAndHooksBeforeInit(t *testing.T) {
+	real := fixtureLines(t, "claude-2.1.284-start.jsonl")
+	if i, err := watchLines(t, real); err != nil {
+		t.Fatalf("the real stream is refused at line %d: %v", i+1, err)
+	}
+	cases := []struct {
+		name string
+		then []string
+		ok   bool
+	}{
+		{"then the subscription init and a turn", []string{`{"type":"system","subtype":"init","apiKeySource":"none"}`, `{"type":"assistant","message":{}}`}, true},
+		{"then an api key init", []string{`{"type":"system","subtype":"init","apiKeySource":"ANTHROPIC_API_KEY"}`}, false},
+		{"then an init without a source", []string{`{"type":"system","subtype":"init"}`}, false},
+		{"then a turn", []string{`{"type":"assistant","message":{}}`}, false},
+		{"then a user event", []string{`{"type":"user","message":{}}`}, false},
+		{"then a result", []string{`{"type":"result","subtype":"success","is_error":false,"result":"x"}`}, false},
+		{"then an unknown event", []string{`{"type":"stream_event"}`}, false},
+		{"then another system event and the init", []string{`{"type":"system","subtype":"status"}`, `{"type":"system","subtype":"init","apiKeySource":"none"}`}, true},
+	}
+	for _, c := range cases {
+		_, err := watchLines(t, append(slices.Clone(real), c.then...))
+		if (err == nil) != c.ok {
+			t.Errorf("%s: watch says %v", c.name, err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "apiKeySource") {
+			t.Errorf("%s: the refusal does not name the login: %v", c.name, err)
 		}
 	}
 }

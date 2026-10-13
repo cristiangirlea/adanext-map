@@ -120,7 +120,8 @@ func (Claude) Command(c Cell) (Invocation, error) {
 
 // subscriptionOnly watches a stream-json transcript for its init event and lets the session go on
 // only when the init shows the subscription login (apiKeySource "none"). Any other source, a
-// missing one, or a turn before the init stops it. It is a backstop, not a gate: the CLI starts
+// missing one, or a turn (or any event but a system or rate_limit_event one) before the init stops
+// it; an init that never comes is bounded by the attempt's timeout. It is a backstop, not a gate: the CLI starts
 // its first request right after writing the init, so at most one request can get through before
 // the process is stopped.
 func subscriptionOnly() func(line []byte) error {
@@ -143,7 +144,8 @@ func subscriptionOnly() func(line []byte) error {
 			}
 			seen = true
 			return nil
-		case e.Type == "system":
+		case e.Type == "system", e.Type == "rate_limit_event":
+			// Hooks' events and the plan's meter come before the init in Claude Code 2.1.284; none is a turn.
 			return nil
 		}
 		return fmt.Errorf("a %q event came before the CLI's init event, so its login (apiKeySource) is unknown: refused as possible API billing", e.Type)
