@@ -114,9 +114,11 @@ func (Claude) Command(c Cell) (Invocation, error) {
 	}, nil
 }
 
-// subscriptionOnly watches a stream-json transcript for its init event, which comes before the
-// first model call, and lets the session go on only when the init shows the subscription login
-// (apiKeySource "none"). Any other source, a missing one, or a turn before the init stops it.
+// subscriptionOnly watches a stream-json transcript for its init event and lets the session go on
+// only when the init shows the subscription login (apiKeySource "none"). Any other source, a
+// missing one, or a turn before the init stops it. It is a backstop, not a gate: the CLI starts
+// its first request right after writing the init, so at most one request can get through before
+// the process is stopped.
 func subscriptionOnly() func(line []byte) error {
 	seen := false
 	return func(line []byte) error {
