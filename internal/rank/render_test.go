@@ -219,6 +219,23 @@ func TestFitIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestFormatCharactersInANameDocOrKindBecomeASpace(t *testing.T) {
+	// U+202E reverses what follows it on a terminal, U+200B takes no room, U+2028 breaks the line.
+	files := []File{{Path: "a.go", Symbols: []Symbol{
+		{Name: "Ru\u202en", Kind: "Function"},
+		{Name: "Hub", Doc: "joins\u200bthe\u2028spokes"},
+		{Name: "K", Kind: "Fancy\u202eKind"},
+	}}}
+	text := Text(files)
+	if strings.ContainsAny(text, "\u202e\u200b\u2028") {
+		t.Errorf("format characters reach the text: %q", text)
+	}
+	want := "a.go\n  func  Ru n\n  sym  Hub  // joins the spokes\n  fancy kind  K\n"
+	if text != want {
+		t.Errorf("text %q, want %q", text, want)
+	}
+}
+
 func TestDetailOfAHugeSignatureIsFast(t *testing.T) {
 	// Every leading word is a keyword candidate, and each check scans what follows it.
 	sig := strings.Repeat("a ", 512*1024) + "Name"
