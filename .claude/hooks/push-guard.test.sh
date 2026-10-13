@@ -209,4 +209,10 @@ if command -v cygpath >/dev/null 2>&1; then
   allowed 'git push' "$winfeat"
 fi
 
+# settings.json runs the hook before every Bash and PowerShell call.
+settings="$(dirname "$hook")/../settings.json"
+tr -d ' \t\r\n' < "$settings" |
+  grep -qF '"PreToolUse":[{"matcher":"Bash|PowerShell","hooks":[{"type":"command","command":"sh\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/push-guard.sh"' ||
+  fail "settings.json does not run push-guard.sh before Bash and PowerShell calls"
+
 echo "push-guard.test: ok ($n cases)"
