@@ -181,7 +181,7 @@ documents is two symbols.
 
 The file is written one document and one symbol at a time, straight into the compressor, so writing
 a store holds the model and one element of it, never the whole JSON. `<`, `>` and `&` are written as
-they are rather than as `<`, `>` and `&`; both forms are the same JSON string, so
+they are rather than as `\u003c`, `\u003e` and `\u0026`; both forms are the same JSON string, so
 stores written before this still load, and adamap versions from before it load the new ones.
 
 An occurrence has a `range`, a `symbol`, its `roles` and, when the indexer gives one, an `enclosing`
