@@ -261,3 +261,26 @@ func TestInstallUsageErrors(t *testing.T) {
 		t.Errorf("help should list install: %q", out)
 	}
 }
+
+func TestInstallClaudeReadsTheLastOfADuplicateKey(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, filepath.Join(repo, ".mcp.json"), `{
+  "mcpServers": {"old": {"command": "o"}},
+  "mcpServers": {"github": {"command": "g"}, "adamap": {"command": "a"}, "adamap": {"command": "b", "env": {"K": "v"}}}
+}`)
+	mustRun(t, "install", "--claude", "--repo", repo)
+	data, _ := os.ReadFile(filepath.Join(repo, ".mcp.json"))
+	var doc struct {
+		MCPServers map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.MCPServers["github"] == nil || doc.MCPServers["old"] != nil {
+		t.Errorf("the servers in effect are the last mcpServers' ones:\n%s", data)
+	}
+	if env, _ := doc.MCPServers["adamap"]["env"].(map[string]any); env["K"] != "v" {
+		t.Errorf("the adamap entry in effect is the last one:\n%s", data)
+	}
+	checkEntry(t, doc.MCPServers["adamap"], repo)
+}

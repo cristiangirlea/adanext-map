@@ -254,7 +254,8 @@ func marshal(v any) (json.RawMessage, error) {
 
 // setServer is the .mcp.json document data with the server name set to e: its type, command and
 // args replaced, its other fields and every other key kept in order. The result is indented by two
-// spaces, as Claude Code writes the file. Empty data is an empty document.
+// spaces, as Claude Code writes the file. Empty data is an empty document. Of a key written twice,
+// the last is read, as a JSON reader takes it, and kept at the first one's place.
 func setServer(data []byte, name string, e serverEntry) ([]byte, error) {
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	var top []member
@@ -271,7 +272,6 @@ func setServer(data []byte, name string, e serverEntry) ([]byte, error) {
 			if servers, err = members(m.value); err != nil {
 				return nil, fmt.Errorf("mcpServers: %w", err)
 			}
-			break
 		}
 	}
 	for _, m := range servers {
@@ -280,7 +280,6 @@ func setServer(data []byte, name string, e serverEntry) ([]byte, error) {
 			if fields, err = members(m.value); err != nil {
 				return nil, fmt.Errorf("mcpServers.%s: %w", name, err)
 			}
-			break
 		}
 	}
 	command, err := marshal(e.command)
