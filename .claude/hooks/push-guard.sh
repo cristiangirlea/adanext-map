@@ -535,9 +535,10 @@ check_gh() {
 }
 
 # check_api ARGS: a call that writes (-X/--method other than GET, or fields, which make it a POST)
-# on a release or a git ref endpoint, or on one the hook cannot see, is refused.
+# on a release or a git ref endpoint, or on one the hook cannot see, is refused. The endpoint is the
+# first argument that is not an option or an option's value.
 check_api() {
-  method= fields= target= hidden=
+  method= fields= ep= target= hidden=
   while [ $# -gt 0 ]; do
     t=$1
     shift
@@ -545,12 +546,17 @@ check_api() {
       -X | --method) method=${1-}; [ $# -gt 0 ] && shift ;;
       -X*) method=${t#-X} ;;
       --method=*) method=${t#*=} ;;
-      -f* | -F* | --field | --field=* | --raw-field | --raw-field=* | --input | --input=*) fields=1 ;;
+      -f | -F | --field | --raw-field | --input) fields=1; [ $# -gt 0 ] && shift ;;
+      -f* | -F* | --field=* | --raw-field=* | --input=*) fields=1 ;;
+      -H | --header | -q | --jq | -t | --template | -p | --preview | --hostname | --cache)
+        [ $# -gt 0 ] && shift ;;
+      -*) ;;
+      *) [ -n "$ep" ] || ep=$t ;;
     esac
-    case $t in *'$'* | *%*) hidden=1 ;; esac
-    lower "$t"
-    case $lc in *releases* | *git/refs*) target=1 ;; esac
   done
+  case $ep in *'$'* | *%*) hidden=1 ;; esac
+  lower "$ep"
+  case $lc in *releases* | *git/refs*) target=1 ;; esac
   lower "$method"
   m=$lc
   if [ -z "$m" ]; then

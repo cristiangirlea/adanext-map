@@ -127,6 +127,8 @@ refused 'gh api -XDELETE repos/o/r/git/refs/heads/main'
 refused 'gh api repos/o/r/git/refs -f ref=refs/heads/main -f sha=abc'
 refused 'gh api repos/o/r/releases -F tag_name=v1'
 refused 'gh api repos/o/r/releases --input body.json'
+refused 'gh api -H \"Accept: application/json\" -X POST repos/o/r/releases'
+refused 'gh api --jq .ref -f ref=refs/heads/x repos/o/r/git/refs'
 # Compound commands and wrappers.
 refused 'git status && git push origin main'
 refused 'git status || git push origin main'
@@ -210,6 +212,8 @@ allowed 'gh pr view 5'
 allowed 'gh api repos/o/r/releases'
 allowed 'gh api -X GET repos/o/r/git/refs -f per_page=5'
 allowed 'gh api repos/o/r/pulls'
+allowed "gh api graphql -f query='query(\$owner:String!){viewer{login}}' -F owner=x"
+allowed 'gh api repos/o/r/issues/1/comments -f body=\"see releases\"'
 allowed '$env:GIT_TERMINAL_PROMPT = \"0\"; git status' . PowerShell
 allowed 'Get-ChildItem -Recurse | Select-String push' . PowerShell
 allowed ''
