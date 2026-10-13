@@ -29,6 +29,10 @@ time. So after `adamap index`, the next call answers from the new store, with no
 server stays on that store. A server started before there is any store answers each call with a
 tool error saying to run `adamap index`, and picks the store up once it exists.
 
+On Windows, a call that opens `latest` at the instant `adamap index` renames a new one over it can
+get a sharing violation; the server tries that read up to five times, five milliseconds apart,
+before it counts as a failure.
+
 When `latest` changes and the store it names does not load (a damaged file, a format this adamap
 cannot read), the server keeps answering from the store it has, and `status` says the newer store
 failed to load and why. It remembers the `latest` it failed on, so later calls do not load the

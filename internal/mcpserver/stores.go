@@ -33,6 +33,8 @@ type stores struct {
 	cur    *snapshot
 	stamp  stamp    // latest as it was when cur was loaded
 	failed *failure // the newer store that did not load, if any
+
+	pause func(time.Duration) // waits between attempts to read latest; nil is time.Sleep
 }
 
 // stamp is what tells one version of the store from the next: .adamap/latest's modification time
@@ -113,7 +115,7 @@ func (s *stores) current() (snap *snapshot, newerErr, err error) {
 			return s.cur, s.failed.err, nil
 		}
 	}
-	commit, err := store.Latest(s.repo)
+	commit, err := s.readLatest()
 	if err != nil {
 		return s.keep(err, now, true)
 	}
@@ -136,6 +138,28 @@ func (s *stores) keep(err error, now stamp, retry bool) (*snapshot, error, error
 	}
 	s.failed = &failure{stamp: now, err: err, retry: retry}
 	return s.cur, err, nil
+}
+
+// Windows fails an open of latest at the instant store.Write renames a new one over it. Such a
+// read is tried again a few times, a few milliseconds apart, before it counts as a failure.
+const (
+	latestAttempts = 5
+	latestPause    = 5 * time.Millisecond
+)
+
+// readLatest is store.Latest, tried again while the read meets a sharing violation.
+func (s *stores) readLatest() (string, error) {
+	pause := s.pause
+	if pause == nil {
+		pause = time.Sleep
+	}
+	for attempt := 1; ; attempt++ {
+		commit, err := store.Latest(s.repo)
+		if err == nil || attempt == latestAttempts || !isSharingViolation(err) {
+			return commit, err
+		}
+		pause(latestPause)
+	}
 }
 
 func load(repo, commit string) (*snapshot, error) {
