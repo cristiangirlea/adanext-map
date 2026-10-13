@@ -2,17 +2,21 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	scippb "github.com/scip-code/scip/bindings/go/scip"
@@ -667,5 +671,309 @@ func TestStatusWithoutGitCannotTell(t *testing.T) {
 	a := ok(t, cs, "status", nil)
 	if !strings.Contains(a.text, "cannot tell") || !strings.Contains(a.text, "not a git repository") {
 		t.Errorf("status text %q", a.text)
+	}
+}
+
+func TestANewStoreThatFailsToLoadLeavesThePreviousOneServing(t *testing.T) {
+	repo := t.TempDir()
+	writeStore(t, repo, commitA, sciptest.Index())
+	cs := connect(t, Config{Repo: repo, Head: func() (string, bool, error) { return commitB, false, nil }})
+	ok(t, cs, "outline", map[string]any{"file": "pkg/a.go"})
+
+	// B is complete, then its store.json.gz is damaged, and latest names it.
+	writeStore(t, repo, commitB, sciptest.CallGraph())
+	file := filepath.Join(store.Dir(repo, commitB), "store.json.gz")
+	good, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("not gzip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touchLatest(t, repo, time.Minute)
+
+	for tool, args := range map[string]map[string]any{"outline": {"file": "pkg/a.go"}, "map": nil, "status": nil} {
+		if a := ok(t, cs, tool, args); a.structured["commit"] != commitA {
+			t.Errorf("%s: the previous store should keep serving while the new one fails: %v", tool, a.structured)
+		}
+	}
+	s := ok(t, cs, "status", nil)
+	failure, _ := s.structured["newer_store_error"].(string)
+	if !strings.Contains(failure, "store.json.gz") || !strings.Contains(s.text, "failed to load") ||
+		!strings.Contains(s.text, "store.json.gz") || s.structured["store"] != true || s.structured["stale"] != true {
+		t.Errorf("status should say the newer store failed to load, and why: %q %v", s.text, s.structured)
+	}
+	if !strings.Contains(s.text, "refresh: adamap index --repo") {
+		t.Errorf("status should offer the refresh: %q", s.text)
+	}
+
+	// The failure is remembered: B mended without latest changing is not tried again.
+	if err := os.WriteFile(file, good, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if a := ok(t, cs, "outline", map[string]any{"file": "pkg/a.go"}); a.structured["commit"] != commitA {
+		t.Errorf("a failed stamp should not be retried: %v", a.structured)
+	}
+	// Once latest changes again, the load is tried again, and succeeds.
+	touchLatest(t, repo, 2*time.Minute)
+	a := ok(t, cs, "outline", map[string]any{"file": "calls/a.go"})
+	if a.structured["commit"] != commitB {
+		t.Errorf("after latest changed, the mended store should serve: %v", a.structured)
+	}
+	if s := ok(t, cs, "status", nil); s.structured["newer_store_error"] != nil || strings.Contains(s.text, "failed to load") {
+		t.Errorf("status should drop the failure once the store loads: %q %v", s.text, s.structured)
+	}
+}
+
+func TestAnUnreadableLatestIsTriedAgainEvenAtTheSameStamp(t *testing.T) {
+	repo := t.TempDir()
+	writeStore(t, repo, commitA, sciptest.Index())
+	writeStore(t, repo, commitB, sciptest.CallGraph())
+	pointLatest(t, repo, commitA, time.Now().Add(-time.Hour))
+	cs := connect(t, Config{Repo: repo})
+	ok(t, cs, "outline", map[string]any{"file": "pkg/a.go"})
+
+	// Latest holds something that is not a commit (as long as one, so its size is unchanged).
+	at := time.Now().Add(time.Minute)
+	pointLatest(t, repo, strings.Repeat("x", len(commitA)), at)
+	a := ok(t, cs, "status", nil)
+	if a.structured["commit"] != commitA || a.structured["newer_store_error"] == nil {
+		t.Errorf("an unreadable latest should leave the previous store serving and be reported: %v", a.structured)
+	}
+
+	// A good latest with the very same stamp: unlike a store that failed to load, this is not remembered.
+	pointLatest(t, repo, commitB, at)
+	if a := ok(t, cs, "outline", map[string]any{"file": "calls/a.go"}); a.structured["commit"] != commitB {
+		t.Errorf("latest was mended at the same stamp and should be read again: %v", a.structured)
+	}
+}
+
+func TestReindexingTheSameCommitIsNoticedWhenLatestLooksUnchanged(t *testing.T) {
+	repo := t.TempDir()
+	writeStore(t, repo, commitA, sciptest.Index())
+	latest := filepath.Join(repo, store.DirName, "latest")
+	fi, err := os.Stat(latest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := connect(t, Config{Repo: repo})
+	ok(t, cs, "outline", map[string]any{"file": "pkg/a.go"})
+
+	// The same commit indexed again: latest is rewritten with the same size, and on a file system
+	// with a coarse clock with the same modification time. Only the header's time tells.
+	writeStore(t, repo, commitA, sciptest.CallGraph())
+	if err := os.Chtimes(latest, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	header := filepath.Join(store.Dir(repo, commitA), "header.json")
+	if err := os.Chtimes(header, fi.ModTime().Add(time.Minute), fi.ModTime().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	ok(t, cs, "outline", map[string]any{"file": "calls/a.go"})
+}
+
+// hardPath is a path that holds what a shell would act on: a space, $, a backtick, ", ;, ', and
+// non-ASCII text. (Windows cannot name a file with a " in it, but the quoting must hold anyway.)
+const hardPath = "/work/my proj $HOME `id` \"q\" a;b 'c' ünï"
+
+// runShell runs script in the shell named, which the test skips without, and returns what it printed.
+func runShell(t *testing.T, name string, args ...string) string {
+	t.Helper()
+	exe, err := exec.LookPath(name)
+	if err != nil {
+		t.Skipf("no %s here: %v", name, err)
+	}
+	cmd := exec.Command(exe, args...)
+	cmd.Env = append(os.Environ(), "MSYS_NO_PATHCONV=1", "MSYS2_ARG_CONV_EXCL=*")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %q: %v\n%s", name, args, err, out)
+	}
+	return string(out)
+}
+
+// shellReads is what the shell on this system reads back from the argument shellArg made of p.
+func shellReads(t *testing.T, p string) string {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return runShell(t, "sh", "-c", "printf %s "+shellArg(p))
+	}
+	// PowerShell: pass it to a function as a command argument, as the refresh command passes it to
+	// adamap, and print its UTF-16 code units, which survive any console code page.
+	script := "function f { $args[0] }; $s = f " + shellArg(p) + "; ($s.ToCharArray() | ForEach-Object { [int]$_ }) -join ','"
+	units := utf16.Encode([]rune(script))
+	raw := make([]byte, 0, 2*len(units))
+	for _, u := range units {
+		raw = append(raw, byte(u), byte(u>>8))
+	}
+	out := runShell(t, "powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(raw))
+	var b strings.Builder
+	if strings.TrimSpace(out) == "" {
+		return "" // no code units: an empty argument
+	}
+	for _, f := range strings.Split(strings.TrimSpace(out), ",") {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("PowerShell printed %q: %v", out, err)
+		}
+		b.WriteRune(rune(n))
+	}
+	return b.String()
+}
+
+func TestTheRefreshCommandQuotesThePathForTheShell(t *testing.T) {
+	for _, p := range []string{hardPath, "/work/plain", "/work/it's", `/work/back\slash`, "/work/tab\there", ""} {
+		if got := shellReads(t, p); got != p {
+			t.Errorf("shellArg(%q) is read back by the shell as %q", p, got)
+		}
+	}
+}
+
+func TestPOSIXAndPowerShellQuotingHaveTheirExactForms(t *testing.T) {
+	for _, tc := range []struct{ in, posix, powershell string }{
+		{"/work/plain", "/work/plain", "/work/plain"},
+		{`C:\work\plain`, `'C:\work\plain'`, `C:\work\plain`},
+		{"", "''", "''"},
+		{"/work/it's", `'/work/it'\''s'`, "'/work/it''s'"},
+		{"a b", "'a b'", "'a b'"},
+		{"$HOME `id`", "'$HOME `id`'", "'$HOME `id`'"},
+		{`a"b;c`, `'a"b;c'`, `'a"b;c'`},
+		{"a\u2019b", "'a\u2019b'", "'a\u2019\u2019b'"}, // PowerShell reads a typographic quote as a quote
+		{hardPath, `'/work/my proj $HOME ` + "`id`" + ` "q" a;b '\''c'\'' ünï'`, `'/work/my proj $HOME ` + "`id`" + ` "q" a;b ''c'' ünï'`},
+	} {
+		if got := posixArg(tc.in); got != tc.posix {
+			t.Errorf("posixArg(%q) = %s, want %s", tc.in, got, tc.posix)
+		}
+		if got := powershellArg(tc.in); got != tc.powershell {
+			t.Errorf("powershellArg(%q) = %s, want %s", tc.in, got, tc.powershell)
+		}
+	}
+}
+
+func TestPOSIXQuotingIsReadBackByASh(t *testing.T) {
+	for _, p := range []string{hardPath, "/work/plain", "/work/it's", `/work/back\slash`, "/work/new\nline", ""} {
+		if got := runShell(t, "sh", "-c", "printf %s "+posixArg(p)); got != p {
+			t.Errorf("posixArg(%q) is read back by sh as %q", p, got)
+		}
+	}
+}
+
+func TestStatusQuotesARepositoryPathThatHoldsWhatAShellActsOn(t *testing.T) {
+	// No " in the name: Windows cannot have one in a file name.
+	repo := filepath.Join(t.TempDir(), "my proj $HOME `id` a;b 'c' ünï")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cs := connect(t, Config{Repo: repo})
+	a := ok(t, cs, "status", nil)
+	abs, err := filepath.Abs(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "adamap index --repo " + shellArg(abs)
+	if a.structured["refresh"] != want || !strings.Contains(a.text, "refresh: "+want+"\n") {
+		t.Errorf("refresh %v in %q, want %q", a.structured["refresh"], a.text, want)
+	}
+	if got := shellReads(t, abs); got != abs {
+		t.Errorf("the shell reads the path back as %q, want %q", got, abs)
+	}
+}
+
+func TestImpactOfAnAbsolutePathOutsideTheRepositoryIsAToolError(t *testing.T) {
+	repo := callGraphRepo(t)
+	outside := filepath.Join(t.TempDir(), "elsewhere.go") // another directory, so outside repo
+	// The path function of `adamap mcp` refuses a path outside the repository.
+	cs := connect(t, Config{Repo: repo, Path: func(arg string) (string, error) {
+		if filepath.IsAbs(arg) {
+			return "", fmt.Errorf("%s is outside the repository %s", arg, repo)
+		}
+		return arg, nil
+	}})
+	wantToolError(t, cs, "impact", map[string]any{"target": outside}, "elsewhere.go")
+	// With the default path function the path is no document and no symbol either.
+	cs = connect(t, Config{Repo: repo})
+	wantToolError(t, cs, "impact", map[string]any{"target": outside}, "elsewhere.go")
+	wantToolError(t, cs, "outline", map[string]any{"file": outside}, "elsewhere.go")
+}
+
+func TestAWronglyTypedArgumentIsAToolError(t *testing.T) {
+	cs := connect(t, Config{Repo: callGraphRepo(t)})
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"map", map[string]any{"tokens": "many"}, "tokens"},
+		{"map", map[string]any{"tokens": 1.5}, "tokens"},
+		{"map", map[string]any{"for": 7}, "for"},
+		{"find_symbol", map[string]any{"name": 5}, "name"},
+		{"find_symbol", map[string]any{"name": "A", "limit": []string{"3"}}, "limit"},
+		{"outline", map[string]any{"file": true}, "file"},
+		{"refs", map[string]any{"symbol": map[string]any{"a": 1}}, "symbol"},
+		{"impact", map[string]any{"target": "C", "depth": "deep"}, "depth"},
+	} {
+		wantToolError(t, cs, tc.tool, tc.args, tc.want)
+	}
+}
+
+func TestStatusWithNoStoreAndGitFailingStillAnswers(t *testing.T) {
+	cs := connect(t, Config{Repo: t.TempDir(), Head: func() (string, bool, error) {
+		return "", false, errors.New("git: not a git repository")
+	}})
+	a := ok(t, cs, "status", nil)
+	for _, want := range []string{"no store", "adamap index", "HEAD: unknown", "not a git repository", "refresh: adamap index --repo"} {
+		if !strings.Contains(a.text, want) {
+			t.Errorf("status text should hold %q: %q", want, a.text)
+		}
+	}
+	s := a.structured
+	if s["store"] != false || s["stale"] != true || s["git_error"] != "git: not a git repository" ||
+		s["store_error"] == nil || s["head"] != nil || s["at_head"] != false {
+		t.Errorf("status structured %v", s)
+	}
+	if refresh, _ := s["refresh"].(string); !strings.Contains(refresh, "adamap index --repo") {
+		t.Errorf("the refresh command should be offered: %v", s)
+	}
+}
+
+func TestStatusOffersTheRefreshOnceWhenTheStoreAndTheTreeAreDirtyAndANewerStoreFailed(t *testing.T) {
+	repo := t.TempDir()
+	idx, _, err := scip.Convert(sciptest.CallGraph())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Write(repo, store.Header{Commit: commitA, Dirty: true}, idx); err != nil {
+		t.Fatal(err)
+	}
+	cs := connect(t, Config{Repo: repo, Head: func() (string, bool, error) { return commitA, true, nil }})
+	writeStore(t, repo, commitB, sciptest.CallGraph())
+	corruptStore(t, repo, commitB)
+	touchLatest(t, repo, time.Minute)
+	a := ok(t, cs, "status", nil)
+	if n := strings.Count(a.text, "refresh: "); n != 1 || a.structured["newer_store_error"] == nil {
+		t.Errorf("want the failure reported and one refresh line, got %d: %q", n, a.text)
+	}
+}
+
+func TestStatusDoesNotCallAReindexInProgressAFailedNewerStore(t *testing.T) {
+	repo := t.TempDir()
+	writeStore(t, repo, commitA, sciptest.CallGraph())
+	cs := connect(t, Config{Repo: repo})
+	// store.Write removes the header first and writes it last: between the two, with latest as it was,
+	// the commit being served has no header.
+	if err := os.Remove(filepath.Join(store.Dir(repo, commitA), "header.json")); err != nil {
+		t.Fatal(err)
+	}
+	a := ok(t, cs, "status", nil)
+	if a.structured["newer_store_error"] != nil || a.structured["commit"] != commitA || strings.Contains(a.text, "failed to load") {
+		t.Errorf("a store being indexed again is not a newer store that failed: %q %v", a.text, a.structured)
+	}
+}
+
+// corruptStore breaks commit's store.json.gz so that the store no longer loads.
+func corruptStore(t *testing.T, repo, commit string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(store.Dir(repo, commit), "store.json.gz"), []byte("not gzip"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
