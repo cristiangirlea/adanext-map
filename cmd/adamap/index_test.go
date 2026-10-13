@@ -724,3 +724,19 @@ func TestIndexRefusesAFilterDriverItCannotSwitchOff(t *testing.T) {
 	}
 }
 
+// core.hooksPath must name a directory made for the call, not /dev/null, which is no path on Windows.
+func TestGitOutputPointsHooksPathAtADirectoryMadeForTheCall(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	repo := t.TempDir()
+	git(t, repo, "init", "-q")
+	got, err := gitOutput(repo, "config", "core.hooksPath")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == "/dev/null" || !strings.HasPrefix(filepath.Base(got), "adamap-nohooks-") {
+		t.Errorf("core.hooksPath = %q; want a directory named adamap-nohooks-*", got)
+	}
+}
+
