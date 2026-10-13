@@ -321,3 +321,67 @@ func TestCallersFallbackStartsAfterAnEnclosingRangeThatEndsOnTheLineOfItsName(t 
 		t.Errorf("sites: P %v, g %v", lines(got.Callers[0].Sites), lines(got.Callers[1].Sites))
 	}
 }
+
+func TestCallersTwoDefinitionsAtTheSamePositionLoseNoReference(t *testing.T) {
+	const a, b, h, target = "s m p v a().", "s m p v b().", "s m p v h().", "s m p v target()."
+	// a and b are defined by the same occurrence range, as when an indexer gives one name two symbols.
+	for _, tc := range []struct {
+		name         string
+		first, other string
+	}{{"a then b", a, b}, {"b then a", b, a}} {
+		x := oneDoc(
+			occSpec{sym: tc.first, line: 2, col: 5, def: true},
+			occSpec{sym: tc.other, line: 2, col: 5, def: true},
+			occSpec{sym: h, line: 6, col: 5, def: true},
+			occSpec{sym: target, line: 2, col: 1}, // left of the name: in the first one's span only
+			occSpec{sym: target, line: 3, col: 1}, // in both spans: the one listed last is the inner
+			occSpec{sym: target, line: 7, col: 1}, // in h: the duplicates end where h begins
+		)
+		got, err := x.Callers(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Unattributed != 0 || len(got.Callers) != 3 {
+			t.Fatalf("%s: callers = %v, unattributed %d", tc.name, callerIDs(got.Callers), got.Unattributed)
+		}
+		for _, c := range got.Callers {
+			var want []int
+			switch c.Symbol.ID {
+			case tc.first:
+				want = []int{3}
+			case tc.other:
+				want = []int{4}
+			case h:
+				want = []int{8}
+			}
+			if !slices.Equal(lines(c.Sites), want) {
+				t.Errorf("%s: %s has references on lines %v, want %v", tc.name, c.Symbol.ID, lines(c.Sites), want)
+			}
+		}
+	}
+}
+
+func TestCallersFallbackBeforeAnEnclosingRangeThatStartsAheadOfItsName(t *testing.T) {
+	const f, e, target = "s m p v f().", "s m p v e().", "s m p v target()."
+	// e's range begins on its doc comment, lines 1 and 2, and its name is on line 3. f has no range and
+	// runs up to e's name line, but the doc comment is e's.
+	x := oneDoc(
+		occSpec{sym: f, line: 0, col: 5, def: true},
+		occSpec{sym: e, line: 3, col: 5, def: true, enclosing: span(1, 0, 5, 1)},
+		occSpec{sym: target, line: 0, col: 9}, // on f's line
+		occSpec{sym: target, line: 1, col: 2}, // in e's doc comment
+		occSpec{sym: target, line: 2, col: 0}, // in e's doc comment, still before its name's line
+		occSpec{sym: target, line: 4, col: 0}, // in e
+		occSpec{sym: target, line: 6, col: 0}, // past both
+	)
+	got, err := x.Callers(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{f, e}; !slices.Equal(callerIDs(got.Callers), want) || got.Unattributed != 1 {
+		t.Fatalf("callers = %v, unattributed %d, want %v and 1", callerIDs(got.Callers), got.Unattributed, want)
+	}
+	if !slices.Equal(lines(got.Callers[0].Sites), []int{1}) || !slices.Equal(lines(got.Callers[1].Sites), []int{2, 3, 5}) {
+		t.Errorf("sites: f %v, e %v", lines(got.Callers[0].Sites), lines(got.Callers[1].Sites))
+	}
+}
