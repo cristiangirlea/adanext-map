@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -556,5 +557,39 @@ func TestIndexDoesNotLazyFetchFromThePromisorRemote(t *testing.T) {
 	runIndexCmd("--scip", fixtureFile(t), "--repo", repo) // its exit code is not the point
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("adamap index ran the uploadpack program the repository names for its promisor remote")
+	}
+}
+
+// Git echoes what it was given in its error messages, and a ref name or a config value comes from the
+// repository, so a terminal must not act on a bidirectional override or an ESC in the message.
+func TestGitErrorsAreEscapedForTheTerminal(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	repo := t.TempDir()
+	git(t, repo, "init", "-q")
+	const override = "\xe2\x80\xae" // U+202E, right-to-left override
+	_, err := gitOutput(repo, "cat-file", "-t", "x\x1b[31m"+override+"y")
+	if err == nil {
+		t.Fatal("git should refuse an object name that does not exist")
+	}
+	msg := err.Error()
+	if strings.ContainsAny(msg, "\x1b"+override) {
+		t.Errorf("error %q holds a control or format character raw", msg)
+	}
+	if escaped := strconv.Quote(override); !strings.HasPrefix(msg, "git cat-file: ") || !strings.Contains(msg, escaped[1:len(escaped)-1]) {
+		t.Errorf("error %q should name the command and show the override escaped", msg)
+	}
+}
+
+// A multi-line message from git keeps its lines; only a line that needs it is quoted.
+func TestSafeLinesQuotesOnlyTheLinesThatNeedIt(t *testing.T) {
+	const override = "\xe2\x80\xae"
+	if got, want := safeLines("fatal: one\nhint: two\n"), "fatal: one\nhint: two\n"; got != want {
+		t.Errorf("safeLines = %q, want %q", got, want)
+	}
+	bad := "bad " + override + " line"
+	if got, want := safeLines("fatal: ok\n"+bad), "fatal: ok\n"+strconv.Quote(bad); got != want {
+		t.Errorf("safeLines = %q, want %q", got, want)
 	}
 }
