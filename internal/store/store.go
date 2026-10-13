@@ -72,10 +72,14 @@ func Write(repo string, h Header, idx *model.Index) (string, error) {
 	if err := checkDirs(repo, dir); err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, DirName), 0o755); err != nil {
 		return "", err
 	}
+	// Before the commit's directory, so a refused .gitignore leaves no empty one behind.
 	if err := ensureGitignore(filepath.Join(repo, DirName)); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 	if err := os.Remove(filepath.Join(dir, headerFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {

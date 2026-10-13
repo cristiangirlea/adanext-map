@@ -370,6 +370,7 @@ func TestWriteRefusesASymlinkedGitignore(t *testing.T) {
 	if got, _ := os.ReadFile(target); string(got) != "untouched\n" {
 		t.Errorf("Write changed the link's target to %q", got)
 	}
+	noCommitDir(t, repo)
 }
 
 func TestWriteRefusesAGitignoreThatIsNotAFile(t *testing.T) {
@@ -384,6 +385,15 @@ func TestWriteRefusesAGitignoreThatIsNotAFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), filepath.Join(dir, ".gitignore")) {
 		t.Errorf("Write err = %v, want it to name the .gitignore", err)
+	}
+	noCommitDir(t, repo)
+}
+
+// noCommitDir fails the test if a refused Write left the commit's directory behind.
+func noCommitDir(t *testing.T, repo string) {
+	t.Helper()
+	if _, err := os.Lstat(Dir(repo, commitA)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a refused Write left %s behind (Lstat err = %v)", Dir(repo, commitA), err)
 	}
 }
 
