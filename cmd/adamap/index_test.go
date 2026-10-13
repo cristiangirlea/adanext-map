@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -556,5 +557,273 @@ func TestIndexDoesNotLazyFetchFromThePromisorRemote(t *testing.T) {
 	runIndexCmd("--scip", fixtureFile(t), "--repo", repo) // its exit code is not the point
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("adamap index ran the uploadpack program the repository names for its promisor remote")
+	}
+}
+
+// An empty value switches core.fsmonitor off on every git version. "false" is read as a boolean
+// only by newer git; an older one takes it as the name of a hook program to run.
+func TestGitSafelySwitchesFsmonitorOffWithAnEmptyValue(t *testing.T) {
+	args := gitSafely("/hooks")
+	if !slices.Contains(args, "core.fsmonitor=") {
+		t.Errorf("gitSafely = %q; want core.fsmonitor with an empty value", args)
+	}
+	if slices.Contains(args, "core.fsmonitor=false") {
+		t.Errorf("gitSafely = %q; core.fsmonitor=false is a program name to an older git", args)
+	}
+}
+
+// --no-optional-locks keeps status from rewriting the index, so a status never reaches the
+// post-index-change hook and says nothing about core.hooksPath. update-index --refresh takes a real
+// lock, so the hook runs unless gitOutput points core.hooksPath somewhere with no hooks in it.
+func TestGitOutputDoesNotRunTheRepositorysHooks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	repo := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "ran")
+	git(t, repo, "init", "-q")
+	writeFile(t, filepath.Join(repo, "a.txt"), "one\n")
+	git(t, repo, "add", "a.txt")
+	git(t, repo, "commit", "-q", "-m", "one")
+	hooks := filepath.Join(repo, ".git", "hooks") // absent when git has no templates
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := "#!/bin/sh\necho x > '" + filepath.ToSlash(marker) + "'\n"
+	if err := os.WriteFile(filepath.Join(hooks, "post-index-change"), []byte(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	touch := func(d time.Duration) {
+		t.Helper()
+		when := time.Now().Add(d)
+		if err := os.Chtimes(filepath.Join(repo, "a.txt"), when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	touch(time.Minute)
+	git(t, repo, "--no-optional-locks", "update-index", "--refresh")
+	if _, err := os.Stat(marker); err != nil {
+		t.Skipf("a plain git update-index does not run the hook here (%v), so there is nothing to guard against", err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+
+	touch(2 * time.Minute)
+	if _, err := gitOutput(repo, "update-index", "--refresh"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("gitOutput ran the hook the repository names")
+	}
+}
+
+// The empty directory core.hooksPath points at is made for each call and removed after it.
+func TestGitOutputLeavesNoHooksDirectoryBehind(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	repo := t.TempDir()
+	git(t, repo, "init", "-q")
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp) // os.TempDir reads TMPDIR on Unix, TMP and TEMP on Windows
+	t.Setenv("TMP", tmp)
+	t.Setenv("TEMP", tmp)
+
+	if _, err := gitOutput(repo, "rev-parse", "--git-dir"); err != nil {
+		t.Fatal(err)
+	}
+	if left, err := os.ReadDir(tmp); err != nil || len(left) != 0 {
+		t.Errorf("%s holds %v after the call (%v); want it empty", tmp, left, err)
+	}
+}
+
+// git status runs a clean filter, or starts a process filter, to compare a file whose timestamp
+// changed, and the driver is the repository's own config. Each case names a driver whose program
+// leaves a marker, checks that a plain status runs it, then indexes and wants no marker.
+func TestIndexDoesNotRunFilterDriversNamedByTheRepository(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	cases := []struct {
+		name string
+		arm  func(t *testing.T, repo, program string)
+	}{
+		{"clean", func(t *testing.T, repo, program string) {
+			git(t, repo, "config", "filter.mark.x.clean", program+"; cat")
+			git(t, repo, "config", "filter.mark.x.required", "true") // a failing filter would stop git, not just be skipped
+		}},
+		{"process", func(t *testing.T, repo, program string) {
+			git(t, repo, "config", "filter.mark.x.process", program+"; false")
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo := t.TempDir()
+			marker := filepath.Join(t.TempDir(), "ran")
+			git(t, repo, "init", "-q")
+			writeFile(t, filepath.Join(repo, "a.txt"), "one\n")
+			git(t, repo, "add", "a.txt")
+			git(t, repo, "commit", "-q", "-m", "one")
+			writeFile(t, filepath.Join(repo, ".gitattributes"), "a.txt filter=mark.x\n")
+			c.arm(t, repo, "echo x > '"+filepath.ToSlash(marker)+"'")
+			touch := func(d time.Duration) {
+				t.Helper()
+				when := time.Now().Add(d)
+				if err := os.Chtimes(filepath.Join(repo, "a.txt"), when, when); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			touch(time.Minute)
+			exec.Command("git", "-C", repo, "status", "--porcelain", "--untracked-files=no").Run() // may fail; only the marker matters
+			if _, err := os.Stat(marker); err != nil {
+				t.Skipf("a plain git status does not run a %s filter here (%v), so there is nothing to guard against", c.name, err)
+			}
+			if err := os.Remove(marker); err != nil {
+				t.Fatal(err)
+			}
+			touch(2 * time.Minute)
+
+			code, out, errOut := runIndexCmd("--scip", fixtureFile(t), "--repo", repo)
+			if code != 0 || !strings.HasPrefix(out, "indexed ") {
+				t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
+			}
+			if _, err := os.Stat(marker); err == nil {
+				t.Errorf("adamap index ran the %s filter the repository names", c.name)
+			}
+		})
+	}
+}
+
+// A driver name with an = in it cannot be written as -c name.clean=, which git splits at the
+// first =: adamap cannot switch that driver off, so it does not run git status for it.
+func TestIndexRefusesAFilterDriverItCannotSwitchOff(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	repo := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "ran")
+	git(t, repo, "init", "-q")
+	writeFile(t, filepath.Join(repo, "a.txt"), "one\n")
+	git(t, repo, "add", "a.txt")
+	git(t, repo, "commit", "-q", "-m", "one")
+	writeFile(t, filepath.Join(repo, ".gitattributes"), "a.txt filter=a=b\n")
+	git(t, repo, "config", "filter.a=b.clean", "echo x > '"+filepath.ToSlash(marker)+"'; cat")
+	later := time.Now().Add(time.Minute)
+	if err := os.Chtimes(filepath.Join(repo, "a.txt"), later, later); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, errOut := runIndexCmd("--scip", fixtureFile(t), "--repo", repo)
+	if code != 1 || !strings.Contains(errOut, `"a=b"`) || !strings.Contains(errOut, "--commit") {
+		t.Errorf("exit %d, stderr %q; want 1, the driver's name and a pointer to --commit", code, errOut)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("adamap index ran the filter whose name it cannot switch off")
+	}
+}
+
+// core.hooksPath must name a directory made for the call, not /dev/null, which is no path on Windows.
+func TestGitOutputPointsHooksPathAtADirectoryMadeForTheCall(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	repo := t.TempDir()
+	git(t, repo, "init", "-q")
+	got, err := gitOutput(repo, "config", "core.hooksPath")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == "/dev/null" || !strings.HasPrefix(filepath.Base(got), "adamap-nohooks-") {
+		t.Errorf("core.hooksPath = %q; want a directory named adamap-nohooks-*", got)
+	}
+}
+
+// git status checks a submodule by starting a git inside it, which reads the submodule's own config
+// (.git/modules/<name>/config), as untrusted as the superproject's and not covered by filtersOff.
+// --ignore-submodules=dirty keeps that child git from starting.
+func TestIndexDoesNotRunFilterDriversNamedBySubmoduleConfig(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	marker := filepath.Join(t.TempDir(), "ran")
+	sub := t.TempDir()
+	git(t, sub, "init", "-q")
+	writeFile(t, filepath.Join(sub, "s.txt"), "one\n")
+	git(t, sub, "add", "s.txt")
+	git(t, sub, "commit", "-q", "-m", "one")
+
+	repo := t.TempDir()
+	git(t, repo, "init", "-q")
+	writeFile(t, filepath.Join(repo, "a.txt"), "one\n")
+	git(t, repo, "add", "a.txt")
+	git(t, repo, "commit", "-q", "-m", "one")
+	// file:// submodule clones are refused by default; allow them for this setup only.
+	git(t, repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", filepath.ToSlash(sub), "sm")
+	git(t, repo, "commit", "-q", "-m", "add submodule")
+
+	smDir := filepath.Join(repo, "sm")
+	git(t, smDir, "config", "filter.mark.clean", "echo x > '"+filepath.ToSlash(marker)+"'; cat")
+	git(t, smDir, "config", "filter.mark.required", "true")
+	writeFile(t, filepath.Join(smDir, ".gitattributes"), "s.txt filter=mark\n")
+	later := time.Now().Add(time.Minute)
+	if err := os.Chtimes(filepath.Join(smDir, "s.txt"), later, later); err != nil {
+		t.Fatal(err)
+	}
+
+	exec.Command("git", "-C", repo, "status", "--porcelain", "--untracked-files=no").Run() // may fail; only the marker matters
+	if _, err := os.Stat(marker); err != nil {
+		t.Skipf("a plain git status does not run a submodule's filter here (%v), so there is nothing to guard against", err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	later = later.Add(time.Minute)
+	if err := os.Chtimes(filepath.Join(smDir, "s.txt"), later, later); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := runIndexCmd("--scip", fixtureFile(t), "--repo", repo)
+	if code != 0 || !strings.HasPrefix(out, "indexed ") {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("adamap index ran the filter a submodule's own config names")
+	}
+}
+
+// Git echoes what it was given in its error messages, and a ref name or a config value comes from the
+// repository, so a terminal must not act on a bidirectional override or an ESC in the message.
+func TestGitErrorsAreEscapedForTheTerminal(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	repo := t.TempDir()
+	git(t, repo, "init", "-q")
+	const override = "\xe2\x80\xae" // U+202E, right-to-left override
+	_, err := gitOutput(repo, "cat-file", "-t", "x\x1b[31m"+override+"y")
+	if err == nil {
+		t.Fatal("git should refuse an object name that does not exist")
+	}
+	msg := err.Error()
+	if strings.ContainsAny(msg, "\x1b"+override) {
+		t.Errorf("error %q holds a control or format character raw", msg)
+	}
+	if escaped := strconv.Quote(override); !strings.HasPrefix(msg, "git cat-file: ") || !strings.Contains(msg, escaped[1:len(escaped)-1]) {
+		t.Errorf("error %q should name the command and show the override escaped", msg)
+	}
+}
+
+// A multi-line message from git keeps its lines; only a line that needs it is quoted.
+func TestSafeLinesQuotesOnlyTheLinesThatNeedIt(t *testing.T) {
+	const override = "\xe2\x80\xae"
+	if got, want := safeLines("fatal: one\nhint: two\n"), "fatal: one\nhint: two\n"; got != want {
+		t.Errorf("safeLines = %q, want %q", got, want)
+	}
+	bad := "bad " + override + " line"
+	if got, want := safeLines("fatal: ok\n"+bad), "fatal: ok\n"+strconv.Quote(bad); got != want {
+		t.Errorf("safeLines = %q, want %q", got, want)
 	}
 }

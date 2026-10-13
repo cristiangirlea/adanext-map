@@ -32,10 +32,26 @@ taken to describe that commit, as the caller says.
 
 adamap runs git with `--no-optional-locks` and with `core.fsmonitor` and `core.hooksPath` overridden,
 so the `core.fsmonitor` command and the hooks in the repository's own `.git` do not run. It also
-sets `GIT_NO_LAZY_FETCH=1`, so a partial clone with a missing object fails instead of fetching it
-through the repository's `remote.<name>.uploadpack` or `core.sshCommand`. A clean filter the
-repository defines still can run, when git compares a file whose timestamp changed: for a
-repository you do not trust, pass `--commit` and git is not run at all.
+sets `GIT_NO_LAZY_FETCH=1` in git's environment, so a partial clone with a missing object fails
+instead of fetching it through the repository's `remote.<name>.uploadpack` or `core.sshCommand`.
+That variable needs git 2.44 or later; an older git ignores it, and a partial clone can still fetch.
+
+`git status` also runs a clean filter, or starts a process filter, to compare a file whose
+timestamp changed, and those are programs the config names. Before it, adamap lists the configured
+drivers (`git config --get-regexp ^filter\.`, which runs no program) and switches each off with
+empty `clean`, `smudge` and `process` commands and `required=false`. The cost: a file a driver
+would change, such as a git-lfs pointer, can show as modified, so a tree can read as dirty (and the
+store's header say `dirty: true`) when `git status` run by hand says it is clean. A driver whose
+name has an `=` in it cannot be switched off this way, and then `adamap index` stops and asks for
+`--commit`.
+
+The drivers of a submodule are in the submodule's own config, which adamap does not list, and
+`git status` would start a git inside the submodule to read them. adamap passes
+`--ignore-submodules=dirty`, so git compares only the commit a submodule has checked out with the
+one the superproject records and starts no git in it. The cost: uncommitted edits inside a submodule
+no longer make the tree dirty (a different checked-out commit still does).
+
+For a repository you do not trust, pass `--commit` and git is not run at all.
 
 ## Which indexer
 
@@ -122,8 +138,10 @@ short has no header and does not load: run `adamap index` again. A `.adamap` or 
 that is a symbolic link is refused, for reading and writing, so a cloned repository cannot point the
 store outside itself, and so is a `header.json` or `store.json.gz` that is not a regular file; a
 `header.json` over 1 MiB is refused. A document path or a symbol's definition path that is absolute
-or leaves the project is refused at load. `latest` must be a regular file of a commit hash; one that is a link or holds
-anything else is refused. Loading stops with an error once `store.json.gz` inflates past 4 GiB.
+or leaves the project is refused at load. `latest` must be a regular file of a commit hash; one
+that is a link or holds anything else is refused. Loading stops with an error once `store.json.gz`
+inflates past 4 GiB. A store file that is replaced while it is being opened, so that what was
+opened is not the file that was checked, is refused as well.
 
 ### header.json
 

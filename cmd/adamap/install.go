@@ -351,7 +351,7 @@ func setServer(data []byte, name string, e serverEntry) ([]byte, error) {
 		if m.key == name {
 			var err error
 			if fields, err = members(m.value); err != nil {
-				return nil, fmt.Errorf("mcpServers.%s: %w", name, err)
+				return nil, fmt.Errorf("mcpServers.%q: %w", name, err)
 			}
 		}
 	}

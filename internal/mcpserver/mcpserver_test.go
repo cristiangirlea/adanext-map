@@ -977,3 +977,52 @@ func corruptStore(t *testing.T, repo, commit string) {
 		t.Fatal(err)
 	}
 }
+
+// The error fields of the status JSON carry text a repository can shape (git echoes its ref names and
+// config values, a store error names a path). encoding/json escapes ESC but writes U+202E as it is,
+// so each field is quoted like the text output before it is marshalled.
+func TestStatusErrorFieldsAreEscaped(t *testing.T) {
+	const override = "\xe2\x80\xae" // U+202E, right-to-left override
+	raw := "\x1b[31m" + override
+	rawIn := func(s string) bool { return strings.ContainsAny(s, "\x1b"+override) }
+
+	t.Run("git_error and store_error", func(t *testing.T) {
+		repo := filepath.Join(t.TempDir(), "r"+override)
+		if err := os.Mkdir(repo, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cs := connect(t, Config{Repo: repo, Head: func() (string, bool, error) { return "", false, errors.New("fatal: bad " + raw) }})
+		s := ok(t, cs, "status", nil)
+		for _, field := range []string{"git_error", "store_error"} {
+			v, _ := s.structured[field].(string)
+			if v == "" || rawIn(v) {
+				t.Errorf("%s = %q, want text with no raw ESC or U+202E", field, v)
+			}
+		}
+		if v, _ := s.structured["git_error"].(string); !strings.Contains(v, "fatal: bad") {
+			t.Errorf("git_error = %q, want the message kept", v)
+		}
+		if rawIn(s.text) {
+			t.Errorf("status text %q holds a raw character", s.text)
+		}
+	})
+
+	t.Run("newer_store_error", func(t *testing.T) {
+		repo := filepath.Join(t.TempDir(), "r"+override)
+		if err := os.Mkdir(repo, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeStore(t, repo, commitA, sciptest.Index())
+		cs := connect(t, Config{Repo: repo, Head: func() (string, bool, error) { return commitB, false, nil }})
+		ok(t, cs, "outline", map[string]any{"file": "pkg/a.go"})
+		writeStore(t, repo, commitB, sciptest.CallGraph())
+		if err := os.WriteFile(filepath.Join(store.Dir(repo, commitB), "store.json.gz"), []byte("not gzip"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		touchLatest(t, repo, time.Minute)
+		s := ok(t, cs, "status", nil)
+		if v, _ := s.structured["newer_store_error"].(string); v == "" || rawIn(v) {
+			t.Errorf("newer_store_error = %q, want text with no raw ESC or U+202E", v)
+		}
+	})
+}

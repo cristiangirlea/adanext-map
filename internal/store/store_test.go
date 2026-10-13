@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -309,6 +312,23 @@ func TestWriteKeepsTheStoreOutOfGit(t *testing.T) {
 	}
 }
 
+func TestWriteGivesTheGitignoreTheModeOfAnOrdinaryFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows files have no permission bits to check")
+	}
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(repo, ".adamap", ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o644 {
+		t.Errorf(".adamap/.gitignore has mode %o, want 644", got)
+	}
+}
+
 func TestWriteLeavesAnExistingGitignoreAlone(t *testing.T) {
 	repo := t.TempDir()
 	dir := filepath.Join(repo, ".adamap")
@@ -350,6 +370,7 @@ func TestWriteRefusesASymlinkedGitignore(t *testing.T) {
 	if got, _ := os.ReadFile(target); string(got) != "untouched\n" {
 		t.Errorf("Write changed the link's target to %q", got)
 	}
+	noCommitDir(t, repo)
 }
 
 func TestWriteRefusesAGitignoreThatIsNotAFile(t *testing.T) {
@@ -364,6 +385,15 @@ func TestWriteRefusesAGitignoreThatIsNotAFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), filepath.Join(dir, ".gitignore")) {
 		t.Errorf("Write err = %v, want it to name the .gitignore", err)
+	}
+	noCommitDir(t, repo)
+}
+
+// noCommitDir fails the test if a refused Write left the commit's directory behind.
+func noCommitDir(t *testing.T, repo string) {
+	t.Helper()
+	if _, err := os.Lstat(Dir(repo, commitA)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a refused Write left %s behind (Lstat err = %v)", Dir(repo, commitA), err)
 	}
 }
 
@@ -523,6 +553,29 @@ func TestLoadRefusesAnOversizedHeader(t *testing.T) {
 	}
 }
 
+func TestLoadReadsAHeaderOfExactlyTheLimit(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(repo, ".adamap", commitA, "header.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Valid JSON, padded with whitespace to exactly 1 MiB.
+	padded := append(data, bytes.Repeat([]byte(" "), 1<<20-len(data))...)
+	if len(padded) != maxHeaderBytes {
+		t.Fatalf("test header is %d bytes, want %d", len(padded), maxHeaderBytes)
+	}
+	if err := os.WriteFile(path, padded, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Load(repo, commitA); err != nil {
+		t.Fatalf("Load of a header of exactly %d bytes: %v", maxHeaderBytes, err)
+	}
+}
+
 func TestLoadRefusesASymbolDefinitionPathOutsideTheProject(t *testing.T) {
 	loc := func(p string) *model.Location { return &model.Location{Path: p} }
 	cases := map[string]func(idx *model.Index){
@@ -583,6 +636,80 @@ func TestLatestRefusesACommitFollowedByMoreThanTheLimit(t *testing.T) {
 	}
 	if c, err := Latest(repo); err == nil {
 		t.Fatalf("Latest = %q, want an error for a file longer than the limit", c)
+	}
+}
+
+// useOpenFile makes the store read its files through open for the rest of the test.
+func useOpenFile(t *testing.T, open func(string) (*os.File, error)) {
+	t.Helper()
+	was := openFile
+	openFile = open
+	t.Cleanup(func() { openFile = was })
+}
+
+func TestLatestReportsAnOpenFailureAsItIs(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	useOpenFile(t, func(path string) (*os.File, error) {
+		return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrPermission}
+	})
+	_, err := Latest(repo)
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("Latest err = %v, want the permission error", err)
+	}
+	if strings.Contains(err.Error(), "no store") {
+		t.Errorf("Latest err = %v, want no claim that there is no store", err)
+	}
+}
+
+func TestLatestSaysNoStoreWhenTheFileIsGoneAtOpen(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	useOpenFile(t, func(path string) (*os.File, error) {
+		return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+	})
+	if _, err := Latest(repo); err == nil || !strings.Contains(err.Error(), "no store in") {
+		t.Fatalf("Latest err = %v, want one saying there is no store yet", err)
+	}
+}
+
+func TestStoreFilesAreRefusedWhenTheOpenedFileIsNotTheOneChecked(t *testing.T) {
+	// A file swapped in between the Lstat and the open (a link to a device, say) must not be read.
+	// The stand-in is a copy with the same bytes, so only the identity check can tell.
+	for _, name := range []string{headerFile, storeFile, latestFile} {
+		t.Run(name, func(t *testing.T) {
+			repo := t.TempDir()
+			if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+				t.Fatal(err)
+			}
+			useOpenFile(t, func(path string) (*os.File, error) {
+				if filepath.Base(path) != name {
+					return os.Open(path)
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					return nil, err
+				}
+				other := filepath.Join(t.TempDir(), name)
+				if err := os.WriteFile(other, data, 0o644); err != nil {
+					return nil, err
+				}
+				return os.Open(other)
+			})
+			_, _, loadErr := Load(repo, commitA)
+			_, latestErr := Latest(repo)
+			err := loadErr
+			if name == latestFile {
+				err = latestErr
+			}
+			if err == nil || !strings.Contains(err.Error(), "is not the file that was checked") {
+				t.Fatalf("err = %v, want a refusal saying the opened file is not the one checked", err)
+			}
+		})
 	}
 }
 

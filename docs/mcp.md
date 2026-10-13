@@ -85,6 +85,14 @@ Nothing inside the quotes is special to either shell, so `$`, backticks, `"` and
 path of letters, digits and `_-./:` (and `\` on Windows) is left bare, as in the example above;
 `cmd.exe` is not catered for.
 
+`status` is the only tool that runs git, once per call, and it does so with `--commit` too: a
+pinned server still reports HEAD and whether the tree has changes, and tells you to restart it
+without `--commit` when the store is not HEAD's. git runs as `adamap index` runs it (no
+`core.fsmonitor` command, no hooks, no filter programs from the repository's config or a
+submodule's, no lazy fetch: [index.md](index.md)), so a tree with files that a filter driver would
+change can read as dirty, and edits inside a submodule do not make it dirty. If you do not want git run at
+all, do not call `status`.
+
 A store is stale when it does not describe the working tree: it is for a commit other than HEAD,
 tracked files have uncommitted changes and the store was indexed from a clean tree, or the other way
 round. A store indexed from a dirty tree at HEAD, asked about while the tree is still dirty, is not
@@ -116,7 +124,9 @@ The store comes from an indexer's output of the repository, so its names and pat
 terminal escapes. Text content escapes them as the CLI does: a path, name or kind holding a
 control or format character is printed in Go quotes, and the map blanks such characters in
 details. Every line of a result or an error is also checked, and quoted when it still holds one.
-Structured content is JSON and keeps the raw values, as `--json` does.
+Structured content is JSON and keeps the raw values, as `--json` does, except the error fields of
+`status` (`store_error`, `newer_store_error`, `git_error`): they carry text a repository can shape
+(git echoes its ref names, a store error names a path), so they are quoted like the text output.
 
 ## adamap install
 
