@@ -123,11 +123,8 @@ func writeMCPJSON(path string, e serverEntry) error {
 		return err
 	case !fi.Mode().IsRegular():
 		return fmt.Errorf("%s is not a regular file (a link?): adamap writes only a plain file inside the repository", path)
-	case fi.Size() > maxMCPJSONBytes:
-		return fmt.Errorf("%s is larger than %d bytes; edit it by hand", path, maxMCPJSONBytes)
 	default:
-		mode = fi.Mode().Perm()
-		if data, err = os.ReadFile(path); err != nil {
+		if data, mode, err = readMCPJSON(path); err != nil {
 			return err
 		}
 	}
@@ -139,6 +136,33 @@ func writeMCPJSON(path string, e serverEntry) error {
 		return nil
 	}
 	return writeFileAtomic(path, out, mode)
+}
+
+// readMCPJSON reads the .mcp.json at path and returns it with its permissions. It opens the file
+// once and checks what it opened, so a link swapped in after the caller's Lstat is refused, and it
+// reads no more than maxMCPJSONBytes whatever the file grows to. The file is closed on return, so
+// the rename that replaces it is not blocked.
+func readMCPJSON(path string) ([]byte, fs.FileMode, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, 0, fmt.Errorf("%s is not a regular file (a link?): adamap writes only a plain file inside the repository", path)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxMCPJSONBytes+1))
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(data) > maxMCPJSONBytes {
+		return nil, 0, fmt.Errorf("%s is larger than %d bytes; edit it by hand", path, maxMCPJSONBytes)
+	}
+	return data, fi.Mode().Perm(), nil
 }
 
 // writeFileAtomic writes data to a temporary file beside path and renames it into place.
