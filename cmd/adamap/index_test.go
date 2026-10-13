@@ -560,7 +560,7 @@ func TestIndexDoesNotLazyFetchFromThePromisorRemote(t *testing.T) {
 }
 
 // An empty value switches core.fsmonitor off on every git version. "false" is read as a boolean
-// only by git 2.35 and later; an earlier git takes it as the name of a hook program to run.
+// only by newer git; an older one takes it as the name of a hook program to run.
 func TestGitSafelySwitchesFsmonitorOffWithAnEmptyValue(t *testing.T) {
 	args := gitSafely("/hooks")
 	if !slices.Contains(args, "core.fsmonitor=") {
@@ -650,11 +650,11 @@ func TestIndexDoesNotRunFilterDriversNamedByTheRepository(t *testing.T) {
 		arm  func(t *testing.T, repo, program string)
 	}{
 		{"clean", func(t *testing.T, repo, program string) {
-			git(t, repo, "config", "filter.mark.clean", program+"; cat")
-			git(t, repo, "config", "filter.mark.required", "true") // a failing filter would stop git, not just be skipped
+			git(t, repo, "config", "filter.mark.x.clean", program+"; cat")
+			git(t, repo, "config", "filter.mark.x.required", "true") // a failing filter would stop git, not just be skipped
 		}},
 		{"process", func(t *testing.T, repo, program string) {
-			git(t, repo, "config", "filter.mark.process", program+"; false")
+			git(t, repo, "config", "filter.mark.x.process", program+"; false")
 		}},
 	}
 	for _, c := range cases {
@@ -665,7 +665,7 @@ func TestIndexDoesNotRunFilterDriversNamedByTheRepository(t *testing.T) {
 			writeFile(t, filepath.Join(repo, "a.txt"), "one\n")
 			git(t, repo, "add", "a.txt")
 			git(t, repo, "commit", "-q", "-m", "one")
-			writeFile(t, filepath.Join(repo, ".gitattributes"), "a.txt filter=mark\n")
+			writeFile(t, filepath.Join(repo, ".gitattributes"), "a.txt filter=mark.x\n")
 			c.arm(t, repo, "echo x > '"+filepath.ToSlash(marker)+"'")
 			touch := func(d time.Duration) {
 				t.Helper()
@@ -723,3 +723,4 @@ func TestIndexRefusesAFilterDriverItCannotSwitchOff(t *testing.T) {
 		t.Error("adamap index ran the filter whose name it cannot switch off")
 	}
 }
+
