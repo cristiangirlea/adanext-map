@@ -456,3 +456,18 @@ func TestDecodeRefusesMoreItemsThanTheCountLimitsBeforeConverting(t *testing.T) 
 		t.Errorf("counts at the limits: %v", err)
 	}
 }
+
+func TestDecodeRefusesMoreSymbolsThanTheLimitOnceDefinitionsAreConverted(t *testing.T) {
+	var occs []*scippb.Occurrence
+	for i := range 3 {
+		occs = append(occs, &scippb.Occurrence{Range: []int32{int32(i), 0, 1}, Symbol: "d" + strconv.Itoa(i),
+			SymbolRoles: int32(scippb.SymbolRole_Definition)})
+	}
+	x := &scippb.Index{Documents: []*scippb.Document{{RelativePath: "a.go", Occurrences: occs,
+		Symbols: []*scippb.SymbolInformation{{Symbol: "s"}}}}}
+	lim := model.Limits{Documents: 2, Symbols: 2, Occurrences: 3, Relationships: 2}
+	_, _, err := decode(sciptest.Bytes(t, x), lim)
+	if err == nil || !strings.Contains(err.Error(), "more than the limit of 2 symbols") {
+		t.Fatalf("decode err = %v, want one naming the limit of 2 symbols", err)
+	}
+}

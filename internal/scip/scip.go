@@ -63,7 +63,8 @@ func Decode(data []byte) (*model.Index, Skipped, error) {
 
 // decode is Decode with the count limits given. The counts are checked after proto.Unmarshal, which
 // has already built the messages: they bound the work of converting and the store written from it,
-// not the memory of reading, which the size of the data bounds.
+// not the memory of reading, which the size of the data bounds. They are checked again on the
+// converted index, so a store written from it is one Load accepts.
 func decode(data []byte, lim model.Limits) (*model.Index, Skipped, error) {
 	var x scippb.Index
 	if err := proto.Unmarshal(data, &x); err != nil {
@@ -72,7 +73,16 @@ func decode(data []byte, lim model.Limits) (*model.Index, Skipped, error) {
 	if err := checkCounts(&x, lim); err != nil {
 		return nil, Skipped{}, fmt.Errorf("the SCIP index has %w", err)
 	}
-	return Convert(&x)
+	idx, skipped, err := Convert(&x)
+	if err != nil {
+		return nil, Skipped{}, err
+	}
+	// Conversion makes a symbol of each definition occurrence that has no SymbolInformation, so the
+	// symbol count can grow; the others only shrink as documents and symbols merge or are skipped.
+	if err := lim.Check(idx.Counts(), 0); err != nil {
+		return nil, Skipped{}, fmt.Errorf("the converted SCIP index has %w", err)
+	}
+	return idx, skipped, nil
 }
 
 // checkCounts counts what x holds as it is, before any merging, and refuses more than lim allows.
