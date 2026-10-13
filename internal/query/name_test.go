@@ -21,6 +21,9 @@ func TestNameFromSymbolReadsTheLastDescriptor(t *testing.T) {
 		{"scheme  with  spaces mgr pkg v1 Name#", "Name"},
 		{"s m p v macro!", "macro"},
 		{"s m p v meta:", "meta"},
+		{"s m p v f().(`a)b`)", "a)b"},
+		{"s m p v T#[`U]V`]", "U]V"},
+		{"s m p v f().(`a``)b`)", "a`)b"},
 	} {
 		if got := nameFromSymbol(tc.id); got != tc.want {
 			t.Errorf("nameFromSymbol(%q) = %q, want %q", tc.id, got, tc.want)

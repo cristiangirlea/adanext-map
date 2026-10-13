@@ -146,3 +146,35 @@ func BenchmarkQueries(b *testing.B) {
 
 // near reports whether n is within 2% of want: the synthetic pattern adds a few callers by chance.
 func near(n, want int) bool { return n >= want-want/50 && n <= want+want/50 }
+
+// TestCallersOnDeeplyNestedScopesDoNotWalkTheWholeNest is a crafted store: depth definitions, each
+// with an enclosing range inside the last one's, and as many references past the end of all but the
+// outermost. Finding the holder of each by walking the scopes outward would cost depth squared.
+func TestCallersOnDeeplyNestedScopesDoNotWalkTheWholeNest(t *testing.T) {
+	const depth, target = 40000, "s m p v target()."
+	var occs []model.Occurrence
+	for k := range depth {
+		occs = append(occs, model.Occurrence{
+			Range: rng(k, 5, 8), Symbol: fmt.Sprintf("s m p v f%d().", k), Roles: model.RoleDefinition,
+			Enclosing: span(k, 0, 2*depth-k, 0),
+		})
+	}
+	for k := range depth {
+		occs = append(occs, model.Occurrence{Range: rng(2*depth-1, k, k+1), Symbol: target, Roles: model.RoleReference})
+	}
+	x := New(&model.Index{Documents: []model.Document{{Path: "x.go", Occurrences: occs}}})
+	start := time.Now()
+	got, err := x.Callers(target)
+	took := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Callers) != 1 || got.Callers[0].Symbol.ID != "s m p v f0()." || len(got.Callers[0].Sites) != depth || got.Unattributed != 0 {
+		t.Fatalf("callers = %d, unattributed %d, want the outermost definition alone with %d sites",
+			len(got.Callers), got.Unattributed, depth)
+	}
+	t.Logf("callers over %d nested scopes: %v", depth, took)
+	if enforceBound && took > time.Second {
+		t.Errorf("callers took %v over %d nested scopes, want well under a second", took, depth)
+	}
+}

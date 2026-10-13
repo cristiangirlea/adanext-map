@@ -42,6 +42,11 @@ type scope struct {
 	start, end pos // end is exclusive
 	// parent is the index of the nearest scope in the same document that holds this one, or -1.
 	parent int32
+	// up is the index of the nearest scope around this one that ends after it does, or -1, so the
+	// ends grow along the chain of up links. depth counts the links to the end of the chain, and jump
+	// is a skip pointer along it (a skew-binary jump pointer, the end of the chain pointing at itself),
+	// which lets endingAfter search the chain in logarithmic time.
+	up, jump, depth int32
 	// occ is the definition occurrence, by index in its document.
 	occ int32
 	// fallback marks a scope made without an enclosing range, so clipped to its parent.
@@ -54,9 +59,9 @@ func (s *scope) contains(p pos) bool { return !p.less(s.start) && p.less(s.end) 
 //
 // A definition's scope is the enclosing range of its occurrence. When the indexer gave none, it is
 // the span from column 0 of the line of the definition's name to column 0 of the line of the next
-// definition's name in the document (to the end of the document for the last one), clipped to the scope around it if
-// there is one. Only global definitions count, as boundaries as well as scopes: a local variable
-// inside a function must not end the function.
+// definition's name in the document (to the end of the document for the last one), clipped to the
+// scope around it if there is one. Only global definitions count, as boundaries as well as scopes:
+// a local variable inside a function must not end the function.
 func buildScopes(d *model.Document, defs []int32) []scope {
 	if len(defs) == 0 {
 		return nil
@@ -66,12 +71,26 @@ func buildScopes(d *model.Document, defs []int32) []scope {
 		return compareRange(d.Occurrences[a].Range, d.Occurrences[b].Range)
 	})
 	scopes := make([]scope, len(byName))
+	// ends are where the enclosing ranges of the definitions end, in order.
+	var ends []pos
+	for _, oi := range byName {
+		if e := d.Occurrences[oi].Enclosing; e != nil {
+			ends = append(ends, endOf(*e))
+		}
+	}
+	slices.SortFunc(ends, func(a, b pos) int { return cmp.Or(cmp.Compare(a.line, b.line), cmp.Compare(a.col, b.col)) })
 	// A fallback scope starts at column 0 of its name's line, so that what stands left of the name
 	// (a Go receiver, a return type) is inside it. A second definition on that line starts at its name.
+	// One that follows an enclosing range ending on that line starts where the range ends, not inside it.
 	fallbackStart := func(i int) pos {
 		start := startOf(d.Occurrences[byName[i]].Range)
 		if i > 0 && d.Occurrences[byName[i-1]].Range.StartLine == start.line {
 			return start
+		}
+		// The last end at or before the name; one on the name's line is at or after column 0.
+		k := sort.Search(len(ends), func(k int) bool { return start.less(ends[k]) }) - 1
+		if k >= 0 && ends[k].line == start.line {
+			return ends[k]
 		}
 		return pos{start.line, 0}
 	}
@@ -115,26 +134,59 @@ func buildScopes(d *model.Document, defs []int32) []scope {
 		for len(open) > 0 && !s.start.less(scopes[open[len(open)-1]].end) {
 			open = open[:len(open)-1]
 		}
+		up := int32(-1)
 		if len(open) > 0 {
 			s.parent = open[len(open)-1]
 			if p := &scopes[s.parent]; s.fallback && p.end.less(s.end) {
 				s.end = p.end
 			}
+			up = endingAfter(scopes, s.parent, s.end)
 		}
+		linkUp(scopes, int32(i), up)
 		open = append(open, int32(i))
 	}
 	return scopes
 }
 
+// linkUp makes scopes[i] the next link of the up chain of scopes[u], or the end of a chain if u is -1.
+func linkUp(scopes []scope, i, u int32) {
+	s := &scopes[i]
+	s.up, s.jump, s.depth = u, i, 0
+	if u < 0 {
+		return
+	}
+	p := &scopes[u]
+	s.depth = p.depth + 1
+	if j := &scopes[p.jump]; p.depth-j.depth == j.depth-scopes[j.jump].depth {
+		s.jump = j.jump
+	} else {
+		s.jump = u
+	}
+}
+
+// endingAfter is the first scope on the up chain from scopes[j], that one included, to end after p,
+// or -1. The ends grow along the chain, so the search skips ahead whenever the skip pointer lands on
+// a scope that does not end after p either.
+func endingAfter(scopes []scope, j int32, p pos) int32 {
+	for j >= 0 && !p.less(scopes[j].end) {
+		if k := scopes[j].jump; k != j && !p.less(scopes[k].end) {
+			j = k
+		} else {
+			j = scopes[j].up
+		}
+	}
+	return j
+}
+
 // scopeAt is the innermost scope of document di that holds p: the last scope starting at or before
-// p, or the nearest one around it.
+// p, or the nearest one around it that ends after p. Walking from the first outward one scope at a
+// time would cost the depth of the nesting for each reference, and a crafted store can nest as deep
+// as it has definitions.
 func (x *Index) scopeAt(di int32, p pos) *scope {
 	scopes := x.scopes[di]
 	i := sort.Search(len(scopes), func(i int) bool { return p.less(scopes[i].start) })
-	for j := int32(i) - 1; j >= 0; j = scopes[j].parent {
-		if scopes[j].contains(p) {
-			return &scopes[j]
-		}
+	if j := endingAfter(scopes, int32(i)-1, p); j >= 0 {
+		return &scopes[j]
 	}
 	return nil
 }

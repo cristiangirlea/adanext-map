@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -135,12 +136,39 @@ func (c *queryCmd) meta() meta { return meta{c.header.Commit, c.header.Dirty} }
 
 // emitJSON prints v as one line of JSON.
 func (c *queryCmd) emitJSON(v any) int {
-	enc := json.NewEncoder(c.stdout)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
+	if err := writeJSON(c.stdout, v, func(e *json.Encoder) { e.SetEscapeHTML(false) }); err != nil {
 		return c.fail(err)
 	}
 	return 0
+}
+
+// writeJSON writes v and a newline to w as JSON, from an encoder that setup has configured.
+// encoding/json escapes the C0 controls, but leaves DEL and the C1 controls (U+0080 to U+009F,
+// among them the one-character CSI that a terminal reads as ESC [) as they are, so those become
+// \u escapes here. Decoding gives the same values back. They can only be inside a string: that is
+// the only place the encoder writes a character that is not ASCII graphic, and UTF-8 starts a C1
+// control with the byte 0xC2.
+func writeJSON(w io.Writer, v any, setup func(*json.Encoder)) error {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	setup(enc)
+	if err := enc.Encode(v); err != nil {
+		return err
+	}
+	in, out := b.Bytes(), make([]byte, 0, b.Len())
+	for i := 0; i < len(in); i++ {
+		switch {
+		case in[i] == 0x7f:
+			out = append(out, `\u007f`...)
+		case in[i] == 0xc2 && i+1 < len(in) && in[i+1] >= 0x80 && in[i+1] <= 0x9f:
+			out = fmt.Appendf(out, `\u%04x`, in[i+1])
+			i++
+		default:
+			out = append(out, in[i])
+		}
+	}
+	_, err := w.Write(out)
+	return err
 }
 
 // resolve finds the symbol spec means: a symbol string, or a name that fits exactly one symbol.

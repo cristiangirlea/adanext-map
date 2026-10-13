@@ -23,20 +23,17 @@ func nameFromSymbol(id string) string {
 	for i := 0; i < len(d); {
 		switch d[i] {
 		case '[', '(':
-			// A type parameter or a parameter: the name sits between the brackets.
+			// A type parameter or a parameter: the name sits between the brackets, and a name in
+			// backticks may hold the closing one.
 			closing := byte(']')
 			if d[i] == '(' {
 				closing = ')'
 			}
-			end := strings.IndexByte(d[i+1:], closing)
-			if end < 0 {
+			n, next, ok := readName(d, i+1)
+			if !ok || next >= len(d) || d[next] != closing {
 				return ""
 			}
-			n, next, ok := readName(d[:i+1+end], i+1)
-			if !ok || next != i+1+end {
-				return ""
-			}
-			name, i = n, i+end+2
+			name, i = n, next+1
 		default:
 			n, next, ok := readName(d, i)
 			if !ok || next >= len(d) {
