@@ -297,3 +297,27 @@ func TestScopeAtAgreesWithWalkingTheParentsOnOverlappingRanges(t *testing.T) {
 		}
 	}
 }
+
+func TestCallersFallbackStartsAfterAnEnclosingRangeThatEndsOnTheLineOfItsName(t *testing.T) {
+	// `} func g() {` on line 3: P's range ends at column 1 of that line, and g, which has none, starts
+	// after it rather than inside it, so that what follows g's name on the line is still g's.
+	const p, g, target = "s m p v P#", "s m p v g().", "s m p v target()."
+	x := oneDoc(
+		occSpec{sym: p, line: 0, col: 5, def: true, enclosing: span(0, 0, 3, 1)},
+		occSpec{sym: g, line: 3, col: 5, def: true},
+		occSpec{sym: target, line: 1, col: 1},  // in P
+		occSpec{sym: target, line: 3, col: 0},  // the last column of P
+		occSpec{sym: target, line: 3, col: 10}, // on g's line, past P
+		occSpec{sym: target, line: 6, col: 0},  // g runs to the end
+	)
+	got, err := x.Callers(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{p, g}; !slices.Equal(callerIDs(got.Callers), want) || got.Unattributed != 0 {
+		t.Fatalf("callers = %v, unattributed %d, want %v and none", callerIDs(got.Callers), got.Unattributed, want)
+	}
+	if !slices.Equal(lines(got.Callers[0].Sites), []int{2, 4}) || !slices.Equal(lines(got.Callers[1].Sites), []int{4, 7}) {
+		t.Errorf("sites: P %v, g %v", lines(got.Callers[0].Sites), lines(got.Callers[1].Sites))
+	}
+}

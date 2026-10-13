@@ -168,7 +168,8 @@ belongs to the innermost scope that contains the position where the reference st
    of the line of the next global definition's name in the same document, or to the end of the document
    for the last one, and clipped to the scope that holds the definition, if there is one. Starting at
    column 0 keeps what stands left of the name, such as the receiver in Go's `func (s *Server) Handle()`,
-   inside the definition; a second definition on the same line starts at its name.
+   inside the definition; a second definition on the same line starts at its name, and one that follows
+   an enclosing range ending on its line starts where that range ends.
 
 The fallback is a heuristic. A definition without an enclosing range is taken to own everything up to
 the next definition, so a top-level statement between two functions is attributed to the first, and every

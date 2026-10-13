@@ -71,12 +71,26 @@ func buildScopes(d *model.Document, defs []int32) []scope {
 		return compareRange(d.Occurrences[a].Range, d.Occurrences[b].Range)
 	})
 	scopes := make([]scope, len(byName))
+	// ends are where the enclosing ranges of the definitions end, in order.
+	var ends []pos
+	for _, oi := range byName {
+		if e := d.Occurrences[oi].Enclosing; e != nil {
+			ends = append(ends, endOf(*e))
+		}
+	}
+	slices.SortFunc(ends, func(a, b pos) int { return cmp.Or(cmp.Compare(a.line, b.line), cmp.Compare(a.col, b.col)) })
 	// A fallback scope starts at column 0 of its name's line, so that what stands left of the name
 	// (a Go receiver, a return type) is inside it. A second definition on that line starts at its name.
+	// One that follows an enclosing range ending on that line starts where the range ends, not inside it.
 	fallbackStart := func(i int) pos {
 		start := startOf(d.Occurrences[byName[i]].Range)
 		if i > 0 && d.Occurrences[byName[i-1]].Range.StartLine == start.line {
 			return start
+		}
+		// The last end at or before the name; one on the name's line is at or after column 0.
+		k := sort.Search(len(ends), func(k int) bool { return start.less(ends[k]) }) - 1
+		if k >= 0 && ends[k].line == start.line {
+			return ends[k]
 		}
 		return pos{start.line, 0}
 	}
