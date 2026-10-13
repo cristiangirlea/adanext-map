@@ -378,6 +378,9 @@ func (l *limitedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// openFile opens a store file; tests replace it to make the open fail or to open another file.
+var openFile = os.Open
+
 // Latest is the commit whose store was written last in repo.
 func Latest(repo string) (string, error) {
 	if err := checkDirs(repo, filepath.Join(repo, DirName)); err != nil {
@@ -390,9 +393,12 @@ func Latest(repo string) (string, error) {
 		}
 		return "", err
 	}
-	f, err := os.Open(path)
-	if err != nil {
+	f, err := openFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("no store in %s yet: run `adamap index` (%w)", repo, err)
+	}
+	if err != nil {
+		return "", err
 	}
 	defer f.Close()
 	// One byte past the limit tells a file of exactly the limit from a longer one.

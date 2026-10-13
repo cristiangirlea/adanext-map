@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -583,6 +585,44 @@ func TestLatestRefusesACommitFollowedByMoreThanTheLimit(t *testing.T) {
 	}
 	if c, err := Latest(repo); err == nil {
 		t.Fatalf("Latest = %q, want an error for a file longer than the limit", c)
+	}
+}
+
+// useOpenFile makes the store read its files through open for the rest of the test.
+func useOpenFile(t *testing.T, open func(string) (*os.File, error)) {
+	t.Helper()
+	was := openFile
+	openFile = open
+	t.Cleanup(func() { openFile = was })
+}
+
+func TestLatestReportsAnOpenFailureAsItIs(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	useOpenFile(t, func(path string) (*os.File, error) {
+		return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrPermission}
+	})
+	_, err := Latest(repo)
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("Latest err = %v, want the permission error", err)
+	}
+	if strings.Contains(err.Error(), "no store") {
+		t.Errorf("Latest err = %v, want no claim that there is no store", err)
+	}
+}
+
+func TestLatestSaysNoStoreWhenTheFileIsGoneAtOpen(t *testing.T) {
+	repo := t.TempDir()
+	if _, err := Write(repo, header(commitA), fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	useOpenFile(t, func(path string) (*os.File, error) {
+		return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+	})
+	if _, err := Latest(repo); err == nil || !strings.Contains(err.Error(), "no store in") {
+		t.Fatalf("Latest err = %v, want one saying there is no store yet", err)
 	}
 }
 
