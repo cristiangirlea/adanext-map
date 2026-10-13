@@ -166,6 +166,8 @@ Other servers in the file stay as they are, in their order. An existing `adamap`
 with two-space indentation, as Claude Code writes it, and a second install leaves it unchanged.
 Install refuses, and leaves the file alone, when `.mcp.json` is not valid JSON, is not an object,
 has an `mcpServers` or `adamap` that is not an object, or is a link rather than a plain file.
+On Windows a `.mcp.json` with the read-only attribute cannot be replaced: install says so, naming
+the file, and leaves it alone; clear the attribute and run install again.
 Claude Code asks you to approve a project server the first time it starts in the project. The
 absolute paths are particular to your machine, so think twice before committing the file.
 

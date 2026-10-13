@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unicode/utf8"
 )
@@ -215,7 +216,21 @@ func writeFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 	if err = os.Chmod(f.Name(), mode); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	if err = os.Rename(f.Name(), path); err != nil && readOnly(path) {
+		return fmt.Errorf("%s is read-only, so adamap cannot replace it: clear its read-only attribute, or edit the file by hand, and run install again", path)
+	}
+	return err
+}
+
+// readOnly says whether path is a file Windows will not let a rename replace because it has the
+// read-only attribute. Elsewhere a rename needs only the directory to be writable, so the answer
+// is no and the rename's own error stands.
+func readOnly(path string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().Perm()&0o200 == 0
 }
 
 // member is one key of a JSON object and its value as written.

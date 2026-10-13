@@ -339,3 +339,26 @@ func TestInstallRefusesAPathThatIsNotUTF8(t *testing.T) {
 	}
 	noFiles(t, repo)
 }
+
+func TestInstallClaudeNamesAReadOnlyFileOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("elsewhere a rename replaces a read-only file, as its directory allows")
+	}
+	repo := t.TempDir()
+	path := filepath.Join(repo, ".mcp.json")
+	writeFile(t, path, `{"other": 1}`)
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0o644) })
+	code, out, errOut := runCmd("install", "--claude", "--repo", repo)
+	if code != 1 || out != "" || !strings.Contains(errOut, path) || !strings.Contains(errOut, "read-only") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want exit 1 naming %s and that it is read-only", code, out, errOut, path)
+	}
+	if data, _ := os.ReadFile(path); string(data) != `{"other": 1}` {
+		t.Errorf("the file was changed: %q", data)
+	}
+	if entries, _ := os.ReadDir(repo); len(entries) != 1 {
+		t.Errorf("the temporary file should be removed, the directory holds %d entries", len(entries))
+	}
+}
