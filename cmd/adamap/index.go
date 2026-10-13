@@ -200,7 +200,11 @@ func runAndRead(repo string, maxBytes int64, stderr io.Writer) (*model.Index, sc
 	}
 	defer os.Remove(out)
 	if err := runIndexer(repo, program, ix.args, stderr); err != nil {
-		return nil, scip.Skipped{}, fmt.Errorf("%s failed: %w", ix.program, err)
+		msg := fmt.Sprintf("%s failed: %v", ix.program, err)
+		if ix.program == "rust-analyzer" {
+			msg += "; if rust-analyzer is only rustup's shim, install it with: rustup component add rust-analyzer"
+		}
+		return nil, scip.Skipped{}, errors.New(msg)
 	}
 	return scip.ReadFile(out, maxBytes)
 }

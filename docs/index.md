@@ -49,7 +49,8 @@ repository as its working directory:
 
 The indexer writes `index.scip` in the repository. adamap reads it and then deletes it. If an
 `index.scip` is already there, adamap stops instead of overwriting it: pass it with `--scip`, or
-move it. If the indexer is not on `PATH`, adamap names it and says how to install it. The indexer's
+move it. If the indexer is not on `PATH`, adamap names it and says how to install it. If `rust-analyzer`
+is a rustup shim but the component is not installed, adamap names the install command. The indexer's
 own output goes to stderr.
 
 For any other language, run its SCIP indexer yourself and pass the output with `--scip`.
