@@ -246,6 +246,9 @@ func parseStreamJSON(stdout []byte, b manifest.Backend) Outcome {
 		}
 		if c := limitCategory(e.Error); c != "" && (e.Type == "assistant" || e.Type == "system" && e.Subtype == "api_retry") {
 			limitErr = "the CLI reported a " + c + " error"
+		} else if e.Type == "assistant" {
+			// A turn came through after the retries: a later failure is the task's, not the limit's.
+			limitErr = ""
 		}
 		switch e.Type {
 		case "assistant":

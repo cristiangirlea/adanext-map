@@ -185,6 +185,11 @@ func TestClaudeParseNamesThePlansLimit(t *testing.T) {
 		{"assistant error field", `{"type":"assistant","error":"rate_limit","message":{"content":[{"type":"text","text":"Rate limited"}]}}`, true},
 		{"retried then succeeded", `{"type":"system","subtype":"api_retry","error":"rate_limit","attempt":1,"max_retries":10,"error_status":429}` + "\n" +
 			`{"type":"result","subtype":"success","is_error":false,"result":"done"}`, false},
+		{"retried, got through, then ran out of turns", `{"type":"system","subtype":"api_retry","error":"rate_limit","attempt":1,"max_retries":10,"error_status":429}` + "\n" +
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"Looking."}]}}` + "\n" +
+			`{"type":"result","subtype":"error_max_turns","is_error":true,"result":""}`, false},
+		{"retried, got through, then timed out", `{"type":"system","subtype":"api_retry","error":"overloaded","attempt":1,"max_retries":10,"error_status":529}` + "\n" +
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"Looking."}]}}`, false},
 		{"answer mentions a rate limit", `{"type":"result","subtype":"success","is_error":false,"result":"The client retries on HTTP 429 and on a rate limit; it handles overloaded servers."}`, false},
 		{"max turns", `{"type":"result","subtype":"error_max_turns","is_error":true,"result":""}`, false},
 		{"another error", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Tool permission denied in 4290 ms"}`, false},
