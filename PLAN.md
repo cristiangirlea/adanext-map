@@ -89,3 +89,9 @@ repository); a fail-closed push guard (#8).
   `.mcp.json` and keeps the entry's other fields and every other key in order; of a key written
   twice it reads the last, as JSON readers do. It refuses a link and a file it cannot parse. `--codex` only prints: `~/.codex/config.toml` is outside the
   repository.
+- 2026-10-13: item-count limits for an index (issue #17), checked while the store is decoded and
+  after a SCIP index is read and converted: 2,000,000 documents, 20,000,000 symbols (global and
+  local), 50,000,000 occurrences and 20,000,000 relationships. Bytes do not bound memory, since a
+  few bytes (`{},`) become a whole struct. The defaults sit far above the measured Rust workspace
+  (2,000 files, about 2.4 million occurrences) so no real repository meets them, and stay low
+  enough that a planted store or index is refused before it exhausts memory.
