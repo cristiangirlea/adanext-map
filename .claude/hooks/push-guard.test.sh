@@ -153,6 +153,15 @@ refused 'git push origin main; if ($?) { echo ok }' . PowerShell
 refused '$out = git push origin main' . PowerShell
 refused "Start-Process git -ArgumentList 'push','origin','main'" . PowerShell
 refused 'Invoke-Expression \"git tag v3\"' . PowerShell
+# Command substitutions run, in double quotes too; a comment ends at the line's end.
+refused 'echo \"$(git push origin main)\"'
+refused 'echo \"`git tag v2`\"'
+refused 'git commit -m \"x $(date) y\" && git push origin main'
+refused 'git push origin \"$(git branch --show-current)\"'
+refused "git commit -m 'a; b' && git push origin main"
+refused "git status # don't\\ngit push origin main"
+refused 'echo ${#x}; git push origin main'
+refused 'cd \"C:\\x\\\"; git push origin main' . PowerShell
 # Git aliases are expanded.
 refused 'git ship'
 refused 'git yolo'
@@ -177,6 +186,13 @@ allowed 'git log --grep=tag'
 allowed 'git commit -m \"explain why we never git push to main\"'
 allowed 'grep -rn \"git push origin main\" .'
 allowed 'echo git push origin main'
+# Quoted text is not a command.
+allowed 'git commit -m \"docs: guard (git tag, git push)\"'
+allowed 'gh pr create --title x --body \"refuses \\`git tag\\`\"'
+allowed 'echo \"ok; git push origin main\"'
+allowed 'git commit -m \"line one\nline two; git push origin main\"'
+allowed "bash -c \\\"git commit -m 'x; git push origin main'\\\""
+allowed 'echo \"a`; git tag b\"' . PowerShell
 allowed 'echo push'
 allowed 'go test ./...'
 allowed 'go vet ./... && go build ./...'

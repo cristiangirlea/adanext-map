@@ -70,10 +70,10 @@ json_string() {
 }
 # unescape: JSON escapes decoded, a line at a time. An escaped backslash is set aside first, so it
 # cannot start another escape. A backslash or backtick before a newline joins the lines (sh and
-# PowerShell line continuations); other newlines separate commands. Control characters: spaces.
+# PowerShell line continuations); other newlines stay. Control characters: spaces.
 unescape() {
   sed -e 's/\\\\/'"$soh"'/g' -e 's/\\r//g' \
-    -e 's/'"$soh"'\\n/ /g' -e 's/`\\n/ /g' -e 's/\\n/;/g' \
+    -e 's/'"$soh"'\\n/ /g' -e 's/`\\n/ /g' -e 's/\\n/\'"$nl"'/g' \
     -e 's/\\t/ /g' -e 's/\\"/"/g' -e 's/\\\//\//g' -e 's/\\[bf]/ /g' \
     -e 's/\\u0026/\&/g' -e 's/\\u003[cC]/</g' -e 's/\\u003[eE]/>/g' -e "s/\\\\u0027/'/g" \
     -e 's/\\u[0-9a-fA-F]\{4\}/ /g' -e 's/'"$soh"'/\\/g'
@@ -135,19 +135,63 @@ current_branch() {
   b=$(git_in_dir rev-parse --abbrev-ref HEAD) && [ -n "$b" ] && [ "$b" != HEAD ] && printf '%s' "$b"
 }
 
-# check_cmd TEXT: each simple command in TEXT, split at ; | & ( ) { } and newlines. The text before
-# a command substitution ends in a $, as what the substitution adds cannot be seen. Splitting
-# inside quotes too only ever finds more to check.
+# check_cmd TEXT: each simple command in TEXT, split at ; | & ( ) { } and newlines outside quotes.
+# A command substitution, $( ) or sh's backticks, in double quotes too, is checked as commands, and
+# the command around it gets a $ where it was, as what it adds cannot be seen. A comment is skipped.
 check_cmd() {
-  s=$1 text=
-  while :; do
-    case $s in *'`'*) text=$text${s%%\`*}' $;'; s=${s#*\`} ;; *) break ;; esac
+  cs=$1 cur= md=o stk= lastc=
+  while [ -n "$cs" ]; do
+    case $md in
+      o) pre=${cs%%[\;\|\&\(\)\{\}\#\"\'\\\`$nl]*} ;;
+      s) pre=${cs%%\'*} ;;
+      *) pre=${cs%%[\"\\\`\(]*} ;;
+    esac
+    cur=$cur$pre cs=${cs#"$pre"}
+    case $pre in ?*) lastc=${pre#"${pre%?}"} ;; esac
+    [ -n "$cs" ] || break
+    ch=${cs%"${cs#?}"} cs=${cs#?}
+    case $md$ch in
+      s\' | d\") cur=$cur$ch md=o ;;
+      o\') cur=$cur$ch; [ "$lang" = cmd ] || md=s ;;
+      o\") cur=$cur$ch md=d ;;
+      [od]\\ | [od]\`)
+        if [ "$ch" = "$esc" ]; then
+          cur=$cur$ch${cs%"${cs#?}"} cs=${cs#?}
+        elif [ "$ch$lang" = '`sh' ]; then
+          case $md$stk in
+            o[OD]*) check_part "$cur"; sub_end ;;
+            o*) cur="$cur \$"; sub_start O ;;
+            *) cur="$cur \$"; sub_start D ;;
+          esac
+        else
+          cur=$cur$ch
+        fi ;;
+      d\() case $cur in *'$') cur=$cur$ch; sub_start d ;; *) cur=$cur$ch ;; esac ;;
+      o\() cur=$cur$ch; sub_start o ;;
+      o\)) check_part "$cur"; case $stk in [od]*) sub_end ;; *) cur= ;; esac ;;
+      o\#)
+        case $lastc in
+          '' | [\ \	\;\&\|\(\)] | "$nl") case $cs in *"$nl"*) cs=$nl${cs#*"$nl"} ;; *) cs= ;; esac ;;
+          *) cur=$cur$ch ;;
+        esac ;;
+      *) check_part "$cur"; cur= ;;
+    esac
+    lastc=$ch
   done
-  text=$text$s
-  IFS=";|&(){}$nl"
-  for part in $text; do
-    check_part "$part"
-  done
+  check_part "$cur"
+  while [ -n "$stk" ]; do sub_end; check_part "$cur"; done
+  return 0
+}
+# sub_start MODE: a substitution or a group begins; MODE (o, d, or O, D for backticks) is the mode to
+# return to, and the command so far is set aside.
+sub_start() {
+  stk=$1$cur$soh$stk cur= md=o
+}
+# sub_end: back to the command around it.
+sub_end() {
+  top=${stk%%"$soh"*} stk=${stk#*"$soh"}
+  cur=${top#?}
+  case $top in [oO]*) md=o ;; *) md=d ;; esac
 }
 
 # check_part TEXT: one simple command, in words. Wrappers (env, sudo, xargs, Start-Process...) are
