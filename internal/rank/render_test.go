@@ -219,6 +219,23 @@ func TestFitIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestDetailLooksForTheNameInTheFirst480BytesOfASignature(t *testing.T) {
+	// Detail cuts a signature at 4*maxDetail = 480 bytes before it drops keywords. A name that ends
+	// at byte 480 is found and the keywords before it dropped; one byte further and it is not.
+	if 4*maxDetail != 480 {
+		t.Fatalf("maxDetail is %d: the test is written for a cut at 480 bytes", maxDetail)
+	}
+	in := strings.Repeat("a ", 238) + "Name" // Name ends at byte 480
+	if got := Detail(Symbol{Name: "Name", Signature: in}); got != "Name" {
+		t.Errorf("name ending at byte 480: Detail = %q, want %q", got, "Name")
+	}
+	out := strings.Repeat("a ", 239) + "Name" // Name would end at byte 482
+	got := Detail(Symbol{Name: "Name", Signature: out})
+	if !strings.HasPrefix(got, "Name a a a ") || len(got) != maxDetail || !strings.HasSuffix(got, "...") {
+		t.Errorf("name past byte 480: Detail = %q, want the name put before the cut signature, clipped to %d bytes", got, maxDetail)
+	}
+}
+
 func TestFormatCharactersInANameDocOrKindBecomeASpace(t *testing.T) {
 	// U+202E reverses what follows it on a terminal, U+200B takes no room, U+2028 breaks the line.
 	files := []File{{Path: "a.go", Symbols: []Symbol{
