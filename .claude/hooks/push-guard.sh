@@ -263,6 +263,7 @@ check_part() {
     esac
     prog "$1"
     case $w in
+      then | do | else | elif | if | while | until) shift; continue ;; # a keyword before a command
       env | sudo | doas | command | builtin | exec | nohup | time | nice | noglob | ! | timeout | xargs | \
         eval | iex | invoke-expression | start-process | saps | start)
         [ "$w" = xargs ] && fromstdin=1

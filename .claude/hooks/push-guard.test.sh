@@ -168,6 +168,14 @@ refused 'cd \"C:\\x\\\"; git push origin main' . PowerShell
 refused 'cat <<EOF >body.md\nhi\nEOF\ngit push origin main'
 refused 'cat <<EOF; git push origin main\nhi\nEOF'
 refused 'cat <<EOF\n$(git push origin main)\nEOF'
+# A keyword before a command.
+refused 'if true; then git push origin main; fi'
+refused 'while true; do git tag v1; done'
+refused 'if false; then :; else git push origin main; fi'
+refused 'if false; then :; elif git push origin main; then :; fi'
+refused 'if git push origin main; then :; fi'
+refused 'until git tag v1; do :; done'
+allowed 'if true; then git status; else git log; fi'
 # Git aliases are expanded.
 refused 'git ship'
 refused 'git yolo'
