@@ -228,7 +228,7 @@ func TestClaudeWatchGoesOnOnlyOnTheSubscriptionLogin(t *testing.T) {
 		ok    bool
 	}{
 		{"subscription", []string{`{"type":"system","subtype":"init","apiKeySource":"none"}`, `{"type":"assistant","message":{}}`}, true},
-		{"hooks first", []string{"not json", `{"type":"system","subtype":"hook_started"}`, `{"type":"system","subtype":"init","apiKeySource":"none"}`}, true},
+		{"hooks first", []string{`{"type":"system","subtype":"hook_started"}`, `{"type":"system","subtype":"init","apiKeySource":"none"}`}, true},
 		{"an api key", []string{`{"type":"system","subtype":"init","apiKeySource":"ANTHROPIC_API_KEY"}`}, false},
 		{"a key helper", []string{`{"type":"system","subtype":"init","apiKeySource":"apiKeyHelper"}`}, false},
 		{"no source", []string{`{"type":"system","subtype":"init","session_id":"s"}`}, false},
@@ -386,5 +386,39 @@ func TestClaudeParseReadsThePlansMeter(t *testing.T) {
 	}
 	if o := (runner.Claude{}).Parse([]byte(syntheticTranscript), b); o.Meter != nil {
 		t.Fatalf("a transcript without a meter: %+v", o.Meter)
+	}
+}
+
+func TestClaudeWatchFailsClosed(t *testing.T) {
+	init := `{"type":"system","subtype":"init","apiKeySource":"none"}`
+	for _, bad := range []string{"not json", `{"type":"system",`, `{"type":"rate_limit_event","rate_limit_info":true}`, `{"type":"rate_limit_event","rate_limit_info":[]}`, `{"type":"rate_limit_event","rate_limit_info":null}`, `{"type":"rate_limit_event"}`} {
+		t.Run(bad, func(t *testing.T) {
+			if _, err := watchLines(t, []string{bad, init}); err == nil {
+				t.Fatal("unknown input accepted before init")
+			}
+			if strings.Contains(bad, "rate_limit_event") {
+				if _, err := watchLines(t, []string{init, bad}); err == nil {
+					t.Fatal("unknown meter accepted after init")
+				}
+			}
+		})
+	}
+}
+
+func TestClaudeWatchOverageValues(t *testing.T) {
+	for _, value := range []string{`"true"`, `1`, `-1`, `0.5`, `null`, `"unknown"`, `[]`, `{}`, `{"value":false}`} {
+		t.Run(value, func(t *testing.T) {
+			for _, prefix := range [][]string{nil, {`{"type":"system","subtype":"init","apiKeySource":"none"}`}} {
+				lines := append(slices.Clone(prefix), `{"type":"rate_limit_event","rate_limit_info":{"isUsingOverage":`+value+`}}`)
+				if _, err := watchLines(t, lines); !errors.Is(err, runner.ErrOverage) {
+					t.Fatalf("unknown or truthy overage accepted: %v", err)
+				}
+			}
+		})
+	}
+	for _, value := range []string{`false`, `"false"`, `0`, `"allowed"`, `"rejected"`} {
+		if _, err := watchLines(t, []string{`{"type":"rate_limit_event","rate_limit_info":{"overageStatus":` + value + `}}`}); err != nil {
+			t.Errorf("inactive %s: %v", value, err)
+		}
 	}
 }
