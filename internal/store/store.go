@@ -156,10 +156,6 @@ func createNew(dir, name string, content []byte) error {
 		return err
 	}
 	defer os.Remove(tmp)
-	// CreateTemp makes the file private (0600); a new file here gets an ordinary file's mode.
-	if err := os.Chmod(tmp, 0o644); err != nil {
-		return err
-	}
 	return publishNew(tmp, filepath.Join(dir, name), content)
 }
 
@@ -170,7 +166,7 @@ func publishNew(tmp, path string, content []byte) error {
 	if err == nil || errors.Is(err, fs.ErrExist) {
 		return nil
 	}
-	f, openErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, openErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(openErr, fs.ErrExist) {
 		return nil
 	}
@@ -329,11 +325,16 @@ const maxHeaderBytes = 1 << 20
 
 // openRegular opens path unless it is not a regular file, or a link to one: a cloned repository can
 // commit a store file as a symbolic link to a device or to a file outside itself. What was opened
-// must also be the file that was checked, as something may replace the path between the two.
+// must still be regular; the identity check also detects replacements where the OS supports it.
+// Unix opens are nonblocking so a swapped-in FIFO can be refused without waiting for a writer.
 func openRegular(path string) (*os.File, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
+	}
+	// Cache Windows' lazy file identity before opening can observe a replacement.
+	if !os.SameFile(fi, fi) {
+		return nil, fmt.Errorf("%s: could not determine the checked file's identity", path)
 	}
 	if !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file: adamap will not read a store through a link or a device", path)
@@ -343,6 +344,9 @@ func openRegular(path string) (*os.File, error) {
 		return nil, err
 	}
 	opened, err := f.Stat()
+	if err == nil && !opened.Mode().IsRegular() {
+		err = fmt.Errorf("%s is not a regular file", path)
+	}
 	if err == nil && !os.SameFile(fi, opened) {
 		err = fmt.Errorf("%s was replaced while it was opened, so what was read is not the file that was checked: "+
 			"run it again", path)
@@ -396,7 +400,7 @@ func (l *limitedReader) Read(p []byte) (int, error) {
 }
 
 // openFile opens a store file; tests replace it to make the open fail or to open another file.
-var openFile = os.Open
+var openFile = openStoreFile
 
 // Latest is the commit whose store was written last in repo.
 func Latest(repo string) (string, error) {

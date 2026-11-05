@@ -16,6 +16,7 @@ import (
 
 	scippb "github.com/scip-code/scip/bindings/go/scip"
 
+	"github.com/cristiangirlea/adanext-map/internal/query"
 	"github.com/cristiangirlea/adanext-map/internal/scip/sciptest"
 	"github.com/cristiangirlea/adanext-map/internal/store"
 )
@@ -899,11 +900,11 @@ func TestGitErrorsAreEscapedForTheTerminal(t *testing.T) {
 // A multi-line message from git keeps its lines; only a line that needs it is quoted.
 func TestSafeLinesQuotesOnlyTheLinesThatNeedIt(t *testing.T) {
 	const override = "\xe2\x80\xae"
-	if got, want := safeLines("fatal: one\nhint: two\n"), "fatal: one\nhint: two\n"; got != want {
+	if got, want := query.SafeLines("fatal: one\nhint: two\n"), "fatal: one\nhint: two\n"; got != want {
 		t.Errorf("safeLines = %q, want %q", got, want)
 	}
 	bad := "bad " + override + " line"
-	if got, want := safeLines("fatal: ok\n"+bad), "fatal: ok\n"+strconv.Quote(bad); got != want {
+	if got, want := query.SafeLines("fatal: ok\n"+bad), "fatal: ok\n"+strconv.Quote(bad); got != want {
 		t.Errorf("safeLines = %q, want %q", got, want)
 	}
 }

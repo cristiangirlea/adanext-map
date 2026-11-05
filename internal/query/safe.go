@@ -2,6 +2,7 @@ package query
 
 import (
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -26,4 +27,13 @@ func Safe(s string) string {
 		}
 	}
 	return strconv.Quote(s)
+}
+
+// SafeLines quotes unsafe text one line at a time to preserve multiline diagnostics.
+func SafeLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = Safe(line)
+	}
+	return strings.Join(lines, "\n")
 }

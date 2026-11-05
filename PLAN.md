@@ -164,3 +164,12 @@ repository); a fail-closed push guard (#8).
   so a resume before the reset starts nothing, and each record keeps its last reading per window
   as `plan_meter`. A reading without `resetsAt` stops nothing, since it cannot be waited out.
   Issue #70's text was taken from the task brief, as `gh` had no valid credentials in this session.
+- 2026-11-05 (#56): keep CreateTemp's private 0600 mode for every new store file, including
+  `.gitignore`, and use 0600 for its exclusive-create fallback. Remove chmod so the umask is
+  respected and filesystems without permission bits can write stores. Quote only unexpected JSON
+  string tokens and display delimiters as characters. Cache Windows file identity immediately
+  after Lstat, and open Unix store files nonblocking so a swapped-in FIFO cannot block the
+  descriptor's regular-file check. Use plain os.Open on other non-Windows systems, which cannot
+  rely on Unix flags. Always check the opened descriptor is regular before trusting its identity.
+  Test delimiter and string diagnostics, same-path replacement, and bounded Unix FIFO refusal.
+  Share `query.SafeLines` and correct the install test comment as part of this item.
