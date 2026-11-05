@@ -97,17 +97,25 @@ A SCIP index is untrusted input. adamap refuses, with an error naming the docume
 A backslash in a document path is read as `/` (SCIP specifies `/`, but indexers on Windows write
 `\`), and the path is cleaned (`a/./b.go` and `a//b.go` become `a/b.go`) before it is checked.
 
-A document whose path leaves the project (absolute: `/x`, `C:...`, a UNC path; or with a `..` that
+A document whose path leaves the project (absolute: `/x`, `C:/x`, a UNC path; or with a `..` that
 escapes) or names the project root itself (`pkg/..`) is skipped with its occurrences and symbols,
-unread, and `adamap index` prints `skipped N documents adamap cannot store (outside the project or not a safe file name)` on stderr and still
-writes the store. Indexers on Windows list such a document: the test main Go builds in its cache.
+unread. `adamap index` prints `skipped N documents outside the project, naming its root or with unsafe names` on
+stderr (`1 document` for one) and still writes the store. The note includes the first three paths,
+each quoted and limited to 200 bytes including quotes and a trailing `...` when truncated.
+Indexers on Windows list such a document: the test main Go builds in its cache.
 A document path with a NUL or other control character, a `:`, or a Windows device name in any
 segment (`nul`, `con.txt`, `pkg/aux.go`, `COM1`, `lpt¹`, `CONIN$`, `CONOUT$`; any case, trailing dots and spaces ignored)
-is skipped the same way and refused at load, on every OS, so a Linux store is safe on Windows.
-The checks above (ranges, symbols) apply to the documents that are kept.
+is also skipped with the same note. A relative name such as `x:y.go` is skipped as an unsafe name,
+not classified as an absolute drive path. Unknown path validation errors remain fatal.
+These paths are refused at load, on every OS, so a Linux store is safe on Windows. The checks above (ranges, symbols) apply only to kept
+documents: discarded contents are not validated. References in a kept document to a symbol defined
+in a skipped document remain, but the skipped definition and symbol information do not; separately
+supplied external symbol information is still kept, without a definition in the project.
 
-Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice is
-merged into one.
+Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice with
+exactly the same original path is merged into one. Different spellings that normalize to one path
+(such as `pkg\a.go` and `pkg/a.go`, or `pkg/./a.go` and `pkg/a.go`) are refused, so local symbol IDs
+from distinct document entries cannot silently become one symbol.
 
 Bytes do not bound memory: a few bytes of protobuf or JSON (`{},`) become a whole struct once decoded,
 so the decoded index takes several times the size of the file and a small file can hold millions of

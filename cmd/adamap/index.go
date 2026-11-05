@@ -107,8 +107,12 @@ func runIndex(args []string, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	if skipped.Count > 0 {
-		fmt.Fprintf(stderr, "adamap index: skipped %d documents adamap cannot store (outside the project or not a safe file name) (first: %s)\n",
-			skipped.Count, strings.Join(skipped.Paths, ", "))
+		noun := "documents"
+		if skipped.Count == 1 {
+			noun = "document"
+		}
+		fmt.Fprintf(stderr, "adamap index: skipped %d %s outside the project, naming its root or with unsafe names (first: %s)\n",
+			skipped.Count, noun, strings.Join(skipped.Paths, ", "))
 	}
 	dir, err := store.Write(*repo, store.Header{
 		Adamap:      Version,

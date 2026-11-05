@@ -2,6 +2,7 @@ package scip
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -377,7 +378,7 @@ func TestConvertSkipsADocumentOutsideTheProject(t *testing.T) {
 }
 
 func TestConvertSkipsEveryKindOfPathOutsideTheProject(t *testing.T) {
-	paths := []string{"/etc/passwd", `\x.go`, `C:\Windows\x.go`, "C:x.go", `\server\share\x.go`,
+	paths := []string{"/etc/passwd", `\x.go`, `C:\Windows\x.go`, `\server\share\x.go`,
 		`\\server\share\x.go`, `\..`, `a\..\..\b`, "../x.go", "pkg/../../x.go", `pkg\..\..\x.go`,
 		// Paths that clean to the project root itself name no file.
 		"pkg/..", ".", `pkg\..`}
@@ -473,25 +474,23 @@ func TestDecodeRefusesMoreSymbolsThanTheLimitOnceDefinitionsAreConverted(t *test
 }
 
 func TestConvertSkipsAPathWindowsCannotHold(t *testing.T) {
-	paths := []string{"a.go:x", "dir/a:x.go", "a\x00b.go", "a\nb.go", "a\x7fb.go",
-		"nul", "con.txt", "pkg/aux.go", `pkg\com1.go`, "LPT9.go", "nul.", "com².go"}
-	x := sciptest.Index()
+	paths := []string{"aux.go", "pkg/com1.go", "a:x.go", "a.go:x", "dir/a:x.go", "a\x00b.go", "a\nb.go", "a\x7fb.go",
+		"nul", "con.txt", "pkg/aux.go", `pkg\com1.go`, "LPT9.go", "nul.", "com\u00b2.go"}
 	for _, p := range paths {
-		x.Documents = append(x.Documents, &scippb.Document{RelativePath: p})
+		t.Run(strconv.Quote(p), func(t *testing.T) {
+			x := sciptest.Index()
+			x.Documents = append(x.Documents, &scippb.Document{RelativePath: p})
+			got, skipped, err := Convert(x)
+			if err != nil || skipped.Count != 1 || !slices.Equal(skipped.Paths, []string{strconv.Quote(p)}) {
+				t.Fatalf("Convert: skipped %+v, err %v, want one quoted skip", skipped, err)
+			}
+			diff(t, got, wantFixture())
+		})
 	}
-	got, skipped, err := Convert(x)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if skipped.Count != len(paths) {
-		t.Errorf("skipped %d, want %d", skipped.Count, len(paths))
-	}
-	diff(t, got, wantFixture())
 }
 
 // An index is untrusted, and its text reaches a terminal in an error: a path holding a
-// right-to-left override must come out quoted, never raw. (A path with a control character such as
-// ESC is skipped before any error can name it, so the override is what reaches this far.)
+// right-to-left override must come out quoted, never raw.
 func TestConvertErrorsQuoteTheDocumentPath(t *testing.T) {
 	const hostile = "a\u202egp.go"
 	cases := []struct {
@@ -517,5 +516,139 @@ func TestConvertErrorsQuoteTheDocumentPath(t *testing.T) {
 				t.Fatalf("err = %q, want the path quoted as %s", err, strconv.Quote(hostile))
 			}
 		})
+	}
+}
+
+func TestConvertRefusesDifferentSpellingsOfOnePath(t *testing.T) {
+	for _, spelling := range []string{`pkg\a.go`, "pkg/./a.go", "pkg//a.go", "pkg/sub/../a.go"} {
+		t.Run(spelling, func(t *testing.T) {
+			for _, reverse := range []bool{false, true} {
+				x := sciptest.Index()
+				alias := &scippb.Document{RelativePath: spelling,
+					Symbols:     []*scippb.SymbolInformation{{Symbol: "local 0", DisplayName: "different"}},
+					Occurrences: []*scippb.Occurrence{{Symbol: "local 0", Range: []int32{0, 0, 1}, SymbolRoles: int32(scippb.SymbolRole_Definition)}}}
+				x.Documents = append(x.Documents, alias)
+				if reverse {
+					x.Documents[0], x.Documents[2] = x.Documents[2], x.Documents[0]
+				}
+				if _, _, err := Convert(x); err == nil || !strings.Contains(err.Error(), "different spellings") {
+					t.Fatalf("err = %v, want a path spelling collision", err)
+				}
+			}
+		})
+	}
+}
+
+func TestConvertDoesNotValidateSkippedContents(t *testing.T) {
+	for _, d := range []*scippb.Document{
+		{RelativePath: "../symbol.go", Symbols: []*scippb.SymbolInformation{{}}},
+		{RelativePath: "../range.go", Occurrences: []*scippb.Occurrence{{Symbol: "s", Range: []int32{-1, 0, 1}}}},
+		{RelativePath: "../enclosing.go", Occurrences: []*scippb.Occurrence{{Symbol: "s", Range: []int32{0, 0, 1}, EnclosingRange: []int32{1}}}},
+	} {
+		x := sciptest.Index()
+		x.Documents = append(x.Documents, d)
+		got, skipped, err := Convert(x)
+		if err != nil || skipped.Count != 1 {
+			t.Fatalf("skipped %+v, err %v", skipped, err)
+		}
+		diff(t, got, wantFixture())
+	}
+}
+
+func TestConvertKeepsReferencesToASkippedDefinition(t *testing.T) {
+	const symbol = "outside."
+	for _, external := range []bool{false, true} {
+		x := &scippb.Index{Documents: []*scippb.Document{
+			{RelativePath: "../outside.go", Symbols: []*scippb.SymbolInformation{{Symbol: symbol, DisplayName: "discarded"}},
+				Occurrences: []*scippb.Occurrence{{Symbol: symbol, Range: []int32{0, 0, 1}, SymbolRoles: int32(scippb.SymbolRole_Definition)}}},
+			{RelativePath: "kept.go", Occurrences: []*scippb.Occurrence{{Symbol: symbol, Range: []int32{1, 0, 1}}}},
+		}}
+		want := &model.Index{Documents: []model.Document{{Path: "kept.go", Occurrences: []model.Occurrence{{Symbol: symbol, Range: rng(1, 0, 1, 1), Roles: model.RoleReference}}}}}
+		if external {
+			x.ExternalSymbols = []*scippb.SymbolInformation{{Symbol: symbol, DisplayName: "external"}}
+			want.Symbols = []model.Symbol{{ID: symbol, DisplayName: "external"}}
+		}
+		got, skipped, err := Convert(x)
+		if err != nil || skipped.Count != 1 {
+			t.Fatalf("skipped %+v, err %v", skipped, err)
+		}
+		diff(t, got, want)
+	}
+}
+
+func TestSkippedPathsAreBoundedAndQuoted(t *testing.T) {
+	for _, p := range []string{"../short.go", "../" + strings.Repeat("x", 194), "../" + strings.Repeat("x", 195), "../" + strings.Repeat("x", 196), "../" + strings.Repeat("x", 1000), "../" + strings.Repeat("\x1b\n\"\\", 1000), "../" + strings.Repeat("\u754c", 1000), "../" + strings.Repeat("\xff", 1000)} {
+		var skipped Skipped
+		skipped.add(p)
+		q := skipped.Paths[0]
+		if len(q) > 200 {
+			t.Fatalf("quoted path is %d bytes, want at most 200", len(q))
+		}
+		raw, err := strconv.Unquote(q)
+		if err != nil {
+			t.Fatalf("invalid quoted path %q: %v", q, err)
+		}
+		if len(strconv.Quote(p)) <= 200 {
+			if raw != p {
+				t.Fatalf("short path changed to %q", raw)
+			}
+		} else if !strings.HasSuffix(raw, "...") || !strings.HasPrefix(p, strings.TrimSuffix(raw, "...")) {
+			t.Fatalf("truncated path %q is not a marked prefix", raw)
+		}
+	}
+}
+
+func TestConvertClassifiesPathsBeforeDiscardingContents(t *testing.T) {
+	for _, tc := range []struct {
+		path      string
+		wantError string
+	}{
+		{"x:y.go", ""},
+		{`\\server\share\x.go`, ""},
+		{`\\?\C:\x`, ""},
+		{"pkg/..", ""},
+		{"", "document 2: no path"},
+	} {
+		t.Run(strconv.Quote(tc.path), func(t *testing.T) {
+			x := sciptest.Index()
+			x.Documents = append(x.Documents, &scippb.Document{RelativePath: tc.path,
+				Symbols: []*scippb.SymbolInformation{{}}})
+			got, skipped, err := Convert(x)
+			if tc.wantError != "" {
+				if err == nil || err.Error() != tc.wantError || got != nil || skipped.Count != 0 {
+					t.Fatalf("Convert = %v, %+v, %v, want fatal %q", got, skipped, err, tc.wantError)
+				}
+				return
+			}
+			if err != nil || skipped.Count != 1 || !slices.Equal(skipped.Paths, []string{strconv.Quote(tc.path)}) {
+				t.Fatalf("Convert: skipped %+v, err %v, want one skip", skipped, err)
+			}
+			diff(t, got, wantFixture())
+		})
+	}
+}
+
+func TestConvertOnlySkipsKnownPathRefusals(t *testing.T) {
+	unexpected := errors.New("unexpected path refusal")
+	for _, refusal := range []error{fmt.Errorf("wrapped: %w", model.ErrUnsafeName), unexpected} {
+		x := &scippb.Index{Documents: []*scippb.Document{{RelativePath: "x:y.go"}}}
+		called := false
+		got, skipped, err := convert(x, func(p string) error {
+			called = true
+			if p != "x:y.go" {
+				t.Fatalf("checked path %q, want x:y.go", p)
+			}
+			return refusal
+		})
+		if !called {
+			t.Fatal("relative colon path was classified as outside the project")
+		}
+		if errors.Is(refusal, model.ErrUnsafeName) {
+			if err != nil || skipped.Count != 1 || !slices.Equal(skipped.Paths, []string{`"x:y.go"`}) || len(got.Documents) != 0 {
+				t.Fatalf("known refusal: got %v, skipped %+v, err %v", got, skipped, err)
+			}
+		} else if !errors.Is(err, unexpected) || err.Error() != "document 0: unexpected path refusal" || got != nil || skipped.Count != 0 {
+			t.Fatalf("unknown refusal: got %v, skipped %+v, err %v", got, skipped, err)
+		}
 	}
 }

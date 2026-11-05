@@ -521,7 +521,7 @@ func TestIndexSkipsDocumentsOutsideTheProjectAndSaysSo(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, errOut)
 	}
-	if !strings.Contains(errOut, "skipped 2 documents adamap cannot store (outside the project or not a safe file name)") || !strings.Contains(errOut, `go-build`) {
+	if !strings.Contains(errOut, "skipped 2 documents outside the project, naming its root or with unsafe names") || !strings.Contains(errOut, `go-build`) {
 		t.Errorf("stderr %q does not say two documents were skipped", errOut)
 	}
 	if !summary.MatchString(out) {
@@ -905,5 +905,22 @@ func TestSafeLinesQuotesOnlyTheLinesThatNeedIt(t *testing.T) {
 	bad := "bad " + override + " line"
 	if got, want := safeLines("fatal: ok\n"+bad), "fatal: ok\n"+strconv.Quote(bad); got != want {
 		t.Errorf("safeLines = %q, want %q", got, want)
+	}
+}
+
+func TestIndexUsesSingularForOneSkippedDocument(t *testing.T) {
+	for _, name := range []string{"../outside.go", "aux.go", "pkg/com1.go", "a:x.go", "a\nb.go"} {
+		t.Run(strconv.Quote(name), func(t *testing.T) {
+			x := sciptest.Index()
+			x.Documents = append(x.Documents, &scippb.Document{RelativePath: name})
+			path := filepath.Join(t.TempDir(), "outside.scip")
+			if err := os.WriteFile(path, sciptest.Bytes(t, x), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			code, _, errOut := runIndexCmd("--scip", path, "--commit", testCommit, "--repo", t.TempDir())
+			if code != 0 || !strings.Contains(errOut, "skipped 1 document outside the project, naming its root or with unsafe names") {
+				t.Fatalf("exit %d, stderr %q, want singular skip note", code, errOut)
+			}
+		})
 	}
 }

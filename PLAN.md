@@ -164,3 +164,12 @@ repository); a fail-closed push guard (#8).
   so a resume before the reset starts nothing, and each record keeps its last reading per window
   as `plan_meter`. A reading without `resetsAt` stops nothing, since it cannot be waited out.
   Issue #70's text was taken from the task brief, as `gh` had no valid credentials in this session.
+- 2026-11-05 (#29): documents outside the project or at its root are skipped before their
+  discarded contents are validated. A kept document whose name `CheckPath` refuses as a known
+  unsafe name (`ErrUnsafeName`: a Windows device name, a colon or a control character) is still
+  skipped with a note, as before; any other `CheckPath` refusal is fatal. A drive path needs an
+  ASCII letter, a colon and a separator, so a relative `x:y.go` is an unsafe name, not outside.
+  Two spellings of one normalized path are refused instead of merged; exact duplicates still
+  merge. References from kept documents to symbols defined in skipped ones are kept. Each quoted
+  path in the skip note is cut to 200 bytes, and one skip says `document`. The store format is
+  unchanged.
