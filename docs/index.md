@@ -80,10 +80,14 @@ repository as its working directory:
 | `go.mod` | `scip-go --output <file>` | `go install github.com/scip-code/scip-go/cmd/scip-go@latest` |
 
 The `<file>` is an `index.scip` in a new directory under the system's temporary directory
-(`adamap-index-*`), so nothing is written in the repository. adamap reads it and removes the
-directory when it is done, whether the indexer succeeded or not. An `index.scip` already in the
-repository is neither read nor touched. If adamap is killed before it can clean up, the directory
-stays in the temporary directory, where the system clears it. If the indexer is not on `PATH`,
+(`adamap-index-*`). The output path passed to the indexer is absolute, even when `TMPDIR` is
+relative to adamap's working directory, so running the indexer in the repository does not change
+where it writes. Choose a temporary directory outside the repository to keep that output out of
+the tree. adamap reads it and removes the directory when it is done, whether the indexer succeeded,
+failed or panicked. An `index.scip` already in the repository is neither read nor touched. A hard
+kill prevents cleanup and can leave `adamap-index-*` directories behind; adamap does not remove
+stale directories at startup. Remove them manually when no indexer is using them, or rely on the
+system's temporary-directory cleanup policy, if configured. If the indexer is not on `PATH`,
 adamap names it and says how to install it. When rust-analyzer fails, adamap also suggests
 `rustup component add rust-analyzer`, since a rustup shim without that component fails the same
 way. The indexer's own output goes to stderr.
@@ -117,6 +121,11 @@ writes the store. Indexers on Windows list such a document: the test main Go bui
 A document path with a NUL or other control character, a `:`, or a Windows device name in any
 segment (`nul`, `con.txt`, `pkg/aux.go`, `COM1`, `lpt¹`, `CONIN$`, `CONOUT$`; any case, trailing dots and spaces ignored)
 is skipped the same way and refused at load, on every OS, so a Linux store is safe on Windows.
+This deliberately excludes names containing `:` that are legal on Linux and macOS: on Windows
+they can name an alternate data stream. The same restriction on every OS keeps stores portable;
+there is no platform-specific exception. Go module file names already forbid `:`, but other
+languages can lose documents this way. These documents are included in the skipped count and
+sample paths printed on stderr, so check that notice when indexing such a repository.
 The checks above (ranges, symbols) apply to the documents that are kept.
 
 Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice is
@@ -148,6 +157,11 @@ written earlier still load. The limits are not flags.
     store.json.gz              the model, gzip-compressed JSON
 ```
 
+New store files (`header.json`, `latest`, the store) use private permissions (0600); a new
+`.gitignore` is an ordinary 0644 file. On Unix the umask applies to both, and an existing
+`.gitignore` keeps its permissions.
+No chmod is required, including on filesystems without Unix permission bits.
+
 Each file is written to a temporary file in the same directory and renamed into place. Writing a
 commit's store removes its `header.json` first and writes it last, so a store whose write was cut
 short has no header and does not load: run `adamap index` again. A `.adamap` or `<commit>` directory
@@ -156,8 +170,14 @@ store outside itself, and so is a `header.json` or `store.json.gz` that is not a
 `header.json` over 1 MiB is refused. A document path or a symbol's definition path that is absolute
 or leaves the project is refused at load. `latest` must be a regular file of a commit hash; one
 that is a link or holds anything else is refused. Loading stops with an error once `store.json.gz`
-inflates past 4 GiB. A store file that is replaced while it is being opened, so that what was
-opened is not the file that was checked, is refused as well.
+inflates past 4 GiB. The opened file is checked again to ensure it is regular. An identity check
+also refuses replacements detected by the OS; on Windows, the checked file's identity is loaded
+immediately after the path check, before opening the file. On Unix, opens are nonblocking, so a
+FIFO swapped in between the initial check and the open is refused without waiting for a writer.
+Other non-Windows systems use a plain open before the descriptor check.
+Keep the store in a local directory whose concurrent writers you trust.
+Malformed store JSON errors quote unexpected string tokens so control characters cannot act on a
+terminal, and display other tokens as their values (for example, `{` for an object).
 
 ### header.json
 

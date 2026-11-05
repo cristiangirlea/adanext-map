@@ -280,22 +280,11 @@ func gitExecute(repo string, opts []string, dirtyOnly bool, args ...string) (str
 	}
 	if err != nil {
 		if msg := strings.TrimSpace(errOut.String()); msg != "" {
-			return "", fmt.Errorf("git %s: %s", args[0], safeLines(msg))
+			return "", fmt.Errorf("git %s: %s", args[0], query.SafeLines(msg))
 		}
 		return "", fmt.Errorf("git %s: %w", args[0], err)
 	}
 	return strings.TrimSpace(out.String()), nil
-}
-
-// safeLines is s with each line that holds a control or format character, or invalid UTF-8, quoted
-// by query.Safe, as the MCP server escapes error text. Git echoes ref names and config values, which
-// the repository chooses; a line that is printable already stays as it is.
-func safeLines(s string) string {
-	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		lines[i] = query.Safe(l)
-	}
-	return strings.Join(lines, "\n")
 }
 
 // runAndRead runs the indexer repo needs, with repo as its working directory, and reads the index
@@ -323,6 +312,11 @@ func runAndRead(repo string, maxBytes int64, stderr io.Writer) (*model.Index, sc
 		return nil, scip.Skipped{}, fmt.Errorf("cannot make a directory for %s to write its index in: %w", ix.program, err)
 	}
 	defer os.RemoveAll(tmp)
+	// The indexer runs in repo, so a relative temporary directory must be resolved here.
+	tmp, err = filepath.Abs(tmp)
+	if err != nil {
+		return nil, scip.Skipped{}, fmt.Errorf("cannot resolve the directory for %s to write its index in: %w", ix.program, err)
+	}
 	out := filepath.Join(tmp, "index.scip")
 	if err := runIndexer(repo, program, append(slices.Clone(ix.args), "--output", out), stderr); err != nil {
 		if ix.program == "rust-analyzer" {

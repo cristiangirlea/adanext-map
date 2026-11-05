@@ -291,6 +291,41 @@ raw 2 '{"tool_input":{"command":null},"note":"release"}'
 raw 0 'not json: ls -la'
 raw 0 '{"tool_input":{"command":"ls -la'
 raw 0 ''
+# A \u escape the hook would read as a space is part of a word to the shell, so a # after it is no
+# comment, and escapes can spell a guarded word: any escape but & < > ' is refused.
+refused 'echo\u001f#; git push origin main'
+refused 'echo\u0001#; git push origin main'
+refused 'echo\u007f#; git push origin main'
+refused 'echo\u263a#; git push origin main'
+refused 'echo\ud83d\ude00#; git push origin main'
+refused 'git \u0070ush origin main'
+refused 'echo\u001f#; ls'
+allowed 'ls \u0026\u0026 echo \u0027a\u0027 \u003e out \u003C in'
+# A lone carriage return ends a line in PowerShell, so a # after it starts a comment there.
+refused 'git push origin main\r# comment' . PowerShell
+allowed 'git status\r\ngit log' . PowerShell
+# The cwd is decoded too: an escape the hook cannot decode faithfully there is refused, an escaped
+# backslash (a Windows path) is not, and neither is a literal backslash and u in the command.
+raw 2 '{"cwd":"/tmp/a\u0001b","tool_input":{"command":"git push"}}'
+grep -q 'the cwd holds' "$tmp/err" || fail "the cwd case was refused for another reason: $(cat "$tmp/err")"
+raw 2 '{"cwd":"/tmp/a\nb","tool_input":{"command":"git push"}}'
+grep -q 'the cwd holds' "$tmp/err" || fail "the cwd case was refused for another reason: $(cat "$tmp/err")"
+raw 0 '{"cwd":"C:\\new\\x","tool_input":{"command":"git status"}}'
+allowed 'echo \\u263a; git status'
+# Bash keeps a CR inside a word, so for Bash any CR is refused; a backspace or form feed is
+# refused for both shells.
+refused 'echo\r#; git push origin main'
+refused 'git push origin \\\r\nmain'
+refused 'echo\b#; git push origin main' . PowerShell
+refused 'echo\f#; git push origin main'
+# A cwd with any escape but a quote or a slash is refused: a tab there is no space.
+raw 2 '{"cwd":"/tmp/a\tb","tool_input":{"command":"git push"}}'
+grep -q 'the cwd holds' "$tmp/err" || fail "the cwd case was refused for another reason: $(cat "$tmp/err")"
+raw 2 '{"cwd":"/tmp/a\fb","tool_input":{"command":"git push"}}'
+grep -q 'the cwd holds' "$tmp/err" || fail "the cwd case was refused for another reason: $(cat "$tmp/err")"
+# A raw separator byte would turn into a backslash when the hook decodes escapes.
+us=$(printf '\037')
+raw 2 "{\"tool_input\":{\"command\":\"echo a$us; git push origin main \\u0026\"}}"
 # A failure of the hook itself fails closed for a command that mentions a push: here git kills it.
 mkdir "$tmp/shim" && printf '#!/bin/sh\nkill -TERM "$PPID"\n' > "$tmp/shim/git" &&
   chmod +x "$tmp/shim/git" || fail "setting up the git shim failed"

@@ -17,6 +17,7 @@ import (
 
 	scippb "github.com/scip-code/scip/bindings/go/scip"
 
+	"github.com/cristiangirlea/adanext-map/internal/query"
 	"github.com/cristiangirlea/adanext-map/internal/scip/sciptest"
 	"github.com/cristiangirlea/adanext-map/internal/store"
 )
@@ -190,6 +191,74 @@ func TestIndexPrefersCargoTomlWhenBothProjectFilesExist(t *testing.T) {
 	if !slices.Equal(*calls, []string{"/fake/bin/rust-analyzer scip . --output OUT"}) {
 		t.Errorf("ran %q, want rust-analyzer", *calls)
 	}
+}
+
+func TestIndexUsesAnAbsoluteOutputWithARelativeTempDir(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "go.mod"), "")
+	if err := os.Mkdir(filepath.Join(base, "tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(base)
+	t.Setenv("TMPDIR", "tmp")
+	t.Setenv("TMP", "tmp")
+	t.Setenv("TEMP", "tmp")
+	fakeIndexers(t, "scip-go")
+	var outDir string
+	runIndexer = func(dir, _ string, args []string, _ io.Writer) error {
+		out := outputOf(args)
+		if !filepath.IsAbs(out) {
+			t.Errorf("output path = %q; want an absolute path", out)
+			out = filepath.Join(dir, out)
+		}
+		var err error
+		outDir, err = filepath.EvalSymlinks(filepath.Dir(out))
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(out, sciptest.Bytes(t, sciptest.Index()), 0o644)
+	}
+	if code, _, errOut := runIndexCmd("--commit", testCommit, "--repo", repo); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errOut)
+	}
+	if !within(t, filepath.Join(base, "tmp"), outDir) || within(t, repo, outDir) {
+		t.Errorf("output directory = %q; want it under tmp, outside the repository", outDir)
+	}
+	gone(t, outDir)
+	if _, _, err := store.Load(repo, testCommit); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIndexCleansUpAfterAnIndexerPanic(t *testing.T) {
+	fakeIndexers(t, "scip-go")
+	repo := t.TempDir()
+	writeFile(t, filepath.Join(repo, "go.mod"), "")
+	var outDir string
+	runIndexer = func(_, _ string, args []string, _ io.Writer) error {
+		out := outputOf(args)
+		outDir = filepath.Dir(out)
+		writeFile(t, out, "partial")
+		panic("indexer panic")
+	}
+	func() {
+		defer func() {
+			if got := recover(); got != "indexer panic" {
+				t.Errorf("panic = %v; want indexer panic", got)
+			}
+		}()
+		runIndexCmd("--commit", testCommit, "--repo", repo)
+	}()
+	if outDir == "" {
+		t.Fatal("the indexer was not run with an output path")
+	}
+	gone(t, outDir)
+	gone(t, filepath.Join(repo, "index.scip"))
+	gone(t, filepath.Join(repo, ".adamap"))
 }
 
 // When the indexer fails or writes an index adamap refuses, the run fails, no store is written,
@@ -900,11 +969,11 @@ func TestGitErrorsAreEscapedForTheTerminal(t *testing.T) {
 // A multi-line message from git keeps its lines; only a line that needs it is quoted.
 func TestSafeLinesQuotesOnlyTheLinesThatNeedIt(t *testing.T) {
 	const override = "\xe2\x80\xae"
-	if got, want := safeLines("fatal: one\nhint: two\n"), "fatal: one\nhint: two\n"; got != want {
+	if got, want := query.SafeLines("fatal: one\nhint: two\n"), "fatal: one\nhint: two\n"; got != want {
 		t.Errorf("safeLines = %q, want %q", got, want)
 	}
 	bad := "bad " + override + " line"
-	if got, want := safeLines("fatal: ok\n"+bad), "fatal: ok\n"+strconv.Quote(bad); got != want {
+	if got, want := query.SafeLines("fatal: ok\n"+bad), "fatal: ok\n"+strconv.Quote(bad); got != want {
 		t.Errorf("safeLines = %q, want %q", got, want)
 	}
 }

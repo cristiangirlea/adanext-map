@@ -255,21 +255,11 @@ type (
 // strings. The answers escape each store string already; this catches what reaches the text
 // another way, such as an error.
 func text(s string) *mcp.CallToolResult {
-	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: safeLines(s)}}}
-}
-
-// safeLines is s with each line that holds a control or format character, or invalid UTF-8, quoted
-// by query.Safe. A line the answers built is printable already and stays as it is.
-func safeLines(s string) string {
-	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		lines[i] = query.Safe(l)
-	}
-	return strings.Join(lines, "\n")
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: query.SafeLines(s)}}}
 }
 
 // toolError is err as the tool error the model reads, its lines escaped like text content.
-func toolError(err error) error { return errors.New(safeLines(err.Error())) }
+func toolError(err error) error { return errors.New(query.SafeLines(err.Error())) }
 
 // note is a remark about an answer, such as that it is empty, on a line of its own: the CLI puts it
 // on stderr, which a tool result does not have.
@@ -505,7 +495,7 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 	var b strings.Builder
 	snap, newerErr, err := s.stores.current()
 	if err != nil {
-		out.StoreError = safeLines(err.Error())
+		out.StoreError = query.SafeLines(err.Error())
 		fmt.Fprintf(&b, "no store: %v\n", err)
 	} else {
 		h := snap.header
@@ -526,7 +516,7 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 		}
 		fmt.Fprintf(&b, ": %d documents, %d symbols, %d occurrences\n", h.Counts.Documents, h.Counts.Symbols, h.Counts.Occurrences)
 		if newerErr != nil {
-			out.NewerStoreError = safeLines(newerErr.Error())
+			out.NewerStoreError = query.SafeLines(newerErr.Error())
 			fmt.Fprintf(&b, "a newer store failed to load, so this one still serves: %v\n", newerErr)
 		}
 	}
@@ -535,7 +525,7 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 	if s.cfg.Head == nil {
 		out.GitError = "git was not asked"
 	} else if head, dirty, err := s.cfg.Head(); err != nil {
-		out.GitError = safeLines(err.Error())
+		out.GitError = query.SafeLines(err.Error())
 	} else {
 		known = true
 		out.Head, out.Dirty = head, dirty

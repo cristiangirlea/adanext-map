@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 
 	"github.com/cristiangirlea/adanext-map/internal/model"
 )
@@ -121,7 +122,7 @@ func (d *decoder) object(field func(key string) error) error {
 		return nil
 	}
 	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
-		return fmt.Errorf("expected an object, found %v", tok)
+		return fmt.Errorf("expected an object, found %v", displayToken(tok))
 	}
 	for d.dec.More() {
 		k, err := d.dec.Token()
@@ -147,7 +148,7 @@ func readArray[T any](d *decoder, elem func(*T) error) ([]T, error) {
 		return nil, nil
 	}
 	if delim, ok := tok.(json.Delim); !ok || delim != '[' {
-		return nil, fmt.Errorf("expected an array, found %v", tok)
+		return nil, fmt.Errorf("expected an array, found %v", displayToken(tok))
 	}
 	out := []T{}
 	for d.dec.More() {
@@ -159,6 +160,14 @@ func readArray[T any](d *decoder, elem func(*T) error) ([]T, error) {
 	}
 	_, err = d.dec.Token() // the closing bracket, or the error that ended More early
 	return out, eof(err)
+}
+
+// displayToken quotes strings so controls are harmless while delimiters remain readable.
+func displayToken(tok json.Token) any {
+	if s, ok := tok.(string); ok {
+		return strconv.Quote(s)
+	}
+	return tok
 }
 
 // maxDepth is how deep a skipped value may nest, the limit encoding/json keeps in its scanner.
