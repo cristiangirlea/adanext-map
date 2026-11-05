@@ -55,6 +55,10 @@ func (e *encoder) value(prefix string, v any) {
 		return
 	}
 	_, e.err = e.w.Write(bytes.TrimSuffix(e.buf.Bytes(), []byte("\n")))
+	// A single large element must not keep its buffer alive for the rest of the store.
+	if e.buf.Cap() > 64<<10 {
+		e.buf = bytes.Buffer{}
+	}
 }
 
 // writeArray writes key and elems as a JSON array, one element at a time. Each element goes by

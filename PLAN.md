@@ -197,3 +197,11 @@ repository); a fail-closed push guard (#8).
   rely on Unix flags. Always check the opened descriptor is regular before trusting its identity.
   Test delimiter and string diagnostics, same-path replacement, and bounded Unix FIFO refusal.
   Share `query.SafeLines` and correct the install test comment as part of this item.
+- 2026-11-05 (#62): git commands have a two-minute timeout, allowing status in large repositories;
+  the test override remains. Caller repository-selection and config-injection environment variables
+  are removed alongside pathspec settings so git reads the requested repository. Unix git calls
+  use a separate process group killed on timeout or an interrupt/SIGTERM signal; other systems
+  use plain process cancellation, and Windows kills only git itself. Dirty status
+  stops at its first NUL-terminated record. MCP structured JSON uses the CLI's DEL/C1 escaping.
+  Encoder buffers above 64 KiB are released after each value; allocation measurement runs in an
+  isolated test subprocess so parallel package tests cannot change its process-wide counters.

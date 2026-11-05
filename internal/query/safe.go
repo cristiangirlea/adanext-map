@@ -1,6 +1,7 @@
 package query
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -27,6 +28,23 @@ func Safe(s string) string {
 		}
 	}
 	return strconv.Quote(s)
+}
+
+// EscapeJSONControls replaces raw DEL and C1 controls in encoded JSON with Unicode escapes.
+func EscapeJSONControls(in []byte) []byte {
+	out := make([]byte, 0, len(in))
+	for i := 0; i < len(in); i++ {
+		switch {
+		case in[i] == 0x7f:
+			out = append(out, `\u007f`...)
+		case in[i] == 0xc2 && i+1 < len(in) && in[i+1] >= 0x80 && in[i+1] <= 0x9f:
+			out = fmt.Appendf(out, `\u%04x`, in[i+1])
+			i++
+		default:
+			out = append(out, in[i])
+		}
+	}
+	return out
 }
 
 // SafeLines quotes unsafe text one line at a time to preserve multiline diagnostics.
