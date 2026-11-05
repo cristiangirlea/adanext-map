@@ -164,3 +164,7 @@ repository); a fail-closed push guard (#8).
   so a resume before the reset starts nothing, and each record keeps its last reading per window
   as `plan_meter`. A reading without `resetsAt` stops nothing, since it cannot be waited out.
   Issue #70's text was taken from the task brief, as `gh` had no valid credentials in this session.
+- 2026-11-05 (#43): the indexer's temporary output directory is made absolute before the indexer
+  runs in the repository, with tests for a relative temporary directory and for cleanup when the
+  indexer panics. A hard kill can still leave `adamap-index-*` directories (docs/index.md); removing
+  stale ones at start would be new behaviour and is not done.

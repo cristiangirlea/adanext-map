@@ -278,6 +278,11 @@ func runAndRead(repo string, maxBytes int64, stderr io.Writer) (*model.Index, sc
 		return nil, scip.Skipped{}, fmt.Errorf("cannot make a directory for %s to write its index in: %w", ix.program, err)
 	}
 	defer os.RemoveAll(tmp)
+	// The indexer runs in repo, so a relative temporary directory must be resolved here.
+	tmp, err = filepath.Abs(tmp)
+	if err != nil {
+		return nil, scip.Skipped{}, fmt.Errorf("cannot resolve the directory for %s to write its index in: %w", ix.program, err)
+	}
 	out := filepath.Join(tmp, "index.scip")
 	if err := runIndexer(repo, program, append(slices.Clone(ix.args), "--output", out), stderr); err != nil {
 		if ix.program == "rust-analyzer" {
