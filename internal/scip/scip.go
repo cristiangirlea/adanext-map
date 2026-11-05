@@ -3,7 +3,9 @@
 package scip
 
 import (
+	"bytes"
 	"cmp"
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -14,6 +16,7 @@ import (
 	"strings"
 
 	scippb "github.com/scip-code/scip/bindings/go/scip"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/cristiangirlea/adanext-map/internal/model"
@@ -61,45 +64,88 @@ func Decode(data []byte) (*model.Index, Skipped, error) {
 	return decode(data, model.DefaultLimits())
 }
 
-// decode is Decode with the count limits given. The counts are checked after proto.Unmarshal, which
-// has already built the messages: they bound the work of converting and the store written from it,
-// not the memory of reading, which the size of the data bounds. They are checked again on the
-// converted index, so a store written from it is one Load accepts.
+// decode converts each document before decoding the next, keeping protobuf messages short-lived.
 func decode(data []byte, lim model.Limits) (*model.Index, Skipped, error) {
-	var x scippb.Index
-	if err := proto.Unmarshal(data, &x); err != nil {
-		return nil, Skipped{}, fmt.Errorf("not a SCIP index: %w", err)
+	c := newConverter()
+	var counts model.Counts
+	relationships := 0
+	var metadata scippb.Metadata
+	check := func(symbols []*scippb.SymbolInformation) error {
+		counts.Symbols += len(symbols)
+		for _, si := range symbols {
+			relationships += len(si.GetRelationships())
+		}
+		if err := lim.Check(counts, relationships); err != nil {
+			return fmt.Errorf("the SCIP index has %w", err)
+		}
+		return nil
 	}
-	if err := checkCounts(&x, lim); err != nil {
-		return nil, Skipped{}, fmt.Errorf("the SCIP index has %w", err)
+	var visitorErr error
+	visitor := scippb.IndexVisitor{
+		VisitDocument: func(_ context.Context, d *scippb.Document) error {
+			i := counts.Documents
+			counts.Documents++
+			counts.Occurrences += len(d.GetOccurrences())
+			visitorErr = check(d.GetSymbols())
+			if visitorErr == nil {
+				visitorErr = c.addDocument(i, d)
+			}
+			return visitorErr
+		},
+		VisitExternalSymbol: func(_ context.Context, si *scippb.SymbolInformation) error {
+			visitorErr = check([]*scippb.SymbolInformation{si})
+			if visitorErr != nil {
+				return visitorErr
+			}
+			c.addExternal(si)
+			return nil
+		},
 	}
-	idx, skipped, err := Convert(&x)
-	if err != nil {
-		return nil, Skipped{}, err
+	// External descriptions follow all documents so the first document description still wins.
+	for _, external := range []bool{false, true} {
+		for rest := data; len(rest) > 0; {
+			num, typ, tagLen := protowire.ConsumeTag(rest)
+			if tagLen < 0 {
+				return nil, Skipped{}, fmt.Errorf("not a SCIP index: %w", protowire.ParseError(tagLen))
+			}
+			if !num.IsValid() {
+				return nil, Skipped{}, fmt.Errorf("not a SCIP index: invalid field number %d", num)
+			}
+			n := protowire.ConsumeFieldValue(num, typ, rest[tagLen:])
+			if n < 0 {
+				return nil, Skipped{}, fmt.Errorf("not a SCIP index: %w", protowire.ParseError(n))
+			}
+			field, tail := rest[:tagLen+n], rest[tagLen+n:]
+			// Validate lengths before the bindings allocate, and skip unknown fields as proto.Unmarshal did.
+			if typ == protowire.BytesType && num == 1 && !external {
+				payload, _ := protowire.ConsumeBytes(field[tagLen:])
+				// Merging raw metadata preserves explicitly empty scalars in repeated messages.
+				if err := (proto.UnmarshalOptions{Merge: true}).Unmarshal(payload, &metadata); err != nil {
+					return nil, Skipped{}, fmt.Errorf("not a SCIP index: %w", err)
+				}
+			}
+			if typ == protowire.BytesType && num >= 2 && num <= 3 && (num == 3) == external {
+				// The bindings require single-byte tags, so canonicalize valid overlong encodings.
+				reader := io.MultiReader(bytes.NewReader([]byte{byte(num<<3) | byte(protowire.BytesType)}), bytes.NewReader(field[tagLen:]))
+				if err := visitor.ParseStreaming(context.Background(), reader); err != nil {
+					// Visitor refusals describe valid protobuf that cannot be converted.
+					if visitorErr != nil {
+						return nil, Skipped{}, visitorErr
+					}
+					return nil, Skipped{}, fmt.Errorf("not a SCIP index: %w", err)
+				}
+			}
+			rest = tail
+		}
 	}
-	// Conversion makes a symbol of each definition occurrence that has no SymbolInformation, so the
-	// symbol count can grow; the others only shrink as documents and symbols merge or are skipped.
+	c.idx.Tool = model.Tool{Name: metadata.GetToolInfo().GetName(), Version: metadata.GetToolInfo().GetVersion()}
+	c.idx.ProjectRoot = metadata.GetProjectRoot()
+	idx, skipped := c.finish()
+	// Definitions without SymbolInformation can increase the converted symbol count.
 	if err := lim.Check(idx.Counts(), 0); err != nil {
 		return nil, Skipped{}, fmt.Errorf("the converted SCIP index has %w", err)
 	}
 	return idx, skipped, nil
-}
-
-// checkCounts counts what x holds as it is, before any merging, and refuses more than lim allows.
-func checkCounts(x *scippb.Index, lim model.Limits) error {
-	c := model.Counts{Documents: len(x.GetDocuments()), Symbols: len(x.GetExternalSymbols())}
-	rels := 0
-	for _, si := range x.GetExternalSymbols() {
-		rels += len(si.GetRelationships())
-	}
-	for _, d := range x.GetDocuments() {
-		c.Symbols += len(d.GetSymbols())
-		c.Occurrences += len(d.GetOccurrences())
-		for _, si := range d.GetSymbols() {
-			rels += len(si.GetRelationships())
-		}
-	}
-	return lim.Check(c, rels)
 }
 
 // maxSkippedPaths is how many skipped paths a Skipped keeps for a message.
@@ -130,90 +176,108 @@ type document struct {
 // definition occurrence. A document whose path leaves the project is skipped with its occurrences and
 // symbols, and counted in the Skipped result; any other problem is an error.
 func Convert(x *scippb.Index) (*model.Index, Skipped, error) {
-	var skipped Skipped
-	idx := &model.Index{
-		Tool: model.Tool{
-			Name:    x.GetMetadata().GetToolInfo().GetName(),
-			Version: x.GetMetadata().GetToolInfo().GetVersion(),
-		},
-		ProjectRoot: x.GetMetadata().GetProjectRoot(),
-	}
-	globals := map[string]*model.Symbol{}
-	// rels indexes each symbol's relationships by target, so combining them stays linear.
-	rels := map[*model.Symbol]map[string]int{}
-	var docs []*document
-	byPath := map[string]*document{}
+	c := newConverter()
+	c.idx.Tool = model.Tool{Name: x.GetMetadata().GetToolInfo().GetName(), Version: x.GetMetadata().GetToolInfo().GetVersion()}
+	c.idx.ProjectRoot = x.GetMetadata().GetProjectRoot()
 	for i, d := range x.GetDocuments() {
-		path := normalisePath(d.GetRelativePath())
-		// A path that cleans to "." (such as `pkg/..`) is the project root, not a file: skip it too.
-		if err := model.CheckPath(path); err != nil || path == "." {
-			if path == "" {
-				return nil, Skipped{}, fmt.Errorf("document %d: %w", i, err)
-			}
-			skipped.add(d.GetRelativePath())
+		if err := c.addDocument(i, d); err != nil {
+			return nil, Skipped{}, err
+		}
+	}
+	for _, si := range x.GetExternalSymbols() {
+		c.addExternal(si)
+	}
+	idx, skipped := c.finish()
+	return idx, skipped, nil
+}
+
+type converter struct {
+	idx     *model.Index
+	skipped Skipped
+	globals map[string]*model.Symbol
+	rels    map[*model.Symbol]map[string]int // Relationship offsets keep merging linear.
+	docs    []*document
+	byPath  map[string]*document
+}
+
+func newConverter() *converter {
+	return &converter{idx: &model.Index{}, globals: map[string]*model.Symbol{}, rels: map[*model.Symbol]map[string]int{}, byPath: map[string]*document{}}
+}
+
+func (c *converter) addDocument(i int, d *scippb.Document) error {
+	path := normalisePath(d.GetRelativePath())
+	// A path that cleans to "." (such as `pkg/..`) is the project root, not a file: skip it too.
+	if err := model.CheckPath(path); err != nil || path == "." {
+		if path == "" {
+			return fmt.Errorf("document %d: %w", i, err)
+		}
+		c.skipped.add(d.GetRelativePath())
+		return nil
+	}
+	doc := c.byPath[path]
+	if doc == nil {
+		doc = &document{Document: model.Document{Path: path}, locals: map[string]*model.Symbol{}}
+		c.byPath[path] = doc
+		c.docs = append(c.docs, doc)
+	}
+	if doc.Language == "" {
+		doc.Language = d.GetLanguage()
+	}
+	for j, si := range d.GetSymbols() {
+		if si.GetSymbol() == "" {
+			return fmt.Errorf("document %q: symbol information %d has no symbol", path, j)
+		}
+		if scippb.IsLocalSymbol(si.GetSymbol()) {
+			merge(doc.locals, c.rels, si)
+		} else {
+			merge(c.globals, c.rels, si)
+		}
+	}
+	for j, o := range d.GetOccurrences() {
+		if o.GetSymbol() == "" {
 			continue
 		}
-		doc := byPath[path]
-		if doc == nil {
-			doc = &document{Document: model.Document{Path: path}, locals: map[string]*model.Symbol{}}
-			byPath[path] = doc
-			docs = append(docs, doc)
+		occ, err := occurrence(o)
+		if err != nil {
+			return fmt.Errorf("document %q: occurrence %d: %w", path, j, err)
 		}
-		if doc.Language == "" {
-			doc.Language = d.GetLanguage()
-		}
-		for j, si := range d.GetSymbols() {
-			if si.GetSymbol() == "" {
-				return nil, Skipped{}, fmt.Errorf("document %q: symbol information %d has no symbol", path, j)
+		doc.Occurrences = append(doc.Occurrences, occ)
+		if occ.Roles.Has(model.RoleDefinition) {
+			table := c.globals
+			if scippb.IsLocalSymbol(occ.Symbol) {
+				table = doc.locals
 			}
-			if scippb.IsLocalSymbol(si.GetSymbol()) {
-				merge(doc.locals, rels, si)
-			} else {
-				merge(globals, rels, si)
+			s := table[occ.Symbol]
+			if s == nil {
+				s = &model.Symbol{ID: occ.Symbol}
+				table[occ.Symbol] = s
 			}
-		}
-		for j, o := range d.GetOccurrences() {
-			if o.GetSymbol() == "" {
-				continue
-			}
-			occ, err := occurrence(o)
-			if err != nil {
-				return nil, Skipped{}, fmt.Errorf("document %q: occurrence %d: %w", path, j, err)
-			}
-			doc.Occurrences = append(doc.Occurrences, occ)
-			if occ.Roles.Has(model.RoleDefinition) {
-				table := globals
-				if scippb.IsLocalSymbol(occ.Symbol) {
-					table = doc.locals
-				}
-				s := table[occ.Symbol]
-				if s == nil {
-					s = &model.Symbol{ID: occ.Symbol}
-					table[occ.Symbol] = s
-				}
-				if s.Definition == nil {
-					s.Definition = &model.Location{Path: path, Range: occ.Range}
-				}
+			if s.Definition == nil {
+				s.Definition = &model.Location{Path: path, Range: occ.Range}
 			}
 		}
 	}
-	// External symbols are global by nature: a local one has no document to belong to.
-	for _, si := range x.GetExternalSymbols() {
-		if si.GetSymbol() != "" && !scippb.IsLocalSymbol(si.GetSymbol()) {
-			merge(globals, rels, si)
-		}
-	}
+	return nil
+}
 
-	for _, doc := range docs {
+func (c *converter) addExternal(si *scippb.SymbolInformation) {
+	// External local symbols have no document to belong to.
+	if si.GetSymbol() != "" && !scippb.IsLocalSymbol(si.GetSymbol()) {
+		merge(c.globals, c.rels, si)
+	}
+}
+
+func (c *converter) finish() (*model.Index, Skipped) {
+	for _, doc := range c.docs {
 		doc.Locals = sorted(doc.locals)
 		slices.SortStableFunc(doc.Occurrences, func(a, b model.Occurrence) int {
 			return cmp.Or(compareRange(a.Range, b.Range), strings.Compare(a.Symbol, b.Symbol))
 		})
-		idx.Documents = append(idx.Documents, doc.Document)
+		c.idx.Documents = append(c.idx.Documents, doc.Document)
 	}
-	slices.SortFunc(idx.Documents, func(a, b model.Document) int { return strings.Compare(a.Path, b.Path) })
-	idx.Symbols = sorted(globals)
-	return idx, skipped, nil
+	slices.SortFunc(c.idx.Documents, func(a, b model.Document) int { return strings.Compare(a.Path, b.Path) })
+	c.idx.Symbols = sorted(c.globals)
+	return c.idx, c.skipped
 }
 
 // normalisePath is a document path in slash form, cleaned. SCIP specifies "/", but indexers on

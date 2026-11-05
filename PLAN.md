@@ -164,3 +164,9 @@ repository); a fail-closed push guard (#8).
   so a resume before the reset starts nothing, and each record keeps its last reading per window
   as `plan_meter`. A reading without `resetsAt` stops nothing, since it cannot be waited out.
   Issue #70's text was taken from the task brief, as `gh` had no valid credentials in this session.
+- 2026-11-05: SCIP decoding converts each document before reading the next and decodes external
+  symbols after all documents to preserve merge precedence. Peak memory includes the serialized
+  file, the largest decoded document and the model; no fixed reduction is claimed. Visitor limit
+  and conversion refusals keep their messages; only protobuf parse failures say "not a SCIP index".
+  Wire-order, overlong tag and length encodings, unknown wire types on known fields, and a failed
+  CLI decode leaving the commit store absent and latest unchanged are covered by fixture tests.
