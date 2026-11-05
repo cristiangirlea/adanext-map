@@ -144,6 +144,11 @@ written earlier still load. The limits are not flags.
     store.json.gz              the model, gzip-compressed JSON
 ```
 
+New store files (`header.json`, `latest`, the store) use private permissions (0600); a new
+`.gitignore` is an ordinary 0644 file. On Unix the umask applies to both, and an existing
+`.gitignore` keeps its permissions.
+No chmod is required, including on filesystems without Unix permission bits.
+
 Each file is written to a temporary file in the same directory and renamed into place. Writing a
 commit's store removes its `header.json` first and writes it last, so a store whose write was cut
 short has no header and does not load: run `adamap index` again. A `.adamap` or `<commit>` directory
@@ -152,8 +157,14 @@ store outside itself, and so is a `header.json` or `store.json.gz` that is not a
 `header.json` over 1 MiB is refused. A document path or a symbol's definition path that is absolute
 or leaves the project is refused at load. `latest` must be a regular file of a commit hash; one
 that is a link or holds anything else is refused. Loading stops with an error once `store.json.gz`
-inflates past 4 GiB. A store file that is replaced while it is being opened, so that what was
-opened is not the file that was checked, is refused as well.
+inflates past 4 GiB. The opened file is checked again to ensure it is regular. An identity check
+also refuses replacements detected by the OS; on Windows, the checked file's identity is loaded
+immediately after the path check, before opening the file. On Unix, opens are nonblocking, so a
+FIFO swapped in between the initial check and the open is refused without waiting for a writer.
+Other non-Windows systems use a plain open before the descriptor check.
+Keep the store in a local directory whose concurrent writers you trust.
+Malformed store JSON errors quote unexpected string tokens so control characters cannot act on a
+terminal, and display other tokens as their values (for example, `{` for an object).
 
 ### header.json
 

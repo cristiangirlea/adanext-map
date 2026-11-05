@@ -187,3 +187,13 @@ repository); a fail-closed push guard (#8).
   Hide `Setter`: writing a property is a member operation covered by its enclosing type.
   Hide `Accessor`: property access is a member operation covered by its enclosing type.
   Keep `Attribute` visible: SCIP uses it for a C++ attribute, not a class member.
+- 2026-11-05 (#56): create the new `.gitignore` at 0644 (the decision of 2026-10-13) directly,
+  temporary file and exclusive-create fallback alike, instead of chmod after CreateTemp, so the
+  umask applies and filesystems without permission bits can write stores; store files stay
+  0600. Quote only unexpected JSON
+  string tokens and display delimiters as characters. Cache Windows file identity immediately
+  after Lstat, and open Unix store files nonblocking so a swapped-in FIFO cannot block the
+  descriptor's regular-file check. Use plain os.Open on other non-Windows systems, which cannot
+  rely on Unix flags. Always check the opened descriptor is regular before trusting its identity.
+  Test delimiter and string diagnostics, same-path replacement, and bounded Unix FIFO refusal.
+  Share `query.SafeLines` and correct the install test comment as part of this item.
