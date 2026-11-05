@@ -172,3 +172,8 @@ repository); a fail-closed push guard (#8).
   runs in the repository, with tests for a relative temporary directory and for cleanup when the
   indexer panics. A hard kill can still leave `adamap-index-*` directories (docs/index.md); removing
   stale ones at start would be new behaviour and is not done.
+- 2026-11-05 (#38): colons stay refused on every OS, to avoid Windows alternate data streams and
+  keep stores portable; this drops some names legal on Linux and macOS (Go modules already forbid
+  them), and the skipped-document count and sampled paths show it. No runtime or store change. A
+  validation change and the fixtures it invalidates go in one commit; the merged device-names
+  history is not rewritten.

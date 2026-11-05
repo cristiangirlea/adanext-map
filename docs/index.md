@@ -108,6 +108,11 @@ writes the store. Indexers on Windows list such a document: the test main Go bui
 A document path with a NUL or other control character, a `:`, or a Windows device name in any
 segment (`nul`, `con.txt`, `pkg/aux.go`, `COM1`, `lpt¹`, `CONIN$`, `CONOUT$`; any case, trailing dots and spaces ignored)
 is skipped the same way and refused at load, on every OS, so a Linux store is safe on Windows.
+This deliberately excludes names containing `:` that are legal on Linux and macOS: on Windows
+they can name an alternate data stream. The same restriction on every OS keeps stores portable;
+there is no platform-specific exception. Go module file names already forbid `:`, but other
+languages can lose documents this way. These documents are included in the skipped count and
+sample paths printed on stderr, so check that notice when indexing such a repository.
 The checks above (ranges, symbols) apply to the documents that are kept.
 
 Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice is

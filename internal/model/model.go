@@ -119,7 +119,7 @@ func (x *Index) Counts() Counts {
 }
 
 // CheckPath refuses a document path that could point outside the project: empty, absolute in any
-// platform's spelling, or with a `..` segment; or that a file system cannot hold: a NUL or other
+// platform's spelling, or with a `..` segment; or that is unsafe in a portable store: a NUL or other
 // control character, a colon (an alternate data stream on Windows), or a Windows device name. It
 // checks the same on every OS: a store written on Linux is read on Windows.
 func CheckPath(p string) error {
