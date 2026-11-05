@@ -164,3 +164,11 @@ repository); a fail-closed push guard (#8).
   so a resume before the reset starts nothing, and each record keeps its last reading per window
   as `plan_meter`. A reading without `resetsAt` stops nothing, since it cannot be waited out.
   Issue #70's text was taken from the task brief, as `gh` had no valid credentials in this session.
+- 2026-11-05 (#62): git commands have a two-minute timeout, allowing status in large repositories;
+  the test override remains. Caller repository-selection and config-injection environment variables
+  are removed alongside pathspec settings so git reads the requested repository. Unix git calls
+  use a separate process group killed on timeout or an interrupt/SIGTERM signal; other systems
+  use plain process cancellation, and Windows kills only git itself. Dirty status
+  stops at its first NUL-terminated record. MCP structured JSON uses the CLI's DEL/C1 escaping.
+  Encoder buffers above 64 KiB are released after each value; allocation measurement runs in an
+  isolated test subprocess so parallel package tests cannot change its process-wide counters.

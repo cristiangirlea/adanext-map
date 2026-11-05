@@ -405,3 +405,25 @@ func TestCallersFallbackDoesNotNestADefinitionInsideOneWithoutAnEnclosingRange(t
 		t.Errorf("callers = %+v", got.Callers)
 	}
 }
+
+func TestScopeAtUsesSkipPointersAcrossDeepNesting(t *testing.T) {
+	const depth = 4094
+	var occs []model.Occurrence
+	for k := range depth {
+		occs = append(occs, model.Occurrence{Range: rng(k, 5, 8), Symbol: fmt.Sprintf("s m p v f%d().", k), Roles: model.RoleDefinition, Enclosing: span(k, 0, 2*depth-k, 0)})
+	}
+	x := New(&model.Index{Documents: []model.Document{{Path: "x.go", Occurrences: occs}}})
+	scopes := x.scopes[0]
+	leaf := &scopes[len(scopes)-1]
+	if leaf.jump <= 0 || leaf.jump == int32(len(scopes)-1) {
+		t.Fatalf("no nontrivial skip: %+v", leaf)
+	}
+	// Removing the leaf's linear links makes a parent or up walk fail without relying on timing.
+	leaf.parent, leaf.up = -1, -1
+	if got := x.scopeAt(0, pos{2*depth - 1, 0}); got != &scopes[0] {
+		t.Fatalf("got %+v, want outermost scope", got)
+	}
+	if got := x.scopeAt(0, pos{2 * depth, 0}); got != nil {
+		t.Fatalf("past outer end: %+v", got)
+	}
+}

@@ -7,6 +7,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -89,6 +90,23 @@ func New(cfg Config) *mcp.Server {
 	mcp.AddTool(srv, readOnly("callers", "Callers of a symbol", callersDescription), s.callers)
 	mcp.AddTool(srv, readOnly("impact", "What depends on a symbol or file", impactDescription), s.impact)
 	mcp.AddTool(srv, readOnly("status", "Index status", statusDescription), s.status)
+	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if err != nil {
+				return result, err
+			}
+			if r, ok := result.(*mcp.CallToolResult); ok && r.StructuredContent != nil {
+				data, err := json.Marshal(r.StructuredContent)
+				if err != nil {
+					return nil, err
+				}
+				// Raw JSON preserves the escapes when the SDK encodes the response.
+				r.StructuredContent = json.RawMessage(query.EscapeJSONControls(data))
+			}
+			return result, nil
+		}
+	})
 	return srv
 }
 

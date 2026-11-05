@@ -54,6 +54,19 @@ The drivers of a submodule are in the submodule's own config, which adamap does 
 one the superproject records and starts no git in it. The cost: uncommitted edits inside a submodule
 no longer make the tree dirty (a different checked-out commit still does).
 
+Git calls have a two-minute timeout per command, including reads of ignore files. On Unix,
+git runs in its own process group, which is killed on timeout or after the first dirty record.
+On Windows, only git itself is killed; child processes may remain. A timeout fails
+indexing; MCP `status` reports it as `git_error` and cannot tell whether the store is stale.
+Caller `GIT_*_PATHSPECS` settings are removed so the store exclusion always applies. Repository
+selection variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`,
+and `GIT_DISCOVERY_ACROSS_FILESYSTEM`) and config injection variables (`GIT_CONFIG_PARAMETERS`,
+`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*`, and `GIT_CONFIG_VALUE_*`) are also removed, so caller
+settings cannot redirect the repository or inject command configuration. The dirty
+check reads NUL-separated status records and stops after the first record; it does not keep the
+whole status output in memory.
+
 For a repository you do not trust, pass `--commit` and git is not run at all.
 
 ## Which indexer
