@@ -54,6 +54,19 @@ The drivers of a submodule are in the submodule's own config, which adamap does 
 one the superproject records and starts no git in it. The cost: uncommitted edits inside a submodule
 no longer make the tree dirty (a different checked-out commit still does).
 
+Git calls have a two-minute timeout per command, including reads of ignore files. On Unix,
+git runs in its own process group, which is killed on timeout or after the first dirty record.
+On Windows, only git itself is killed; child processes may remain. A timeout fails
+indexing; MCP `status` reports it as `git_error` and cannot tell whether the store is stale.
+Caller `GIT_*_PATHSPECS` settings are removed so the store exclusion always applies. Repository
+selection variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`,
+and `GIT_DISCOVERY_ACROSS_FILESYSTEM`) and config injection variables (`GIT_CONFIG_PARAMETERS`,
+`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*`, and `GIT_CONFIG_VALUE_*`) are also removed, so caller
+settings cannot redirect the repository or inject command configuration. The dirty
+check reads NUL-separated status records and stops after the first record; it does not keep the
+whole status output in memory.
+
 For a repository you do not trust, pass `--commit` and git is not run at all.
 
 ## Which indexer
@@ -67,10 +80,14 @@ repository as its working directory:
 | `go.mod` | `scip-go --output <file>` | `go install github.com/scip-code/scip-go/cmd/scip-go@latest` |
 
 The `<file>` is an `index.scip` in a new directory under the system's temporary directory
-(`adamap-index-*`), so nothing is written in the repository. adamap reads it and removes the
-directory when it is done, whether the indexer succeeded or not. An `index.scip` already in the
-repository is neither read nor touched. If adamap is killed before it can clean up, the directory
-stays in the temporary directory, where the system clears it. If the indexer is not on `PATH`,
+(`adamap-index-*`). The output path passed to the indexer is absolute, even when `TMPDIR` is
+relative to adamap's working directory, so running the indexer in the repository does not change
+where it writes. Choose a temporary directory outside the repository to keep that output out of
+the tree. adamap reads it and removes the directory when it is done, whether the indexer succeeded,
+failed or panicked. An `index.scip` already in the repository is neither read nor touched. A hard
+kill prevents cleanup and can leave `adamap-index-*` directories behind; adamap does not remove
+stale directories at startup. Remove them manually when no indexer is using them, or rely on the
+system's temporary-directory cleanup policy, if configured. If the indexer is not on `PATH`,
 adamap names it and says how to install it. On any rust-analyzer failure, adamap also suggests
 `rustup component add rust-analyzer`; this is a hint, not detection of a rustup shim without that
 component. The original indexer error remains available in the error chain. The indexer's own
@@ -98,17 +115,31 @@ A SCIP index is untrusted input. adamap refuses, with an error naming the docume
 A backslash in a document path is read as `/` (SCIP specifies `/`, but indexers on Windows write
 `\`), and the path is cleaned (`a/./b.go` and `a//b.go` become `a/b.go`) before it is checked.
 
-A document whose path leaves the project (absolute: `/x`, `C:...`, a UNC path; or with a `..` that
+A document whose path leaves the project (absolute: `/x`, `C:/x`, a UNC path; or with a `..` that
 escapes) or names the project root itself (`pkg/..`) is skipped with its occurrences and symbols,
-unread, and `adamap index` prints `skipped N documents adamap cannot store (outside the project or not a safe file name)` on stderr and still
-writes the store. Indexers on Windows list such a document: the test main Go builds in its cache.
+unread. `adamap index` prints `skipped N documents outside the project, naming its root or with unsafe names` on
+stderr (`1 document` for one) and still writes the store. The note includes the first three paths,
+each quoted and limited to 200 bytes including quotes and a trailing `...` when truncated.
+Indexers on Windows list such a document: the test main Go builds in its cache.
 A document path with a NUL or other control character, a `:`, or a Windows device name in any
 segment (`nul`, `con.txt`, `pkg/aux.go`, `COM1`, `lpt¹`, `CONIN$`, `CONOUT$`; any case, trailing dots and spaces ignored)
-is skipped the same way and refused at load, on every OS, so a Linux store is safe on Windows.
-The checks above (ranges, symbols) apply to the documents that are kept.
+is also skipped with the same note. A relative name such as `x:y.go` is skipped as an unsafe name,
+not classified as an absolute drive path. Unknown path validation errors remain fatal.
+These paths are refused at load, on every OS, so a Linux store is safe on Windows.
+This deliberately excludes names containing `:` that are legal on Linux and macOS: on Windows
+they can name an alternate data stream. The same restriction on every OS keeps stores portable;
+there is no platform-specific exception. Go module file names already forbid `:`, but other
+languages can lose documents this way. These documents are included in the skipped count and
+sample paths printed on stderr, so check that notice when indexing such a repository.
+The checks above (ranges, symbols) apply only to kept
+documents: discarded contents are not validated. References in a kept document to a symbol defined
+in a skipped document remain, but the skipped definition and symbol information do not; separately
+supplied external symbol information is still kept, without a definition in the project.
 
-Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice is
-merged into one.
+Occurrences without a symbol (syntax highlighting only) are dropped. A document listed twice with
+exactly the same original path is merged into one. Different spellings that normalize to one path
+(such as `pkg\a.go` and `pkg/a.go`, or `pkg/./a.go` and `pkg/a.go`) are refused, so local symbol IDs
+from distinct document entries cannot silently become one symbol.
 
 Bytes do not bound memory: a few bytes of protobuf or JSON (`{},`) become a whole struct once decoded,
 so the decoded index takes several times the size of the file and a small file can hold millions of
@@ -136,6 +167,11 @@ written earlier still load. The limits are not flags.
     store.json.gz              the model, gzip-compressed JSON
 ```
 
+New store files (`header.json`, `latest`, the store) use private permissions (0600); a new
+`.gitignore` is an ordinary 0644 file. On Unix the umask applies to both, and an existing
+`.gitignore` keeps its permissions.
+No chmod is required, including on filesystems without Unix permission bits.
+
 Each file is written to a temporary file in the same directory and renamed into place. Writing a
 commit's store removes its `header.json` first and writes it last, so a store whose write was cut
 short has no header and does not load: run `adamap index` again. A `.adamap` or `<commit>` directory
@@ -144,8 +180,14 @@ store outside itself, and so is a `header.json` or `store.json.gz` that is not a
 `header.json` over 1 MiB is refused. A document path or a symbol's definition path that is absolute
 or leaves the project is refused at load. `latest` must be a regular file of a commit hash; one
 that is a link or holds anything else is refused. Loading stops with an error once `store.json.gz`
-inflates past 4 GiB. A store file that is replaced while it is being opened, so that what was
-opened is not the file that was checked, is refused as well.
+inflates past 4 GiB. The opened file is checked again to ensure it is regular. An identity check
+also refuses replacements detected by the OS; on Windows, the checked file's identity is loaded
+immediately after the path check, before opening the file. On Unix, opens are nonblocking, so a
+FIFO swapped in between the initial check and the open is refused without waiting for a writer.
+Other non-Windows systems use a plain open before the descriptor check.
+Keep the store in a local directory whose concurrent writers you trust.
+Malformed store JSON errors quote unexpected string tokens so control characters cannot act on a
+terminal, and display other tokens as their values (for example, `{` for an object).
 
 ### header.json
 

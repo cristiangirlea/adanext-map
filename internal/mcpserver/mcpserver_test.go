@@ -1083,3 +1083,51 @@ func TestRepairedFailedStoreIsNoticedWithinOneClockTick(t *testing.T) {
 		t.Fatalf("repair with unchanged timestamps was missed: %v %v, snapshot %s", newer, err, snap.header.Commit)
 	}
 }
+
+func TestStructuredContentEscapesDELAndC1OnTheWire(t *testing.T) {
+	repo := t.TempDir()
+	name := "hostile\x7f\u0080\u009f\n\t\r\b\f"
+	idx := &model.Index{Symbols: []model.Symbol{{ID: "s m p v hostile().", DisplayName: name}}}
+	if _, err := store.Write(repo, store.Header{Commit: commitA}, idx); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Config{Repo: repo})
+	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			res, err := next(ctx, method, req)
+			if method == "tools/call" && err == nil {
+				data, e := json.Marshal(res)
+				if e != nil {
+					t.Error(e)
+				}
+				for _, r := range string(data) {
+					if r == 0x7f || r >= 0x80 && r <= 0x9f {
+						t.Errorf("raw control %U on wire", r)
+					}
+				}
+				for _, esc := range []string{`\u007f`, `\u0080`, `\u009f`} {
+					if !strings.Contains(string(data), esc) {
+						t.Errorf("missing %s", esc)
+					}
+				}
+			}
+			return res, err
+		}
+	})
+	ctx := context.Background()
+	se, ce := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, se, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil).Connect(ctx, ce, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cs.Close(); ss.Wait() }()
+	got := ok(t, cs, "find_symbol", map[string]any{"name": "hostile"})
+	syms := got.structured["symbols"].([]any)
+	if syms[0].(map[string]any)["name"] != name {
+		t.Fatalf("decoded value changed: %v", syms)
+	}
+}

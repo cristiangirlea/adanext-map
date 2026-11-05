@@ -253,7 +253,7 @@ func member(idx *model.Index, name, kind, path, from string) {
 }
 
 func TestRankLeavesFieldsAndEnumMembersOutOfTheMapButKeepsTheirEdges(t *testing.T) {
-	for _, kind := range []string{"Field", "StaticField", "StaticDataMember", "EnumMember", "Property", "StaticProperty"} {
+	for _, kind := range []string{"Field", "StaticField", "StaticDataMember", "EnumMember", "Property", "StaticProperty", "Getter", "Setter", "Accessor"} {
 		t.Run(kind, func(t *testing.T) {
 			idx := build(
 				file{path: "types.go", defs: []string{"T"}},
@@ -284,10 +284,26 @@ func TestRankLeavesFieldsAndEnumMembersOutOfTheMapButKeepsTheirEdges(t *testing.
 	}
 }
 
+func TestRankKeepsCppAttributesVisible(t *testing.T) {
+	idx := build(file{path: "attrs.cc", defs: []string{"nodiscard"}}, file{path: "use.cc", refs: []string{"nodiscard"}})
+	idx.Symbols[0].Kind = "Attribute"
+	r := Rank(idx, nil)
+	if len(r.Files) != 1 || !slices.Equal(names(r.Files[0]), []string{"nodiscard"}) {
+		t.Fatalf("files %v, want the C++ attribute", r.Files)
+	}
+	if s := r.Files[0].Symbols[0]; s.Refs != 1 || math.Abs(s.Score-r.Files[0].Rank) > 1e-12 {
+		t.Errorf("attribute %v, want one reference and its file's whole rank %v", s, r.Files[0].Rank)
+	}
+	if got := len(newGraph(idx).out[1]); got != 1 {
+		t.Errorf("use.cc has %d edges, want one to attrs.cc", got)
+	}
+}
+
 func TestRankDownweightsTestFiles(t *testing.T) {
 	for _, path := range []string{
 		"pkg/x_test.go", "tests/x.rs", "crates/a/tests/it.rs", "test/x.py", "src/x.test.ts", "src/x.spec.ts",
 		"src/x.test.tsx", "src/x.spec.js",
+		"__tests__/x.ts", "src/__tests__/x.ts", "test_x.py", "pkg/test_x.py", "x_test.py", "pkg/x_test.py", "src/x.test.mjs",
 	} {
 		t.Run(path, func(t *testing.T) {
 			// Both files define one function and are read by one file alike, so only the path tells
@@ -317,10 +333,21 @@ func TestRankKeepsFilesThatOnlyLookLikeTestFiles(t *testing.T) {
 		return Rank(idx, nil).Files[0].Rank
 	}
 	plain := rankOf("plain.go")
-	for _, path := range []string{"contest/x.go", "testing/x.go", "pkg/attest.go", "pkg/test.go", "a_test.go/x.go", "src/x.test.rs", "src/x.testing.ts"} {
+	for _, path := range []string{"contest/x.go", "testing/x.go", "pkg/attest.go", "pkg/test.go", "a_test.go/x.go", "src/x.test.rs", "src/x.testing.ts", "testdata/x.go", "pkg/testdata/x.py", "src/__tests__extra/x.ts", "src/test_x.ts", "src/x_test.ts", "src/x.test.mjs.map"} {
 		if got := rankOf(path); got != plain {
 			t.Errorf("%s ranks %v, want the %v of a plain file", path, got, plain)
 		}
+	}
+}
+
+func TestRankHidesAFunctionValuedPropertyButKeepsMethods(t *testing.T) {
+	idx := build(file{path: "class.ts", defs: []string{"Run"}}, file{path: "use.ts"})
+	idx.Symbols[0].Kind = "Method"
+	member(idx, "callback", "Property", "class.ts", "use.ts")
+	idx.Symbols[1].Signature = "callback: () => void"
+	r := Rank(idx, nil)
+	if len(r.Files) != 1 || !slices.Equal(names(r.Files[0]), []string{"Run"}) {
+		t.Fatalf("files %v, want only the Run method", r.Files)
 	}
 }
 

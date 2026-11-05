@@ -416,8 +416,7 @@ func TestInstallWritesAndPrintsAPathWithSpacesAndNonASCIIBackAsItWas(t *testing.
 	}
 }
 
-// The server name in the error comes from a file a cloned repository supplies, so a terminal must
-// not act on an ESC or a bidirectional override in it.
+// Exercise the helper with an unsafe name; production callers use the constant adamap.
 func TestSetServerQuotesTheServerNameInItsError(t *testing.T) {
 	name := "a\x1b[31m\xe2\x80\xaeb" // ESC, then U+202E (right-to-left override)
 	key, err := json.Marshal(name)

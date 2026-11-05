@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -151,15 +152,11 @@ func ensureGitignore(dir string) error {
 // temporary name first, so a reader never sees half of it, and then published without replacing
 // whatever appeared at the path since the caller looked.
 func createNew(dir, name string, content []byte) error {
-	tmp, err := writeTemp(dir, name, writeBytes(content))
+	tmp, err := writeTemp(dir, name, gitignoreMode, writeBytes(content))
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmp)
-	// CreateTemp makes the file private (0600); a new file here gets an ordinary file's mode.
-	if err := os.Chmod(tmp, 0o644); err != nil {
-		return err
-	}
 	return publishNew(tmp, filepath.Join(dir, name), content)
 }
 
@@ -170,7 +167,7 @@ func publishNew(tmp, path string, content []byte) error {
 	if err == nil || errors.Is(err, fs.ErrExist) {
 		return nil
 	}
-	f, openErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, openErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, gitignoreMode)
 	if errors.Is(openErr, fs.ErrExist) {
 		return nil
 	}
@@ -197,7 +194,7 @@ func writeBytes(b []byte) func(io.Writer) error {
 // writeAtomic writes name in dir through a temporary file in the same directory, renamed into
 // place once complete, so a reader sees the old file or the new one, never half of one.
 func writeAtomic(dir, name string, write func(io.Writer) error) error {
-	tmp, err := writeTemp(dir, name, write)
+	tmp, err := writeTemp(dir, name, 0o600, write)
 	if err != nil {
 		return err
 	}
@@ -208,9 +205,14 @@ func writeAtomic(dir, name string, write func(io.Writer) error) error {
 	return nil
 }
 
-// writeTemp writes name's content to a synced temporary file in dir and returns its path.
-func writeTemp(dir, name string, write func(io.Writer) error) (tmp string, err error) {
-	f, err := os.CreateTemp(dir, "."+name+".*.tmp")
+// gitignoreMode is an ordinary file's mode: git reads the .gitignore like any tracked file. The
+// umask applies, as no chmod follows the create.
+const gitignoreMode = 0o644
+
+// writeTemp writes name's content to a synced temporary file in dir, created with perm, and returns
+// its path.
+func writeTemp(dir, name string, perm fs.FileMode, write func(io.Writer) error) (tmp string, err error) {
+	f, err := createTemp(dir, name, perm)
 	if err != nil {
 		return "", err
 	}
@@ -230,6 +232,18 @@ func writeTemp(dir, name string, write func(io.Writer) error) (tmp string, err e
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+// createTemp is os.CreateTemp with a mode of the caller's choice; CreateTemp always uses 0600.
+func createTemp(dir, name string, perm fs.FileMode) (*os.File, error) {
+	for range 10000 {
+		path := filepath.Join(dir, "."+name+"."+strconv.FormatUint(rand.Uint64(), 36)+".tmp")
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, perm)
+		if !errors.Is(err, fs.ErrExist) {
+			return f, err
+		}
+	}
+	return nil, fmt.Errorf("no free temporary name for %s in %s", name, dir)
 }
 
 // MaxLoadBytes is how much Load decompresses before giving up: a repository can carry a planted
@@ -329,11 +343,16 @@ const maxHeaderBytes = 1 << 20
 
 // openRegular opens path unless it is not a regular file, or a link to one: a cloned repository can
 // commit a store file as a symbolic link to a device or to a file outside itself. What was opened
-// must also be the file that was checked, as something may replace the path between the two.
+// must still be regular; the identity check also detects replacements where the OS supports it.
+// Unix opens are nonblocking so a swapped-in FIFO can be refused without waiting for a writer.
 func openRegular(path string) (*os.File, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
+	}
+	// Cache Windows' lazy file identity before opening can observe a replacement.
+	if !os.SameFile(fi, fi) {
+		return nil, fmt.Errorf("%s: could not determine the checked file's identity", path)
 	}
 	if !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file: adamap will not read a store through a link or a device", path)
@@ -343,6 +362,9 @@ func openRegular(path string) (*os.File, error) {
 		return nil, err
 	}
 	opened, err := f.Stat()
+	if err == nil && !opened.Mode().IsRegular() {
+		err = fmt.Errorf("%s is not a regular file", path)
+	}
 	if err == nil && !os.SameFile(fi, opened) {
 		err = fmt.Errorf("%s was replaced while it was opened, so what was read is not the file that was checked: "+
 			"run it again", path)
@@ -396,7 +418,7 @@ func (l *limitedReader) Read(p []byte) (int, error) {
 }
 
 // openFile opens a store file; tests replace it to make the open fail or to open another file.
-var openFile = os.Open
+var openFile = openStoreFile
 
 // Latest is the commit whose store was written last in repo.
 func Latest(repo string) (string, error) {
