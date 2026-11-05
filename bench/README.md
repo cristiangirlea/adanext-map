@@ -91,7 +91,8 @@ The runner also reads the plan's meter: Claude Code's `rate_limit_event`, which 
 in `unifiedWindows` (`five_hour`, `seven_day`, any other) and for the event's own `rateLimitType`.
 
 - **Overage is refused.** Overage is usage billed beyond the plan. A meter that shows it in use
-  (`isUsingOverage: true`, `"true"`, a non-zero number, or `overageStatus: "in_use"`)
+  (`isUsingOverage: true`, `"true"`, a non-zero number, or an `overageStatus` other than `allowed`,
+  `allowed_warning` or `rejected`)
   stops the CLI at once. Strict truthy/unknown-value checks apply only to overage use flags
   whose keys contain `using` or `inuse` (case-insensitive), including nested flags.
   Statuses `allowed`, `allowed_warning`, and `rejected` do not mean overage is in use;

@@ -416,9 +416,9 @@ func TestClaudeWatchOverageValues(t *testing.T) {
 			}
 		})
 	}
-	for _, value := range []string{`false`, `"false"`, `0`, `"allowed"`, `"rejected"`} {
-		if _, err := watchLines(t, []string{`{"type":"rate_limit_event","rate_limit_info":{"overageStatus":` + value + `}}`}); err != nil {
-			t.Errorf("inactive %s: %v", value, err)
+	for _, info := range []string{`{"isUsingOverage":false}`, `{"isUsingOverage":"false"}`, `{"isUsingOverage":0}`, `{"overageStatus":"allowed"}`, `{"overageStatus":"rejected"}`} {
+		if _, err := watchLines(t, []string{`{"type":"rate_limit_event","rate_limit_info":` + info + `}`}); err != nil {
+			t.Errorf("inactive %s: %v", info, err)
 		}
 	}
 }
@@ -429,6 +429,8 @@ func TestClaudeWatchOverageMetadata(t *testing.T) {
 		`{"overageStatus":"allowed_warning","overageResetsAt":1792317600,"isUsingOverage":false}`,
 		`{"overageResetsAt":null}`,
 		`{"overageStatus":"allowed_warning"}`,
+		`{"overageStatus":"rejected"}`,
+		`{"overageStatus":" Allowed "}`,
 		`{"overage":{"resetsAt":null,"inUse":false}}`,
 	} {
 		for _, prefix := range [][]string{nil, {init}} {
@@ -442,6 +444,11 @@ func TestClaudeWatchOverageMetadata(t *testing.T) {
 		`{"USINGOVERAGE":"true"}`,
 		`{"overage":{"INUSE":1}}`,
 		`{"overage":{"inUse":null}}`,
+		`{"overageStatus":"in_use"}`,
+		`{"overageStatus":"in_use_billed"}`,
+		`{"overageStatus":null}`,
+		`{"overageStatus":1}`,
+		`{"overageStatus":true}`,
 	} {
 		if _, err := watchLines(t, []string{`{"type":"rate_limit_event","rate_limit_info":` + info + `}`}); !errors.Is(err, runner.ErrOverage) {
 			t.Errorf("use flag %s: %v", info, err)

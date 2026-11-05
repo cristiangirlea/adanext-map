@@ -222,13 +222,13 @@ func overageInUse(v any, under bool, path string) string {
 				continue
 			}
 			if key == "overagestatus" {
-				if status, ok := x[k].(string); ok {
-					switch strings.ToLower(strings.TrimSpace(status)) {
-					case "in_use":
-						return path + "." + k
-					}
+				// Only statuses known not to bill pass; a new or malformed one fails closed.
+				status, _ := x[k].(string)
+				switch strings.ToLower(strings.TrimSpace(status)) {
+				case "allowed", "allowed_warning", "rejected":
+					continue
 				}
-				continue
+				return path + "." + k
 			}
 			flag := strings.Contains(strings.ToLower(path+"."+k), "overage") &&
 				(strings.Contains(key, "using") || strings.Contains(key, "inuse"))
