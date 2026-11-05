@@ -160,18 +160,23 @@ func mappable(s *model.Symbol) bool {
 // that holds it already shows. The map leaves them out, but references to them still link files.
 func isMember(kind string) bool {
 	switch kind {
-	case "Field", "StaticField", "StaticDataMember", "EnumMember", "Property", "StaticProperty":
+	case "Field", "StaticField", "StaticDataMember", "EnumMember", "Property", "StaticProperty", "Getter", "Setter", "Accessor":
 		return true
 	}
 	return false
 }
 
-// isTestFile reports whether path is a test file by its name alone: Go's _test.go, TypeScript and
-// JavaScript's .test and .spec files, or any file under a tests or test directory.
+// isTestFile uses path conventions because the store does not carry test annotations.
 func isTestFile(path string) bool {
 	i := strings.LastIndexByte(path, '/')
 	dir, base := path[:max(i, 0)], path[i+1:]
 	if strings.HasSuffix(base, "_test.go") {
+		return true
+	}
+	if strings.HasSuffix(base, ".py") && (strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py")) {
+		return true
+	}
+	if strings.HasSuffix(base, ".test.mjs") {
 		return true
 	}
 	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx"} {
@@ -179,7 +184,9 @@ func isTestFile(path string) bool {
 			return true
 		}
 	}
-	return slices.ContainsFunc(strings.Split(dir, "/"), func(seg string) bool { return seg == "tests" || seg == "test" })
+	return slices.ContainsFunc(strings.Split(dir, "/"), func(seg string) bool {
+		return seg == "tests" || seg == "test" || seg == "__tests__"
+	})
 }
 
 // nameOf is the name in a SCIP symbol's last descriptor: Add in `.../Adder#Add.`, Do in

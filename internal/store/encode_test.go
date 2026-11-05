@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -219,13 +220,19 @@ func TestEncodeHoldsOneElementAtATime(t *testing.T) {
 	if w.largest > 4096 {
 		t.Errorf("largest write is %d bytes of %d: the encoder holds more than one element", w.largest, w.total)
 	}
-	// What encoding the store allocates, with a generous bound: building the whole JSON in memory
-	// takes at least its size.
 	if !checkAllocations {
 		return
 	}
+	if os.Getenv("ADAMAP_ENCODER_ALLOC_CHILD") != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestEncodeHoldsOneElementAtATime$")
+		cmd.Env = append(os.Environ(), "ADAMAP_ENCODER_ALLOC_CHILD=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("isolated allocation check: %v\n%s", err, out)
+		}
+		return
+	}
 	runtime.GC()
-	runtime.GC() // twice, to empty sync.Pool, where an earlier encoding can leave a large buffer
+	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	if err := encodeIndex(io.Discard, idx); err != nil {
@@ -233,7 +240,7 @@ func TestEncodeHoldsOneElementAtATime(t *testing.T) {
 	}
 	runtime.ReadMemStats(&after)
 	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > uint64(w.total/4) {
-		t.Errorf("encoding %d bytes of JSON allocated %d bytes: more than a quarter of it", w.total, alloc)
+		t.Errorf("encoding %d bytes allocated %d bytes", w.total, alloc)
 	}
 }
 
@@ -270,5 +277,21 @@ func TestEncodeStopsAtTheFirstFailedWrite(t *testing.T) {
 		if w.writes != 0 {
 			t.Errorf("after %d bytes: %d writes after the failure", n, w.writes)
 		}
+	}
+}
+
+func TestEncoderReleasesLargeBuffer(t *testing.T) {
+	e := &encoder{w: io.Discard}
+	e.enc = json.NewEncoder(&e.buf)
+	e.value("", strings.Repeat("x", 1<<20))
+	if e.err != nil {
+		t.Fatal(e.err)
+	}
+	if e.buf.Cap() > 64<<10 {
+		t.Fatalf("retained %d bytes after a large element", e.buf.Cap())
+	}
+	e.value(",", "small")
+	if e.err != nil {
+		t.Fatal(e.err)
 	}
 }

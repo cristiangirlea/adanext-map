@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 	scippb "github.com/scip-code/scip/bindings/go/scip"
 
+	"github.com/cristiangirlea/adanext-map/internal/query"
 	"github.com/cristiangirlea/adanext-map/internal/scip/sciptest"
 	"github.com/cristiangirlea/adanext-map/internal/store"
 )
@@ -189,6 +191,74 @@ func TestIndexPrefersCargoTomlWhenBothProjectFilesExist(t *testing.T) {
 	if !slices.Equal(*calls, []string{"/fake/bin/rust-analyzer scip . --output OUT"}) {
 		t.Errorf("ran %q, want rust-analyzer", *calls)
 	}
+}
+
+func TestIndexUsesAnAbsoluteOutputWithARelativeTempDir(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "go.mod"), "")
+	if err := os.Mkdir(filepath.Join(base, "tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(base)
+	t.Setenv("TMPDIR", "tmp")
+	t.Setenv("TMP", "tmp")
+	t.Setenv("TEMP", "tmp")
+	fakeIndexers(t, "scip-go")
+	var outDir string
+	runIndexer = func(dir, _ string, args []string, _ io.Writer) error {
+		out := outputOf(args)
+		if !filepath.IsAbs(out) {
+			t.Errorf("output path = %q; want an absolute path", out)
+			out = filepath.Join(dir, out)
+		}
+		var err error
+		outDir, err = filepath.EvalSymlinks(filepath.Dir(out))
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(out, sciptest.Bytes(t, sciptest.Index()), 0o644)
+	}
+	if code, _, errOut := runIndexCmd("--commit", testCommit, "--repo", repo); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errOut)
+	}
+	if !within(t, filepath.Join(base, "tmp"), outDir) || within(t, repo, outDir) {
+		t.Errorf("output directory = %q; want it under tmp, outside the repository", outDir)
+	}
+	gone(t, outDir)
+	if _, _, err := store.Load(repo, testCommit); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIndexCleansUpAfterAnIndexerPanic(t *testing.T) {
+	fakeIndexers(t, "scip-go")
+	repo := t.TempDir()
+	writeFile(t, filepath.Join(repo, "go.mod"), "")
+	var outDir string
+	runIndexer = func(_, _ string, args []string, _ io.Writer) error {
+		out := outputOf(args)
+		outDir = filepath.Dir(out)
+		writeFile(t, out, "partial")
+		panic("indexer panic")
+	}
+	func() {
+		defer func() {
+			if got := recover(); got != "indexer panic" {
+				t.Errorf("panic = %v; want indexer panic", got)
+			}
+		}()
+		runIndexCmd("--commit", testCommit, "--repo", repo)
+	}()
+	if outDir == "" {
+		t.Fatal("the indexer was not run with an output path")
+	}
+	gone(t, outDir)
+	gone(t, filepath.Join(repo, "index.scip"))
+	gone(t, filepath.Join(repo, ".adamap"))
 }
 
 // When the indexer fails or writes an index adamap refuses, the run fails, no store is written,
@@ -899,11 +969,11 @@ func TestGitErrorsAreEscapedForTheTerminal(t *testing.T) {
 // A multi-line message from git keeps its lines; only a line that needs it is quoted.
 func TestSafeLinesQuotesOnlyTheLinesThatNeedIt(t *testing.T) {
 	const override = "\xe2\x80\xae"
-	if got, want := safeLines("fatal: one\nhint: two\n"), "fatal: one\nhint: two\n"; got != want {
+	if got, want := query.SafeLines("fatal: one\nhint: two\n"), "fatal: one\nhint: two\n"; got != want {
 		t.Errorf("safeLines = %q, want %q", got, want)
 	}
 	bad := "bad " + override + " line"
-	if got, want := safeLines("fatal: ok\n"+bad), "fatal: ok\n"+strconv.Quote(bad); got != want {
+	if got, want := query.SafeLines("fatal: ok\n"+bad), "fatal: ok\n"+strconv.Quote(bad); got != want {
 		t.Errorf("safeLines = %q, want %q", got, want)
 	}
 }
@@ -923,4 +993,118 @@ func TestIndexUsesSingularForOneSkippedDocument(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDirtyIgnoresCallerPathspecModes(t *testing.T) {
+	repo := t.TempDir()
+	git(t, repo, "init", "-q")
+	writeFile(t, filepath.Join(repo, "a.txt"), "one")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-qm", "one")
+	mustMkdir(t, filepath.Join(repo, ".adamap"))
+	writeFile(t, filepath.Join(repo, ".adamap", "latest"), "store")
+	for _, mode := range []string{"GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv(mode, "1")
+			_, dirty, err := resolveCommit(repo, "")
+			if err != nil || dirty {
+				t.Fatalf("store alone: dirty=%v, err=%v", dirty, err)
+			}
+			writeFile(t, filepath.Join(repo, "untracked.go"), "package p")
+			_, dirty, err = resolveCommit(repo, "")
+			if err != nil || !dirty {
+				t.Fatalf("untracked: dirty=%v, err=%v", dirty, err)
+			}
+			if err := os.Remove(filepath.Join(repo, "untracked.go")); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestGitCallsHaveADeadline(t *testing.T) {
+	old := gitTimeout
+	gitTimeout = -time.Second
+	defer func() { gitTimeout = old }()
+	for _, args := range [][]string{{"--version"}, {"config", "--list"}, {"status", "--porcelain", "-z"}} {
+		_, err := gitOutput(t.TempDir(), args...)
+		if err == nil || !strings.Contains(err.Error(), "timed out") {
+			t.Errorf("%v: %v, want timeout", args, err)
+		}
+	}
+}
+
+func TestStatusProbeStopsAtFirstCompleteRecord(t *testing.T) {
+	canceled := false
+	p := &statusProbe{cancel: func() { canceled = true }}
+	if n, err := p.Write([]byte("?? partial")); n != 10 || err != nil || canceled {
+		t.Fatalf("partial: %d %v %v", n, err, canceled)
+	}
+	if n, err := p.Write([]byte(" name\x00more")); n != 10 || err != nil || !canceled || !p.found {
+		t.Fatalf("record: %d %v %v", n, err, canceled)
+	}
+}
+
+func TestGitIgnoresCallerRepository(t *testing.T) {
+	repo, other := t.TempDir(), t.TempDir()
+	for i, dir := range []string{repo, other} {
+		git(t, dir, "init", "-q")
+		writeFile(t, filepath.Join(dir, "a.txt"), strconv.Itoa(i))
+		git(t, dir, "add", ".")
+		git(t, dir, "commit", "-qm", "fixture")
+	}
+	want := git(t, repo, "rev-parse", "HEAD")
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	got, _, err := resolveCommit(repo, "")
+	if err != nil || got != want {
+		t.Fatalf("HEAD = %q, %v; want %q", got, err, want)
+	}
+}
+
+func TestGitEnvironmentIsolation(t *testing.T) {
+	keys := []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"}
+	for _, key := range keys {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "invalid-caller-setting")
+			if _, err := gitOutput(t.TempDir(), "--version"); err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range gitEnvironment() {
+				name, _, _ := strings.Cut(entry, "=")
+				if strings.EqualFold(name, key) {
+					t.Fatalf("caller setting retained: %s", key)
+				}
+			}
+		})
+	}
+}
+
+func TestGitSlowCallWithinDeadline(t *testing.T) {
+	if gitTimeout != 2*time.Minute {
+		t.Errorf("default timeout = %s, want 2m", gitTimeout)
+	}
+	oldTimeout, oldCommand := gitTimeout, gitCommand
+	gitTimeout = 2 * time.Second
+	gitCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, os.Args[0], "-test.run=^TestGitSlowHelper$")
+	}
+	defer func() { gitTimeout, gitCommand = oldTimeout, oldCommand }()
+	t.Setenv("ADAMAP_TEST_SLOW_GIT", "1")
+	start := time.Now()
+	got, err := gitOutput(t.TempDir(), "--version")
+	if err != nil || got != "slow git" {
+		t.Fatalf("output = %q, %v", got, err)
+	}
+	if time.Since(start) <= gitTimeout/12 {
+		t.Fatal("call did not exceed the proportional old timeout")
+	}
+}
+
+func TestGitSlowHelper(t *testing.T) {
+	if os.Getenv("ADAMAP_TEST_SLOW_GIT") != "1" {
+		return
+	}
+	time.Sleep(350 * time.Millisecond)
+	os.Stdout.WriteString("slow git")
+	os.Exit(0)
 }

@@ -67,6 +67,10 @@ SCIP symbol string. `target` is a file path in the index, or a symbol given eith
 description, which the host shows the model, says what it returns and when to call it instead of
 reading files or grepping.
 
+`callers` and `impact` include `unattributed` when nonzero: references outside every definition.
+For `impact` it counts references to the target or to symbols whose callers the walk looked up.
+Their text content ends with a parenthesized note when those references could not be followed.
+
 ### status
 
 `status` answers even when there is no store. Its text looks like this:
@@ -124,9 +128,9 @@ The store comes from an indexer's output of the repository, so its names and pat
 terminal escapes. Text content escapes them as the CLI does: a path, name or kind holding a
 control or format character is printed in Go quotes, and the map blanks such characters in
 details. Every line of a result or an error is also checked, and quoted when it still holds one.
-Structured content is JSON and keeps the raw values, as `--json` does (which also writes DEL and the C1
-controls as unicode escapes; the structured content is the SDK's encoding and does not), except the
-error fields of `status` (`store_error`, `newer_store_error`, `git_error`): they carry text a
+Structured content is JSON and keeps the raw values, as `--json` does. DEL and the C1 controls
+(U+0080 to U+009F) are written as Unicode escapes on the wire, preserving the decoded values. The
+exception is the error fields of `status` (`store_error`, `newer_store_error`, `git_error`): they carry text a
 repository can shape (git echoes its ref names, a store error names a path), so they are quoted like
 the text output.
 
