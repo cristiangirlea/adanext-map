@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestCountsIncludeLocalsAndEveryDocumentsOccurrences(t *testing.T) {
 	x := &Index{
@@ -89,6 +92,19 @@ func TestCheckPathAcceptsANameThatOnlyLooksLikeADevice(t *testing.T) {
 		"lpt10", "ccon.go", "nu.l", "conin", "conin$x", "conout.go", "xconin$"} {
 		if err := CheckPath(p); err != nil {
 			t.Errorf("CheckPath(%q) = %v, want it accepted", p, err)
+		}
+	}
+}
+
+func TestCheckPathClassifiesKnownUnsafeNames(t *testing.T) {
+	for _, p := range []string{"aux.go", "pkg/com1.go", "a:x.go", "x:y.go", "a\x00b.go", "a\nb.go"} {
+		if err := CheckPath(p); !errors.Is(err, ErrUnsafeName) {
+			t.Errorf("CheckPath(%q) = %v, want ErrUnsafeName", p, err)
+		}
+	}
+	for _, p := range []string{"", "../x.go", "/x.go", `C:\x.go`} {
+		if err := CheckPath(p); err == nil || errors.Is(err, ErrUnsafeName) {
+			t.Errorf("CheckPath(%q) = %v, want an unclassified refusal", p, err)
 		}
 	}
 }
