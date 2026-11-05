@@ -130,7 +130,7 @@ func TestPublishNewFallbackGivesAnOrdinaryFileMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The umask may take bits away, never add them.
-	if got := fi.Mode().Perm(); got&^0o644 != 0 || got&0o600 != 0o600 {
+	if got := fi.Mode().Perm(); got&^0o644 != 0 || got&0o400 == 0 {
 		t.Errorf("fallback mode = %o, want 644 less the umask", got)
 	}
 }

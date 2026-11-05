@@ -324,8 +324,9 @@ func TestWriteGivesTheGitignoreTheModeOfAnOrdinaryFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fi.Mode().Perm(); got != 0o644 {
-		t.Errorf(".adamap/.gitignore has mode %o, want 644", got)
+	// The umask may take bits away, never add them.
+	if got := fi.Mode().Perm(); got&^0o644 != 0 || got&0o400 == 0 {
+		t.Errorf(".adamap/.gitignore has mode %o, want 644 less the umask", got)
 	}
 }
 
