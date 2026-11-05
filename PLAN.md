@@ -97,6 +97,7 @@ repository); a fail-closed push guard (#8).
   few bytes (`{},`) become a whole struct. The defaults sit far above the measured Rust workspace
   (2,000 files, about 2.4 million occurrences) so no real repository meets them, and stay low
   enough that a planted store or index is refused before it exhausts memory.
+  Skipped JSON values have a nesting depth limit of 10,000.
 - 2026-10-13 (#8): the push guard is a PreToolUse hook on Bash and PowerShell,
   `.claude/hooks/push-guard.sh`, in POSIX sh with git, sed and tr only. settings.json's deny rules
   stay as a first layer. It asks git where a push without a destination goes (`@{push}`,
@@ -237,3 +238,11 @@ repository); a fail-closed push guard (#8).
   claiming one. When either latest file identity is unreadable, compare modification time, size
   and header time alone to avoid reloading an unchanged store on every call; test both missing
   identities and each missing side, including changes to each metadata field.
+- 2026-11-05 (#48): correct the earlier item-count decision: larger real repositories can exceed
+  the defaults, and the defaults are not a safe RAM budget. Retain the count defaults and document
+  their cost rather than reduce supported repository sizes: 6.08 GB of struct elements on 64-bit Go
+  at all limits, roughly 10 GB with slice growth before other allocations, not a memory ceiling.
+  `docs/index.md` describes whole-value decoder buffering and how to handle a real repository
+  hitting a count limit without CLI overrides. A model test pins the four documented struct sizes
+  on 64-bit builds so layout changes require revisiting the estimate. The store format and runtime
+  behavior are unchanged.

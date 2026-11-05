@@ -161,6 +161,7 @@ type Limits struct {
 
 // DefaultLimits are generous: a Rust workspace of 2,000 files measured about 20,000 occurrences per
 // 17 files, 2.4 million in all, so 50 million occurrences is room for some 40,000 such files.
+// They are not a safe RAM budget; docs/index.md estimates memory and describes exceeding a limit.
 func DefaultLimits() Limits {
 	return Limits{Documents: 2_000_000, Symbols: 20_000_000, Occurrences: 50_000_000, Relationships: 20_000_000}
 }
