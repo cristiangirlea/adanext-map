@@ -70,7 +70,8 @@ One line per item, starting with where it is: `path:line kind name`.
   (a bidi override, a zero-width space) or invalid UTF-8 is printed in Go quotes (`"a\x1b[2Jb"`), since
   the store may come from a hostile repository and a terminal acts on them. `--json` keeps the raw value,
   and writes every control character, DEL and the C1 controls (U+0080 to U+009F) included, as a JSON
-  unicode escape, so the line holds none and decoding it gives the value back.
+  escape (short forms `\b`, `\f`, `\n`, `\t`, `\r` where available, otherwise `\uXXXX`), so the
+  line holds none and decoding it gives the value back.
 
 ## JSON output
 

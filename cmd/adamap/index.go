@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -107,8 +109,12 @@ func runIndex(args []string, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	if skipped.Count > 0 {
-		fmt.Fprintf(stderr, "adamap index: skipped %d documents adamap cannot store (outside the project or not a safe file name) (first: %s)\n",
-			skipped.Count, strings.Join(skipped.Paths, ", "))
+		noun := "documents"
+		if skipped.Count == 1 {
+			noun = "document"
+		}
+		fmt.Fprintf(stderr, "adamap index: skipped %d %s outside the project, naming its root or with unsafe names (first: %s)\n",
+			skipped.Count, noun, strings.Join(skipped.Paths, ", "))
 	}
 	dir, err := store.Write(*repo, store.Header{
 		Adamap:      Version,
@@ -151,7 +157,7 @@ func resolveCommit(repo, given string) (string, bool, error) {
 	}
 	// The pathspec keeps the check to repo when it is a subdirectory of the work tree, and leaves out
 	// its own store, which a .gitignore of the owner's can list.
-	status, err := gitRun(repo, off, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=dirty",
+	status, err := gitExecute(repo, off, true, "status", "--porcelain", "-z", "--untracked-files=normal", "--ignore-submodules=dirty",
 		"--", ".", ":(exclude)"+store.DirName)
 	if err != nil {
 		return "", false, fmt.Errorf("cannot tell whether %s has changes: %w", repo, err)
@@ -214,7 +220,7 @@ func filtersOff(repo string) ([]string, error) {
 	return off, nil
 }
 
-// gitOutput is the output of `git args` in repo, run with gitSafely. Every git call goes through it.
+// gitOutput is the output of `git args` in repo, run through gitExecute with gitSafely.
 // The environment is part of the guard too: GIT_NO_LAZY_FETCH (git 2.44 or later) keeps a partial
 // clone from fetching, and no -c option does that.
 func gitOutput(repo string, args ...string) (string, error) {
@@ -223,34 +229,66 @@ func gitOutput(repo string, args ...string) (string, error) {
 
 // gitRun is gitOutput with more -c options after gitSafely's, in front of the command.
 func gitRun(repo string, opts []string, args ...string) (string, error) {
+	return gitExecute(repo, opts, false, args...)
+}
+
+// gitTimeout bounds reads of ignore files that may be FIFOs.
+var gitTimeout = 2 * time.Minute
+
+// gitCommand lets tests run a bounded slow subprocess without a real slow repository.
+var gitCommand = exec.CommandContext
+
+// statusProbe cancels git after the first complete porcelain record without keeping its output.
+type statusProbe struct {
+	cancel context.CancelFunc
+	found  bool
+}
+
+func (p *statusProbe) Write(b []byte) (int, error) {
+	if bytes.IndexByte(b, 0) >= 0 {
+		p.found = true
+		p.cancel()
+	}
+	return len(b), nil
+}
+
+func gitExecute(repo string, opts []string, dirtyOnly bool, args ...string) (string, error) {
 	hooks, err := os.MkdirTemp("", "adamap-nohooks-*")
 	if err != nil {
 		return "", fmt.Errorf("git %s: cannot make an empty hooks directory: %w", args[0], err)
 	}
 	defer os.RemoveAll(hooks)
-	cmd := exec.Command("git", slices.Concat([]string{"-C", repo}, gitSafely(hooks), opts, args)...)
-	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1") // a missing promisor object is an error, not a fetch
+	ctx, stop := gitInterruptContext(context.Background())
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
+	defer cancel()
+	cmd := gitCommand(ctx, "git", slices.Concat([]string{"-C", repo}, gitSafely(hooks), opts, args)...)
+	configureGitProcess(cmd)
+	cmd.WaitDelay = time.Second
+	cmd.Env = gitEnvironment()
 	var errOut strings.Builder
 	cmd.Stderr = &errOut
-	out, err := cmd.Output()
+	var out strings.Builder
+	probe := &statusProbe{cancel: cancel}
+	if dirtyOnly {
+		cmd.Stdout = probe
+	} else {
+		cmd.Stdout = &out
+	}
+	err = cmd.Run()
+	if probe.found {
+		return "dirty", nil
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "", fmt.Errorf("git %s: timed out after %s", args[0], gitTimeout)
+	}
 	if err != nil {
 		if msg := strings.TrimSpace(errOut.String()); msg != "" {
-			return "", fmt.Errorf("git %s: %s", args[0], safeLines(msg))
+			return "", fmt.Errorf("git %s: %s", args[0], query.SafeLines(msg))
 		}
 		return "", fmt.Errorf("git %s: %w", args[0], err)
 	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// safeLines is s with each line that holds a control or format character, or invalid UTF-8, quoted
-// by query.Safe, as the MCP server escapes error text. Git echoes ref names and config values, which
-// the repository chooses; a line that is printable already stays as it is.
-func safeLines(s string) string {
-	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		lines[i] = query.Safe(l)
-	}
-	return strings.Join(lines, "\n")
+	return strings.TrimSpace(out.String()), nil
 }
 
 // runAndRead runs the indexer repo needs, with repo as its working directory, and reads the index
@@ -278,6 +316,11 @@ func runAndRead(repo string, maxBytes int64, stderr io.Writer) (*model.Index, sc
 		return nil, scip.Skipped{}, fmt.Errorf("cannot make a directory for %s to write its index in: %w", ix.program, err)
 	}
 	defer os.RemoveAll(tmp)
+	// The indexer runs in repo, so a relative temporary directory must be resolved here.
+	tmp, err = filepath.Abs(tmp)
+	if err != nil {
+		return nil, scip.Skipped{}, fmt.Errorf("cannot resolve the directory for %s to write its index in: %w", ix.program, err)
+	}
 	out := filepath.Join(tmp, "index.scip")
 	if err := runIndexer(repo, program, append(slices.Clone(ix.args), "--output", out), stderr); err != nil {
 		if ix.program == "rust-analyzer" {
@@ -286,4 +329,27 @@ func runAndRead(repo string, maxBytes int64, stderr io.Writer) (*model.Index, sc
 		return nil, scip.Skipped{}, fmt.Errorf("%s failed: %w", ix.program, err)
 	}
 	return scip.ReadFile(out, maxBytes)
+}
+
+// gitEnvironment keeps caller repository selection and config injection out of git.
+func gitEnvironment() []string {
+	var env []string
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		key = strings.ToUpper(key)
+		if strings.HasPrefix(key, "GIT_") && strings.HasSuffix(key, "_PATHSPECS") ||
+			strings.HasPrefix(key, "GIT_CONFIG_KEY_") || strings.HasPrefix(key, "GIT_CONFIG_VALUE_") {
+			continue
+		}
+		switch key {
+		case "GIT_NO_LAZY_FETCH", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+			"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR",
+			"GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+			"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT":
+			continue
+		}
+		env = append(env, entry)
+	}
+	env = append(env, "GIT_NO_LAZY_FETCH=1") // a missing promisor object is an error, not a fetch
+	return env
 }

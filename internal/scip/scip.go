@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -66,7 +67,7 @@ func Decode(data []byte) (*model.Index, Skipped, error) {
 
 // decode converts each document before decoding the next, keeping protobuf messages short-lived.
 func decode(data []byte, lim model.Limits) (*model.Index, Skipped, error) {
-	c := newConverter()
+	c := newConverter(model.CheckPath)
 	var counts model.Counts
 	relationships := 0
 	var metadata scippb.Metadata
@@ -151,8 +152,8 @@ func decode(data []byte, lim model.Limits) (*model.Index, Skipped, error) {
 // maxSkippedPaths is how many skipped paths a Skipped keeps for a message.
 const maxSkippedPaths = 3
 
-// Skipped counts the documents left out because their path leaves the project, and keeps the first
-// few paths, quoted, for a message.
+// Skipped counts documents outside the project, naming its root or with unsafe names, and keeps the first
+// few paths, quoted and bounded to 200 bytes each, for a message.
 type Skipped struct {
 	Count int
 	Paths []string
@@ -161,6 +162,21 @@ type Skipped struct {
 func (s *Skipped) add(p string) {
 	s.Count++
 	if len(s.Paths) < maxSkippedPaths {
+		// Bound the quoted form too, since escaping can expand a hostile path.
+		const maxQuotedBytes = 200
+		end := 0
+		for i := range p {
+			if len(strconv.Quote(p[:i]+"...")) > maxQuotedBytes {
+				break
+			}
+			end = i
+			if i >= maxQuotedBytes {
+				break
+			}
+		}
+		if len(p) > maxQuotedBytes || len(strconv.Quote(p)) > maxQuotedBytes {
+			p = p[:end] + "..."
+		}
 		s.Paths = append(s.Paths, strconv.Quote(p))
 	}
 }
@@ -168,15 +184,20 @@ func (s *Skipped) add(p string) {
 // document is a document being converted, with its locals by ID.
 type document struct {
 	model.Document
-	locals map[string]*model.Symbol
+	originalPath string
+	locals       map[string]*model.Symbol
 }
 
-// Convert turns a SCIP index into adamap's model. A document listed twice is merged; occurrences
+// Convert turns a SCIP index into adamap's model. Exact duplicate paths merge; aliases fail. Occurrences
 // without a symbol (syntax highlighting only) are dropped; a symbol's definition is its first
 // definition occurrence. A document whose path leaves the project is skipped with its occurrences and
-// symbols, and counted in the Skipped result; any other problem is an error.
+// symbols, as is a known unsafe file name; any other problem is an error.
 func Convert(x *scippb.Index) (*model.Index, Skipped, error) {
-	c := newConverter()
+	return convert(x, model.CheckPath)
+}
+
+func convert(x *scippb.Index, checkPath func(string) error) (*model.Index, Skipped, error) {
+	c := newConverter(checkPath)
 	c.idx.Tool = model.Tool{Name: x.GetMetadata().GetToolInfo().GetName(), Version: x.GetMetadata().GetToolInfo().GetVersion()}
 	c.idx.ProjectRoot = x.GetMetadata().GetProjectRoot()
 	for i, d := range x.GetDocuments() {
@@ -198,27 +219,35 @@ type converter struct {
 	rels    map[*model.Symbol]map[string]int // Relationship offsets keep merging linear.
 	docs    []*document
 	byPath  map[string]*document
+	// checkPath validates a kept document's path; tests replace it.
+	checkPath func(string) error
 }
 
-func newConverter() *converter {
-	return &converter{idx: &model.Index{}, globals: map[string]*model.Symbol{}, rels: map[*model.Symbol]map[string]int{}, byPath: map[string]*document{}}
+func newConverter(checkPath func(string) error) *converter {
+	return &converter{idx: &model.Index{}, globals: map[string]*model.Symbol{}, rels: map[*model.Symbol]map[string]int{}, byPath: map[string]*document{}, checkPath: checkPath}
 }
 
 func (c *converter) addDocument(i int, d *scippb.Document) error {
 	path := normalisePath(d.GetRelativePath())
-	// A path that cleans to "." (such as `pkg/..`) is the project root, not a file: skip it too.
-	if err := model.CheckPath(path); err != nil || path == "." {
-		if path == "" {
-			return fmt.Errorf("document %d: %w", i, err)
-		}
+	if outsideProject(path) {
 		c.skipped.add(d.GetRelativePath())
 		return nil
 	}
+	if err := c.checkPath(path); err != nil {
+		if errors.Is(err, model.ErrUnsafeName) {
+			c.skipped.add(d.GetRelativePath())
+			return nil
+		}
+		return fmt.Errorf("document %d: %w", i, err)
+	}
 	doc := c.byPath[path]
 	if doc == nil {
-		doc = &document{Document: model.Document{Path: path}, locals: map[string]*model.Symbol{}}
+		doc = &document{Document: model.Document{Path: path}, originalPath: d.GetRelativePath(), locals: map[string]*model.Symbol{}}
 		c.byPath[path] = doc
 		c.docs = append(c.docs, doc)
+	}
+	if doc.originalPath != d.GetRelativePath() {
+		return fmt.Errorf("document %d: different spellings %q and %q name the same path %q", i, doc.originalPath, d.GetRelativePath(), path)
 	}
 	if doc.Language == "" {
 		doc.Language = d.GetLanguage()
@@ -288,6 +317,12 @@ func normalisePath(p string) string {
 		return p
 	}
 	return path.Clean(strings.ReplaceAll(p, `\`, "/"))
+}
+
+// Only paths outside the project or naming its root bypass file-name validation.
+func outsideProject(p string) bool {
+	return p == "." || p == ".." || strings.HasPrefix(p, "../") || strings.HasPrefix(p, "/") ||
+		(len(p) >= 3 && ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':' && p[2] == '/')
 }
 
 func occurrence(o *scippb.Occurrence) (model.Occurrence, error) {

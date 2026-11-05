@@ -155,19 +155,7 @@ func writeJSON(w io.Writer, v any, setup func(*json.Encoder)) error {
 	if err := enc.Encode(v); err != nil {
 		return err
 	}
-	in, out := b.Bytes(), make([]byte, 0, b.Len())
-	for i := 0; i < len(in); i++ {
-		switch {
-		case in[i] == 0x7f:
-			out = append(out, `\u007f`...)
-		case in[i] == 0xc2 && i+1 < len(in) && in[i+1] >= 0x80 && in[i+1] <= 0x9f:
-			out = fmt.Appendf(out, `\u%04x`, in[i+1])
-			i++
-		default:
-			out = append(out, in[i])
-		}
-	}
-	_, err := w.Write(out)
+	_, err := w.Write(query.EscapeJSONControls(b.Bytes()))
 	return err
 }
 
