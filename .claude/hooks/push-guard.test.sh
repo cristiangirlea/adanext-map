@@ -345,9 +345,9 @@ if command -v cygpath >/dev/null 2>&1; then
   allowed "cd \\\"$winspaced\\\" && git push origin feat"
 fi
 
-# Letter operands in the other arithmetic forms must not hide the next command.
-refused 'let x=1<<n\ngit push origin main'
-allowed 'let x=1<<n\ngit push origin my-branch'
+# Heredoc delimiters and arithmetic operands must not hide the next command.
+refused 'let x=1<<n\ntext\nn\ngit push origin main'
+allowed 'let x=1<<n\ntext\nn\ngit push origin my-branch'
 refused 'x=$[1<<n]\ngit push origin main'
 allowed 'x=$[1<<n]\ngit push origin my-branch'
 refused 'x=$[(1<<n)]\ngit push origin main'
@@ -401,6 +401,27 @@ refused 'git tag --list --delete v1'
 refused 'git tag --list $option v1'
 allowed 'gh release view v1'
 refused 'gh release delete v1'
+
+# Unquoted let operands still use shell heredoc syntax.
+refused "let x=1<<n\\nit's\\nn\\ngit push origin main"
+# Nested brackets cannot end legacy arithmetic early.
+refused 'x=$[a[0]<<n]\ngit push origin main'
+# Shell consumers anywhere on the command line execute heredoc data.
+refused "cat <<'EOF' | bash\\ngit push origin main\\nEOF"
+refused "<<'EOF' bash\\ngit push origin main\\nEOF"
+# GraphQL endpoints retain their meaning with a slash or URL.
+refused "gh api /graphql -f query='mutation{createRef(input:{}){clientMutationId}}'"
+refused "gh api https://api.github.com/graphql -f query='mutation{createRef(input:{}){clientMutationId}}'"
+# Only known data consumers may receive literal PowerShell here-strings.
+refused "[scriptblock]::Create(@'\\ngit push origin main\\n'@).Invoke()" . PowerShell
+refused "@'\\ngit push origin main\\n'@ | Out-File x.ps1; ./x.ps1" . PowerShell
+allowed "Set-Content notes.txt @'\\ngit push origin main\\n'@" . PowerShell
+allowed "\$text = @'\\ngit push origin main\\n'@" . PowerShell
+refused "\$text = bash @'\\ngit push origin main\\n'@" . PowerShell
+refused "Unknown-Consumer @'\\ngit push origin main\\n'@" . PowerShell
+# A read-only command cannot exempt a later command.
+refused 'gh release view v1 && gh release delete v1'
+refused 'git tag -l x && git push origin main'
 
 # settings.json runs the hook before every Bash and PowerShell call.
 settings="$(dirname "$hook")/../settings.json"

@@ -15,18 +15,24 @@ and CRLF are treated as line endings. In cwd, only escaped backslashes, quotes a
 accepted. These checks prevent decoding differences from hiding a guarded command. A raw unit
 separator is refused too. Literal backslashes followed by escape-like text remain literal.
 
-The parser treats `<<` in `let`, `$[...]`, `$((...))` and `((...))` arithmetic as a shift,
-including letter operands. It scans shell heredoc bodies (`bash`, `sh` and related shells),
-even with quoted delimiters, and scans `ssh` stdin as remote commands. Remote pushes are refused
-when repository state is needed: local Git configuration cannot resolve a remote destination.
+The parser treats `<<` in `$[...]`, `$((...))` and `((...))` arithmetic as a shift,
+including letter operands; nested brackets in `$[...]` are refused. Unquoted `let x=1<<n`
+uses heredoc syntax. At the end of a heredoc command line, any shell or `ssh` word, including
+a consumer after the delimiter or in another pipeline stage, makes the body executable
+even with quoted delimiters. Shell bodies are scanned as commands, and `ssh` bodies as remote
+commands. Remote pushes are refused when repository state is needed: local Git configuration cannot resolve a remote destination.
 Text heredocs remain text; unquoted bodies containing substitutions are inspected as before.
 Directory changes inside parentheses and command substitutions are restored at the closing token.
 
 ANSI-C quotes support escaped apostrophes and backslashes; other ANSI-C escapes are refused.
 In cmd command text, `#` is literal and `^` escapes the next unquoted character; quoted carets are
-refused, as are dangling carets and caret line continuations. PowerShell single and double here-strings keep embedded quotes and command-looking text literal; expanding double
-here-strings, executable consumers, and malformed delimiters are refused when inspected.
+refused, as are dangling carets and caret line continuations. Literal PowerShell here-strings
+are accepted only with known data consumers (`Write-Output`, `Write-Host`, `Set-Content`,
+`Out-File`, `Add-Content`) or variable assignments of data. Code execution syntax, unknown
+consumers, expanding double here-strings, and malformed delimiters are refused when inspected.
 
+GraphQL endpoints are matched case-insensitively after removing a URL scheme, host and leading
+slashes; any endpoint ending in `graphql`, including `api/graphql`, gets the same checks.
 GraphQL API calls must contain a visible read-only query. Mutations (including `createRef` and
 `updateRef`), query files, and hidden queries are refused even with `--method GET`.
 `git tag -l` and `git tag --list` allow patterns and known read-only formatting/sorting options;

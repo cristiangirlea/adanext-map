@@ -247,8 +247,10 @@ repository); a fail-closed push guard (#8).
   on 64-bit builds so layout changes require revisiting the estimate. The store format and runtime
   behavior are unchanged.
 - 2026-11-05 (#54): close the push guard's remaining parsing gaps without new dependencies:
-  distinguish let and legacy arithmetic shifts from heredocs, scan executable shell/ssh heredocs,
-  support ANSI-C apostrophes/backslashes and PowerShell here-strings, read cmd hashes/caret escapes,
-  restore subshell directories, refuse GraphQL mutations and hidden queries, and allow read-only
-  tag listings and release list/view. Unsupported escapes and dynamic or remote state fail closed;
+  distinguish legacy arithmetic shifts from heredocs, retain unquoted let heredoc syntax, and
+  refuse nested legacy arithmetic brackets; scan executable shell/ssh heredocs using the full line,
+  support ANSI-C apostrophes/backslashes and allow literal PowerShell here-strings only for known
+  data consumers or assignments without code execution; read cmd hashes/caret escapes,
+  restore subshell directories, normalize GraphQL endpoint spellings and refuse mutations and
+  hidden queries, and allow read-only tag listings and release list/view. Unsupported escapes and dynamic or remote state fail closed;
   regression cases cover refused and allowed forms.

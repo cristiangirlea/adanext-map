@@ -144,6 +144,7 @@ current_branch() {
 # and so is a text heredoc's body; shell stdin and expanding bodies with substitutions are scanned.
 check_cmd() {
   cs=$1 cur= md=o stk= dirstk= lastc= hdq=
+  hdline=${cs%%"$nl"*}
   while [ -n "$cs" ]; do
     case $md in
       o) pre=${cs%%[\^@\[\]\;\|\&\(\)\{\}\<\#\"\'\\\`$nl]*} ;;
@@ -164,7 +165,7 @@ check_cmd() {
         ac=${cs%"${cs#?}"} cs=${cs#?}
         case $ac in "'") cur=$cur"'\\''" ;; '\') cur=$cur$ac ;; *) refuse "an ANSI-C escape cannot be read faithfully" ;; esac ;;
       o@) if [ "$lang" = ps ]; then ps_here; else cur=$cur$ch; fi ;;
-      o\[) case $lang$cur in sh*'$') sub_start b ;; *) cur=$cur$ch ;; esac ;;
+      o\[) case $stk in b*) refuse "nested legacy arithmetic brackets cannot be read faithfully" ;; esac; case $lang$cur in sh*'$') sub_start b ;; *) cur=$cur$ch ;; esac ;;
       o\]) case $stk in b*) check_part "$cur"; sub_end ;; *) cur=$cur$ch ;; esac ;;
 
       o\") cur=$cur$ch md=d ;;
@@ -201,10 +202,9 @@ check_cmd() {
         cur=$cur$ch
         case $lang$cs in
           sh\<\<*) cur=$cur'<<' cs=${cs#??} ;; # <<<, a here-string
-          sh\<*) cs=${cs#?}; cur=$cur'<'; case $stk in [ab]*) ;; *)
-            case ${cur#"${cur%%[!\ \	]*}"} in let[\ \	]*) ;; *) heredoc_start ;; esac ;; esac ;;
+          sh\<*) cs=${cs#?}; cur=$cur'<'; case $stk in [ab]*) ;; *) heredoc_start ;; esac ;;
         esac ;;
-      o"$nl") check_part "$cur"; cur=; heredoc_skip ;;
+      o"$nl") check_part "$cur"; cur=; heredoc_skip; hdline=${cs%%"$nl"*} ;;
       *) check_part "$cur"; cur= ;;
     esac
     lastc=$ch
@@ -225,10 +225,40 @@ ps_here() {
   done
   [ -n "$closed" ] || refuse "a PowerShell here-string is unterminated"
   case $pq$ph in '"'*'$'* | '"'*'`'*) refuse "an expanding PowerShell here-string cannot be read faithfully" ;; esac
-  lower "$cmd"
-  case $lc in *iex* | *invoke-expression* | *-command* | *' -c '* | *start-process* | *bash* | *pwsh* | *powershell* | *' sh'* | *'|sh'* | *'/sh'* | *dash* | *zsh* | *ksh* | *' cmd'* | *'|cmd'* | *'& '*) refuse "an executable PowerShell here-string cannot be read faithfully" ;; esac
+  ps_data "${cmd%%"@$pq$nl"*} 'here-string' $cs" || refuse "a PowerShell here-string has an unproven data consumer"
   cur=$cur"'here-string'"
 }
+# ps_data TEXT: only known data commands and assignments can keep a here-string literal.
+ps_data() (
+  lower "$1"
+  case $lc in
+    *'{'* | *'}'* | *'('* | *')'* | *'&'* | *'`'* | *scriptblock* | *invoke-expression* | *iex* | *invoke-command* | *invoke* | *'.ps1'* | *start-process* | *powershell* | *pwsh*) return 1 ;;
+  esac
+  pd=$(printf '%s' "$lc" | tr ';|' '\n\n')
+  while [ -n "$pd" ]; do
+    case $pd in *"$nl"*) part=${pd%%"$nl"*} pd=${pd#*"$nl"} ;; *) part=$pd pd= ;; esac
+    words "$part"
+    IFS=$soh
+    set -- $wl
+    IFS=' '
+    [ $# -gt 0 ] || continue
+    case $1 in
+      '$'*)
+        assignment=$1
+        shift
+        case $assignment in
+          *=*) value=${assignment#*=}; [ -z "$value" ] || set -- "$value" "$@" ;;
+          *) [ "${1-}" = = ] || return 1; shift ;;
+        esac ;;
+    esac
+    case ${1-} in
+      write-output | write-host | set-content | out-file | add-content) ;;
+      here-string) case $part in *"'here-string'"*) ;; *) return 1 ;; esac ;;
+      *) return 1 ;;
+    esac
+    for t; do [ "$t" != . ] || return 1; done
+  done
+)
 # heredoc_start: after <<, queues the heredoc's word, if it has one: u or q (unquoted, quoted), - or _ (<<- or <<),
 # then the word without its quotes.
 heredoc_start() {
@@ -245,21 +275,26 @@ heredoc_start() {
   while :; do
     case $hw in *[\'\"\\]*) hq=q hw=${hw%%[\'\"\\]*}${hw#*[\'\"\\]} ;; *) break ;; esac
   done
-  # Shell stdin is executable even when the delimiter disables expansion.
-  words "$cur"
-  while [ -n "$wl" ]; do
-    ht=${wl%%"$soh"*} wl=${wl#*"$soh"}
-    prog "$ht"
-    case $w in ssh) hq=r ;; bash | sh | zsh | dash | ksh | ash | mksh) [ "$hq" = r ] || hq=x ;; esac
-  done
   [ -z "$hw" ] || hdq=$hdq$hq$hd$hw$nl
 }
 # heredoc_skip: at a newline, takes the queued heredocs' bodies off the text. <<- ends at the word
 # after blanks: a JSON tab arrives as a space.
 heredoc_skip() {
+  # A consumer after the redirection or in another pipeline stage can execute the body.
+  hrun=
+  if [ -n "$hdq" ]; then
+    htline=$(printf '%s' "$hdline" | tr '|;&()<>' '        ')
+    words "$htline"
+    while [ -n "$wl" ]; do
+      ht=${wl%%"$soh"*} wl=${wl#*"$soh"}
+      prog "$ht"
+      case $w in ssh) hrun=r ;; bash | sh | zsh | dash | ksh | ash | mksh | pwsh | powershell) [ "$hrun" = r ] || hrun=x ;; esac
+    done
+  fi
   while [ -n "$hdq" ]; do
     he=${hdq%%"$nl"*} hdq=${hdq#*"$nl"}
     hq=${he%"${he#?}"} he=${he#?}
+    [ -z "$hrun" ] || hq=$hrun
     hd=${he%"${he#?}"} he=${he#?}
     hbody=
     while [ -n "$cs" ]; do
@@ -621,7 +656,12 @@ check_api() {
       *) [ -n "$ep" ] || ep=$t ;;
     esac
   done
-  if [ "$ep" = graphql ]; then
+  lower "$ep"
+  ep=$lc
+  case $ep in *://*) ep=${ep#*://}; ep=${ep#*/} ;; esac
+  while :; do case $ep in /*) ep=${ep#/} ;; *) break ;; esac; done
+  case $ep in *graphql) graphql=1 ;; *) graphql= ;; esac
+  if [ -n "$graphql" ]; then
     [ "$fromstdin" = 1 ] && refuse "gh api under xargs takes arguments the hook cannot see"
     # Files, variables and mutations cannot be proved to be a read-only GraphQL query.
     lower "$apiargs"
