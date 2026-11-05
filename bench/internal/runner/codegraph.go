@@ -54,24 +54,39 @@ func resolveCodegraph(c manifest.Condition, workspace string) (manifest.Conditio
 	if inside(cwd) {
 		return c, fmt.Errorf("resolve codegraph from outside the workspace")
 	}
-	path, err := exec.LookPath("codegraph")
-	if err != nil {
-		return c, fmt.Errorf("resolve codegraph: %w", err)
+	resolve := func(name string) (string, error) {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			return "", fmt.Errorf("resolve %s: %w", name, err)
+		}
+		path, err = filepath.Abs(path)
+		if err != nil {
+			return "", err
+		}
+		path, err = filepath.EvalSymlinks(path)
+		if err != nil {
+			return "", err
+		}
+		if inside(path) {
+			return "", fmt.Errorf("refusing %s inside the workspace: %s", name, path)
+		}
+		return path, nil
 	}
-	path, err = filepath.Abs(path)
+	path, err := resolve("codegraph")
 	if err != nil {
 		return c, err
 	}
-	path, err = filepath.EvalSymlinks(path)
-	if err != nil {
-		return c, err
-	}
-	if inside(path) {
-		return c, fmt.Errorf("refusing codegraph inside the workspace: %s", path)
+	var shell string
+	if slices.ContainsFunc(commands, func(argv []string) bool { return position(argv) == 2 }) {
+		shell, err = resolve("cmd")
+		if err != nil {
+			return c, err
+		}
 	}
 	replace := func(argv []string) []string {
 		argv = slices.Clone(argv)
 		if position(argv) == 2 {
+			argv[0] = shell
 			argv[2] = path
 			// Disable cmd's startup scripts as well as its executable search.
 			argv = slices.Insert(argv, 1, "/d")

@@ -580,7 +580,7 @@
       "repository": {
         "name": "cristiangirlea/harness",
         "url": "https://github.com/cristiangirlea/harness.git",
-        "visibility": "private"
+        "visibility": "public"
       },
       "revision": "ae0e711f35f5d4ae7c1ef973b00669c4b85ac634",
       "prompt": "Fix this issue of the repository: \"tools: judge a dangling symbolic link by its target on Linux and macOS\". Keep every existing test passing.",
@@ -618,7 +618,7 @@
         "hidden_revisions": [
           "dd9263a06044aec99a098bf812fe7424f0853072"
         ],
-        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs. A private repository: only the PR title and the revisions are recorded here; the PR closes harness#47."
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs. A public repository: the PR title and revisions identify the source; the PR closes harness#47."
       }
     },
     {
@@ -628,7 +628,7 @@
       "repository": {
         "name": "cristiangirlea/harness",
         "url": "https://github.com/cristiangirlea/harness.git",
-        "visibility": "private"
+        "visibility": "public"
       },
       "revision": "22f8170e5438b8b27a6c7419a5eed7154135ce02",
       "prompt": "Fix this issue of the repository: \"agent: refuse a null content_block instead of panicking on its first delta\". Keep every existing test passing.",
@@ -666,7 +666,7 @@
         "hidden_revisions": [
           "015b00da4f3948dd497fb55a729b7ed089fb8848"
         ],
-        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs. A private repository: only the PR title and the revisions are recorded here; the PR closes harness#77."
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs. A public repository: the PR title and revisions identify the source; the PR closes harness#77."
       }
     },
     {
@@ -676,7 +676,7 @@
       "repository": {
         "name": "cristiangirlea/harness",
         "url": "https://github.com/cristiangirlea/harness.git",
-        "visibility": "private"
+        "visibility": "public"
       },
       "revision": "4a4da621c9e0f2b7bd8317a884e7c523c820aa54",
       "prompt": "Fix this issue of the repository: \"tools: recognise WSL's bash launcher however PATH spells System32\". Keep every existing test passing.",
@@ -714,7 +714,7 @@
         "hidden_revisions": [
           "8ea088adb4f93ee2140fcc594d0689f3fb2f3aa1"
         ],
-        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs. A private repository: only the PR title and the revisions are recorded here; the PR closes harness#72."
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs. A public repository: the PR title and revisions identify the source; the PR closes harness#72."
       }
     },
     {
@@ -724,7 +724,7 @@
       "repository": {
         "name": "cristiangirlea/harness",
         "url": "https://github.com/cristiangirlea/harness.git",
-        "visibility": "private"
+        "visibility": "public"
       },
       "revision": "182fcc38ffa8e1c644a35a9c266e023d2f3861d4",
       "prompt": "Fix this issue of the repository: \"batch rm: finish tasks whose worktree git no longer lists\". Keep every existing test passing.",
@@ -762,7 +762,7 @@
         "hidden_revisions": [
           "7118aa095d71313bf44a75a98c997bc4b364f81c"
         ],
-        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs. A private repository: only the PR title and the revisions are recorded here."
+        "notes": "The workspace is a shallow checkout of the pre-fix revision; the fix's test files are laid over only when the check runs. A public repository: the PR title and revisions identify the source."
       }
     }
   ]

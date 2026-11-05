@@ -276,7 +276,8 @@ on the owner's Windows PC:
 CodeGraph's probe, index and MCP commands resolve `codegraph` with `exec.LookPath` at run time,
 before entering the workspace. Resolution must run outside the workspace and refuses a resolved
 path inside it (including a link into it). The Windows `cmd /d /c` wrapper receives the absolute
-shim path, so a task's `codegraph.cmd` cannot take precedence over PATH. No machine path is pinned
+shim path and uses an absolute `cmd` path resolved with the same checks, so a task's
+`codegraph.cmd` or `cmd.exe` cannot take precedence over PATH. No machine path is pinned
 in the manifest. A resolution refusal stops execution before an attempt.
 
 Each condition has its own index command, MCP server and tools. The timeout, attempts,
@@ -305,10 +306,6 @@ Before the wiring smoke, the owner:
   condition, so configured plugin servers must also satisfy these checks. Keep these init
   events as the wiring evidence before approving the pilot. Also check the points under
   "What a run does", that Serena opens no dashboard and CodeGraph leaves no daemon running.
-- recheck the harness repository's visibility before the pilot, and update all four harness
-  tasks in both task files together if it changed. The local manifest documentation and both
-  task files record it as private; current visibility could not be established offline during
-  the follow-up, so those fields remain unchanged.
 
 The real run must start from a terminal outside Claude Code. A Claude Code session sets
 `ANTHROPIC_BASE_URL`, and the runner refuses any provider variable, as designed. From the
