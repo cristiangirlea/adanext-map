@@ -45,7 +45,7 @@ sh .claude/hooks/hidden-chars.sh   # no bidi controls or zero-width characters i
 ```
 
 `-race` needs cgo, which the owner's Windows PC lacks: run `go test -count=3 ./...` there and leave
-`-race` to CI. CI runs on GitHub's standard hosted runners, Linux and Windows, free for a public
+`-race` to CI. CI runs on GitHub's standard hosted runners, Linux, Windows and macOS, free for a public
 repository; the job skips if the repository is ever private, so it cannot spend private minutes.
 Never attach a self-hosted runner or route public contributions to the owner's machines.
 

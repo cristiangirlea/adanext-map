@@ -21,9 +21,11 @@ Read [AGENTS.md](AGENTS.md) for the checks, the rules of this repository and the
 conditions before changing code. Tests are to build their SCIP fixtures in code and need no
 indexer, key or network.
 
-CI tests pull requests and pushes to `main` on standard GitHub-hosted Linux and Windows runners,
+CI tests pull requests and pushes to `main` on standard GitHub-hosted Linux, Windows and macOS runners,
 free for a public repository; the job skips if the repository is private. No self-hosted runner is
 used. See [SECURITY.md](SECURITY.md).
+
+The push guard and its regression tests are described in [docs/hooks.md](docs/hooks.md).
 
 - **One pull request per slice**, small enough to review, with `PLAN.md` updated in the same PR.
 - **Tests first, seen failing.**
