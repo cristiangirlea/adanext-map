@@ -164,6 +164,14 @@ repository); a fail-closed push guard (#8).
   so a resume before the reset starts nothing, and each record keeps its last reading per window
   as `plan_meter`. A reading without `resetsAt` stops nothing, since it cannot be waited out.
   Issue #70's text was taken from the task brief, as `gh` had no valid credentials in this session.
+- 2026-11-05 (#73): the push guard and its tests are adanext-exec's merged files, unchanged; the
+  comparison found no map-only behaviour to keep. `macos-latest` joins the public, hosted CI matrix
+  so macOS's `sh` (bash 3.2) runs the hook tests. Escapes the hook cannot decode faithfully are
+  refused in the command and the cwd. adanext-exec #23, #24 and #25 stay open and apply here too.
+- 2026-11-05 (#43): the indexer's temporary output directory is made absolute before the indexer
+  runs in the repository, with tests for a relative temporary directory and for cleanup when the
+  indexer panics. A hard kill can still leave `adamap-index-*` directories (docs/index.md); removing
+  stale ones at start would be new behaviour and is not done.
 - 2026-11-05 (#38): colons stay refused on every OS, to avoid Windows alternate data streams and
   keep stores portable; this drops some names legal on Linux and macOS (Go modules already forbid
   them), and the skipped-document count and sampled paths show it. No runtime or store change. A
