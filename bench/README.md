@@ -67,8 +67,11 @@ starts no further run.
 A run that meets the plan's usage limit is not a task failure. The execution stops at once, with
 no retry and no record for that run, and its workspace is removed as usual. Its `.started` marker
 is replaced by `<run id>.limited`, which says when and why. Run the same command again once the
-limit resets: resume starts that run afresh, and its new first attempt removes the note, after reading
-from it how many times the run met the limit: the record it finally writes carries that count as
+limit resets: resume starts that run afresh, keeping the note until the restart records its result.
+An interrupted restart keeps both its `.started` marker and the note; after inspecting the run and
+removing the marker, another restart still reads the accumulated count. The final exact
+`limit_hits: ` line at the start of a line supplies the count, after any CLI limit text.
+The record it finally writes carries that count as
 `limit_restarts`, and the report totals it per condition. A timed-out attempt is never read as a
 limit, whatever its CLI printed last. A limit
 in a second attempt also discards the failed first attempt: the run is started again as a whole.
@@ -174,8 +177,9 @@ record cannot claim a run it is not, and a swapped task and condition names no p
 The claude adapter runs `claude -p --output-format stream-json --verbose --model <model>
 --permission-mode <mode> --setting-sources user --strict-mcp-config --mcp-config <state>/mcp.json
 --settings <state>/settings.json --allowedTools <fixed tools plus the condition's>
-[--disallowedTools ...] [--append-system-prompt <map>]`. The condition's MCP server is the only one
-the session has, and the task repository's own `.claude/settings.json` is never loaded. The runner
+[--disallowedTools ...] [--append-system-prompt <map>]`. Only the condition's MCP server is configured
+by the runner; the wiring smoke below checks for servers added by user plugins too. The task
+repository's own `.claude/settings.json` is never loaded. The runner
 reads the transcript as it streams: unless the `system`/`init` event gives `apiKeySource` `"none"`
 (the subscription login), the CLI is killed there, no record is written and the execution stops.
 A missing `apiKeySource`, or a turn (any event but a `system` one or a `rate_limit_event`) before
@@ -269,6 +273,12 @@ on the owner's Windows PC:
 | `codegraph` | @colbymchenry/codegraph 1.6.2 through node v22.16.0 |
 | `adamap` | adamap at `c93f98e1f07f91045691c8055e2c3a1ea1651ca2`, scip-go v0.2.7; mode `queries` |
 
+CodeGraph's probe, index and MCP commands resolve `codegraph` with `exec.LookPath` at run time,
+before entering the workspace. Resolution must run outside the workspace and refuses a resolved
+path inside it (including a link into it). The Windows `cmd /d /c` wrapper receives the absolute
+shim path, so a task's `codegraph.cmd` cannot take precedence over PATH. No machine path is pinned
+in the manifest. A resolution refusal stops execution before an attempt.
+
 Each condition has its own index command, MCP server and tools. The timeout, attempts,
 permission mode and the fixed tool set are the same for every condition.
 
@@ -280,15 +290,25 @@ Before the wiring smoke, the owner:
 
 - installs the LSP plugin: `claude plugin install gopls-lsp@claude-plugins-official`. It is
   enabled for the `lsp` condition only (`enabledPlugins` in each condition's settings). Its probe
-  checks gopls alone, so the smoke must confirm that the `LSP` tool is in the session's init
-  event.
+  checks gopls alone; the smoke checks the init events below.
 - installs adamap at the pinned commit:
   `go install github.com/cristiangirlea/adanext-map/cmd/adamap@c93f98e1f07f91045691c8055e2c3a1ea1651ca2`.
   Otherwise every `adamap` run is recorded as *unsupported*, and resume does not rerun a recorded
   run.
 - runs a wiring smoke: a copy of `pilot-1.json` with `"scale": "smoke"`, one task, one repeat and
-  its own approval. It checks the points under "What a run does", and that Serena opens no
-  dashboard and CodeGraph leaves no daemon running.
+  its own approval. Inspect every condition's `attempt-*.jsonl` `system`/`init` event, not just
+  the settings files: `mcp_servers` must list exactly `serena`, `codegraph`, or `adamap` in that
+  condition, and no servers in `none` or `lsp`; each listed server must be connected. The
+  `tools` list must contain `LSP` only in `lsp`, and every `mcp__<server>__...` tool must belong
+  to that condition's server. Fail the smoke for any extra server, foreign MCP tool, missing
+  expected server, or LSP mismatch. User settings (`--setting-sources user`) load in every
+  condition, so configured plugin servers must also satisfy these checks. Keep these init
+  events as the wiring evidence before approving the pilot. Also check the points under
+  "What a run does", that Serena opens no dashboard and CodeGraph leaves no daemon running.
+- recheck the harness repository's visibility before the pilot, and update all four harness
+  tasks in both task files together if it changed. The local manifest documentation and both
+  task files record it as private; current visibility could not be established offline during
+  the follow-up, so those fields remain unchanged.
 
 The real run must start from a terminal outside Claude Code. A Claude Code session sets
 `ANTHROPIC_BASE_URL`, and the runner refuses any provider variable, as designed. From the

@@ -246,3 +246,10 @@ repository); a fail-closed push guard (#8).
   hitting a count limit without CLI overrides. A model test pins the four documented struct sizes
   on 64-bit builds so layout changes require revisiting the estimate. The store format and runtime
   behavior are unchanged.
+- 2026-11-05 (#68): resolve CodeGraph on PATH outside the workspace at run time and refuse a
+  resolved executable inside it; pass its absolute path to the Windows shell for probe, index
+  and MCP. Keep the limit note until the restart records its result, and read its last exact
+  count line after CLI text. Assert the report's whole restart row. The wiring smoke checks
+  every init event for only its condition's MCP server and LSP only in the lsp condition, including
+  servers from user plugins. Both task files still record harness as private: current visibility
+  could not be verified offline, so neither file is changed. No pilot or model call was run.
