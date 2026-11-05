@@ -1,8 +1,10 @@
 package mcpserver
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -103,5 +105,128 @@ func TestLatestThatStaysHeldIsGivenUpOnAfterAFewAttempts(t *testing.T) {
 	}
 	if pauses != latestAttempts-1 {
 		t.Errorf("paused %d times, want %d", pauses, latestAttempts-1)
+	}
+}
+
+func TestLatestRenameRetryErrors(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{syscall.ERROR_ACCESS_DENIED, true},
+		{errorSharingViolation, true},
+		{&os.PathError{Op: "open", Path: "latest", Err: syscall.ERROR_ACCESS_DENIED}, true},
+		{syscall.ERROR_FILE_NOT_FOUND, false},
+		{nil, false},
+	} {
+		if got := isSharingViolation(tc.err); got != tc.want {
+			t.Errorf("retry(%v) = %v, want %v", tc.err, got, tc.want)
+		}
+	}
+}
+
+func TestLatestReadAccessDeniedIsRetried(t *testing.T) {
+	for _, recover := range []bool{true, false} {
+		name := "persistent"
+		if recover {
+			name = "transient"
+		}
+		t.Run(name, func(t *testing.T) {
+			attempts, pauses := 0, 0
+			denied := &os.PathError{Op: "open", Path: "latest", Err: syscall.ERROR_ACCESS_DENIED}
+			s := &stores{
+				latest: func(string) (string, error) {
+					attempts++
+					if recover && attempts == 3 {
+						return commitA, nil
+					}
+					return "", denied
+				},
+				pause: func(d time.Duration) {
+					pauses++
+					if d != latestPause {
+						t.Errorf("pause = %v, want %v", d, latestPause)
+					}
+				},
+			}
+			commit, err := s.readLatest()
+			wantAttempts := latestAttempts
+			if recover {
+				wantAttempts = 3
+				if err != nil || commit != commitA {
+					t.Errorf("readLatest = %q, %v, want %q, nil", commit, err, commitA)
+				}
+			} else if !errors.Is(err, syscall.ERROR_ACCESS_DENIED) || commit != "" {
+				t.Errorf("readLatest = %q, %v, want empty commit and access denied", commit, err)
+			}
+			if attempts != wantAttempts || pauses != wantAttempts-1 {
+				t.Errorf("attempts=%d, pauses=%d, want %d, %d", attempts, pauses, wantAttempts, wantAttempts-1)
+			}
+		})
+	}
+}
+
+func TestRealLatestRenameErrors(t *testing.T) {
+	repo := t.TempDir()
+	writeStore(t, repo, commitA, sciptest.Index())
+	path := filepath.Join(repo, store.DirName, "latest")
+	counts := map[syscall.Errno]int{}
+	s := &stores{repo: repo, latest: func(repo string) (string, error) {
+		commit, err := store.Latest(repo)
+		if err == nil {
+			counts[0]++
+		} else {
+			var errno syscall.Errno
+			if errors.As(err, &errno) {
+				counts[errno]++
+			} else {
+				t.Errorf("unexpected latest error: %v", err)
+			}
+		}
+		return commit, err
+	}}
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	ready := make(chan struct{})
+	var writeErr error
+	renames, renameFailures := 0, 0
+	wg.Go(func() {
+		var signal sync.Once
+		defer signal.Do(func() { close(ready) })
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			tmp := path + ".replacement"
+			if err := os.WriteFile(tmp, []byte(commitA+"\n"), 0o644); err != nil {
+				writeErr = err
+				return
+			}
+			if err := os.Rename(tmp, path); err != nil {
+				renameFailures++
+			} else {
+				renames++
+			}
+			signal.Do(func() { close(ready) })
+			// Leave time for a retry to observe a completed replacement.
+			time.Sleep(time.Millisecond)
+		}
+	})
+	<-ready
+	for i := 0; i < 200; i++ {
+		if commit, err := s.readLatest(); err != nil || commit != commitA {
+			t.Errorf("readLatest iteration %d = %q, %v, want %q, nil", i, commit, err, commitA)
+		}
+	}
+	close(stop)
+	wg.Wait()
+	t.Logf("real rename reads: success=%d, ERROR_ACCESS_DENIED=%d, ERROR_SHARING_VIOLATION=%d; renames=%d, rename failures=%d", counts[0], counts[syscall.ERROR_ACCESS_DENIED], counts[errorSharingViolation], renames, renameFailures)
+	if writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if renames == 0 {
+		t.Error("no replacement succeeded during concurrent reads")
 	}
 }

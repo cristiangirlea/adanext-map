@@ -21,24 +21,28 @@ Stdout carries only the protocol. One line goes to stderr when the server starts
 stdin. It exits 1 when `--repo` is not a directory or the session fails, and 2 for a usage error.
 
 **Which store.** The server loads the store when it starts: `--commit`'s, or the one
-`.adamap/latest` names. Without `--commit`, every call compares `latest`'s modification time and
-size, and the modification time of the served store's `header.json`, with what they were at the last
-load, and loads again when they differ. The header's time is there so that indexing the same commit
+`.adamap/latest` names. Without `--commit`, every call compares `latest`'s file identity,
+modification time and size, and the modification time of the served store's `header.json`, with
+what they were at the last load, and loads again when they differ. The header's time is there so that indexing the same commit
 again is noticed even when `latest` keeps its size and, on a file system with a coarse clock, its
-time. So after `adamap index`, the next call answers from the new store, with no restart. With `--commit`, the
+time. When either file identity cannot be read, only the times and size are compared.
+File identity also detects a repaired failed store when both files retain their timestamps.
+So after `adamap index`, the next call answers from the new store, with no restart. With `--commit`, the
 server stays on that store. A server started before there is any store answers each call with a
 tool error saying to run `adamap index`, and picks the store up once it exists.
 
-On Windows, a call that opens `latest` at the instant `adamap index` renames a new one over it can
-get a sharing violation; the server tries that read up to five times, five milliseconds apart,
-before it counts as a failure.
+In one recorded test run on Windows, concurrent replacements of `latest` produced sharing violations; no
+access-denied errors were observed in the recorded run (see PLAN.md). The server retries both
+sharing violations and access-denied errors up to five times, five milliseconds apart, before a
+read counts as a failure. A deterministic test covers access-denied recovery and exhaustion of
+the retry limit; it does not establish what caused an access-denied error during a real rename.
 
 When `latest` changes and the store it names does not load (a damaged file, a format this adamap
 cannot read), the server keeps answering from the store it has, and `status` says the newer store
 failed to load and why. It remembers the `latest` it failed on, so later calls do not load the
-broken store again; it tries again when `latest` changes once more, as after `adamap index`. A
-server with no store loaded yet has nothing to fall back on: it answers each call with the error and
-tries again at the next.
+broken store again; it tries again when `latest` changes once more, including replacement with the
+same time and size, as after `adamap index`. A server with no store loaded yet has nothing to fall
+back on: it answers each call with the error and tries again at the next.
 
 ## The tools
 
@@ -82,8 +86,9 @@ The repository path in the `refresh` command is quoted for the shell that will r
 quotes for a POSIX shell (a `'` in the path is written `'\''`), and in single quotes for PowerShell on
 Windows (a `'` is doubled, as are the typographic single quotes PowerShell also reads as quotes).
 Nothing inside the quotes is special to either shell, so `$`, backticks, `"` and `;` are safe. A
-path of letters, digits and `_-./:` (and `\` on Windows) is left bare, as in the example above;
-`cmd.exe` is not catered for.
+path of letters, digits and `_-./:` is left bare, as in the example above. Paths holding `\`
+are quoted on Windows too, so Git Bash preserves the separators. `cmd.exe` is not catered for:
+its single quotes do not protect `&` or `|`; run the command in PowerShell or Git Bash.
 
 `status` is the only tool that runs git, once per call, and it does so with `--commit` too: a
 pinned server still reports HEAD and whether the tree has changes, and tells you to restart it

@@ -907,3 +907,19 @@ func TestSafeLinesQuotesOnlyTheLinesThatNeedIt(t *testing.T) {
 		t.Errorf("safeLines = %q, want %q", got, want)
 	}
 }
+
+func TestRustupHintPreservesIndexerExitError(t *testing.T) {
+	fakeIndexers(t, "rust-analyzer")
+	exit := &exec.ExitError{}
+	runIndexer = func(string, string, []string, io.Writer) error { return exit }
+	repo := t.TempDir()
+	writeFile(t, filepath.Join(repo, "Cargo.toml"), "")
+	_, _, err := runAndRead(repo, 1024, io.Discard)
+	var got *exec.ExitError
+	if !errors.As(err, &got) || got != exit {
+		t.Fatalf("lost indexer exit error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "rustup component add rust-analyzer") {
+		t.Fatalf("missing hint: %v", err)
+	}
+}

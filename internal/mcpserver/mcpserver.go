@@ -608,9 +608,9 @@ func posixArg(p string) string {
 
 // powershellArg is p as a PowerShell single-quoted string, in which every character is itself but
 // the quotes: PowerShell reads ' and the typographic quotes U+2018 to U+201B as one, and a doubled
-// one stands for itself. Backslash, the Windows separator, needs no quoting.
+// one stands for itself. Quoting backslashes also preserves them in Git Bash.
 func powershellArg(p string) string {
-	if p != "" && !strings.ContainsFunc(p, func(r rune) bool { return !plainRune(r) && r != '\\' }) {
+	if p != "" && !strings.ContainsFunc(p, func(r rune) bool { return !plainRune(r) }) {
 		return p
 	}
 	var b strings.Builder

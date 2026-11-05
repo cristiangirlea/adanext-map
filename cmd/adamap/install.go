@@ -195,6 +195,9 @@ func readMCPJSON(path string) ([]byte, fs.FileMode, error) {
 	return data, fi.Mode().Perm(), nil
 }
 
+// syncMCPFile lets tests exercise flush failures before the destination is replaced.
+var syncMCPFile = (*os.File).Sync
+
 // writeFileAtomic writes data to a temporary file beside path, flushes it, and renames it into place.
 func writeFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
@@ -211,7 +214,7 @@ func writeFileAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 		return err
 	}
 	// Flushed before the rename, so a crash cannot leave the new name pointing at an empty file.
-	if err = f.Sync(); err != nil {
+	if err = syncMCPFile(f); err != nil {
 		f.Close()
 		return err
 	}
