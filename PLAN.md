@@ -164,3 +164,13 @@ repository); a fail-closed push guard (#8).
   so a resume before the reset starts nothing, and each record keeps its last reading per window
   as `plan_meter`. A reading without `resetsAt` stops nothing, since it cannot be waited out.
   Issue #70's text was taken from the task brief, as `gh` had no valid credentials in this session.
+- 2026-11-05 (#44, follow-ups from #30): members are hidden from the map's output and symbol
+  budget but retain their reference edges. Test files carry a 0.25 factor after PageRank, chosen
+  from the harness run. Recognise `__tests__/`, `test_*.py`, `*_test.py` and `.test.mjs` alongside
+  the existing layouts; these extra test layouts were added ahead of a repository needing them.
+  `testdata/` alone is not a test layout. Keep kind-only filtering: `Property` hides a
+  function-valued class property too; do not infer callability from signatures.
+  Hide `Getter`: reading a property is a member operation covered by its enclosing type.
+  Hide `Setter`: writing a property is a member operation covered by its enclosing type.
+  Hide `Accessor`: property access is a member operation covered by its enclosing type.
+  Keep `Attribute` visible: SCIP uses it for a C++ attribute, not a class member.
