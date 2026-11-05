@@ -71,9 +71,10 @@ json_string() {
 }
 # unescape: JSON escapes decoded, a line at a time. An escaped backslash is set aside first, so it
 # cannot start another escape. A backslash or backtick before a newline joins the lines (sh and
-# PowerShell line continuations); other newlines stay. Control characters: spaces.
+# PowerShell line continuations); other newlines stay. CRLF and a lone CR are newlines (PowerShell
+# ends a line at a CR). Control characters: spaces.
 unescape() {
-  sed -e 's/\\\\/'"$soh"'/g' -e 's/\\r//g' \
+  sed -e 's/\\\\/'"$soh"'/g' -e 's/\\r\\n/\\n/g' -e 's/\\r/\\n/g' \
     -e 's/'"$soh"'\\n/ /g' -e 's/`\\n/ /g' -e 's/\\n/\'"$nl"'/g' \
     -e 's/\\t/ /g' -e 's/\\"/"/g' -e 's/\\\//\//g' -e 's/\\[bf]/ /g' \
     -e 's/\\u0026/\&/g' -e 's/\\u003[cC]/</g' -e 's/\\u003[eE]/>/g' -e "s/\\\\u0027/'/g" \
@@ -588,10 +589,27 @@ main() {
     exit 0
   fi
   cmd=$val
+  # The decoding below must give back what the shell will see. It reads a \u escape other than
+  # & < > ' as a space, and a backspace or form feed too, while the shell keeps the character in a
+  # word: a # after it is no comment, and escapes can spell a guarded word. Bash also keeps a CR in
+  # a word, where PowerShell ends a line. Claude Code escapes only rare control characters this
+  # way, so each such escape is refused; in the cwd, every escape but a quote or a slash is.
+  # Escaped backslashes are set aside first. A raw separator byte, which no valid JSON holds,
+  # would decode as a backslash: refuse it too.
+  case $input in *"$soh"*) refuse "the input holds a raw control character" ;; esac
   use_lang sh
   json_string tool_name && [ "$val" = PowerShell ] && use_lang ps
   cwd=
   json_string cwd && cwd=$val
+  case $cmd$cwd in
+    *\\*)
+      rest=$(printf '%s' "$cmd" | sed -e 's/\\\\//g' -e 's/\\u0026//g' -e 's/\\u0027//g' -e 's/\\u003[cCeE]//g')
+      case $rest in *\\[ubf]*) refuse "the command holds an escape the hook cannot read faithfully" ;; esac
+      case $lang$rest in sh*\\r*) refuse "the command holds a carriage return, which Bash keeps in a word" ;; esac
+      rest=$(printf '%s' "$cwd" | sed -e 's/\\\\//g' -e 's|\\["/]||g')
+      case $rest in *\\*) refuse "the cwd holds an escape the hook cannot read faithfully" ;; esac
+      ;;
+  esac
   case $cwd$cmd in
     *\\*)
       # Both through one sed; the x keeps a trailing empty line.
@@ -615,7 +633,9 @@ if json_string command; then
     *) exit 0 ;;
   esac
 fi
-soh=$(printf '\001')
+# The word separator is \037, not \001: bash 3.2, macOS's sh, uses \001 internally and drops it
+# from IFS and expansions, so words never split and a git push went unseen.
+soh=$(printf '\037')
 # A failure of the hook itself fails closed for the commands it guards, open for the rest.
 (main)
 status=$?
