@@ -164,6 +164,29 @@ repository); a fail-closed push guard (#8).
   so a resume before the reset starts nothing, and each record keeps its last reading per window
   as `plan_meter`. A reading without `resetsAt` stops nothing, since it cannot be waited out.
   Issue #70's text was taken from the task brief, as `gh` had no valid credentials in this session.
+- 2026-11-05 (#73): the push guard and its tests are adanext-exec's merged files, unchanged; the
+  comparison found no map-only behaviour to keep. `macos-latest` joins the public, hosted CI matrix
+  so macOS's `sh` (bash 3.2) runs the hook tests. Escapes the hook cannot decode faithfully are
+  refused in the command and the cwd. adanext-exec #23, #24 and #25 stay open and apply here too.
+- 2026-11-05 (#43): the indexer's temporary output directory is made absolute before the indexer
+  runs in the repository, with tests for a relative temporary directory and for cleanup when the
+  indexer panics. A hard kill can still leave `adamap-index-*` directories (docs/index.md); removing
+  stale ones at start would be new behaviour and is not done.
+- 2026-11-05 (#38): colons stay refused on every OS, to avoid Windows alternate data streams and
+  keep stores portable; this drops some names legal on Linux and macOS (Go modules already forbid
+  them), and the skipped-document count and sampled paths show it. No runtime or store change. A
+  validation change and the fixtures it invalidates go in one commit; the merged device-names
+  history is not rewritten.
+- 2026-11-05 (#44, follow-ups from #30): members are hidden from the map's output and symbol
+  budget but retain their reference edges. Test files carry a 0.25 factor after PageRank, chosen
+  from the harness run. Recognise `__tests__/`, `test_*.py`, `*_test.py` and `.test.mjs` alongside
+  the existing layouts; these extra test layouts were added ahead of a repository needing them.
+  `testdata/` alone is not a test layout. Keep kind-only filtering: `Property` hides a
+  function-valued class property too; do not infer callability from signatures.
+  Hide `Getter`: reading a property is a member operation covered by its enclosing type.
+  Hide `Setter`: writing a property is a member operation covered by its enclosing type.
+  Hide `Accessor`: property access is a member operation covered by its enclosing type.
+  Keep `Attribute` visible: SCIP uses it for a C++ attribute, not a class member.
 - 2026-11-05 (#56): keep CreateTemp's private 0600 mode for every new store file, including
   `.gitignore`, and use 0600 for its exclusive-create fallback. Remove chmod so the umask is
   respected and filesystems without permission bits can write stores. Quote only unexpected JSON
