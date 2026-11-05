@@ -143,7 +143,7 @@ current_branch() {
 # the command around it gets a $ where it was, as what it adds cannot be seen. A comment is skipped,
 # and so is a text heredoc's body; shell stdin and expanding bodies with substitutions are scanned.
 check_cmd() {
-  cs=$1 cur= md=o stk= dirstk= lastc= hdq=
+  cs=$1 cur= md=o stk= dirstk= lastc= hdq= pipein=0
   hdline=${cs%%"$nl"*}
   while [ -n "$cs" ]; do
     case $md in
@@ -167,6 +167,17 @@ check_cmd() {
       o@) if [ "$lang" = ps ]; then ps_here; else cur=$cur$ch; fi ;;
       o\[) case $stk in b*) refuse "nested legacy arithmetic brackets cannot be read faithfully" ;; esac; case $lang$cur in sh*'$') sub_start b ;; *) cur=$cur$ch ;; esac ;;
       o\]) case $stk in b*) check_part "$cur"; sub_end ;; *) cur=$cur$ch ;; esac ;;
+      o\{)
+        # Keep a parameter expansion in its command word so its arguments remain visible.
+        case $cur in
+          *'$')
+            pv=${cs%%\}*}
+            case $pv in
+              '' | [0-9]* | *[!a-zA-Z0-9_]*) check_part "$cur"; cur= pipein=0 ;;
+              *) case $cs in *'}'*) cur=$cur'{'$pv'}' cs=${cs#*\}} ;; *) check_part "$cur"; cur= pipein=0 ;; esac ;;
+            esac ;;
+          *) check_part "$cur"; cur= pipein=0 ;;
+        esac ;;
 
       o\") cur=$cur$ch md=d ;;
       [od]\\ | [od]\` | [od]^)
@@ -204,8 +215,9 @@ check_cmd() {
           sh\<\<*) cur=$cur'<<' cs=${cs#??} ;; # <<<, a here-string
           sh\<*) cs=${cs#?}; cur=$cur'<'; case $stk in [ab]*) ;; *) heredoc_start ;; esac ;;
         esac ;;
-      o"$nl") check_part "$cur"; cur=; heredoc_skip; hdline=${cs%%"$nl"*} ;;
-      *) check_part "$cur"; cur= ;;
+      o"$nl") check_part "$cur"; [ -z "$cur" ] || pipein=0; cur=; heredoc_skip; hdline=${cs%%"$nl"*} ;;
+      o\|) check_part "$cur"; cur= pipein=1 ;;
+      *) check_part "$cur"; cur= pipein=0 ;;
     esac
     lastc=$ch
   done
@@ -283,12 +295,15 @@ heredoc_skip() {
   # A consumer after the redirection or in another pipeline stage can execute the body.
   hrun=
   if [ -n "$hdq" ]; then
+    # A continued consumer can execute the body beyond the first line we inspect.
+    htline=${hdline%"${hdline##*[![:space:]]}"}
+    case $htline in *'|' | *'&&' | *'\') refuse "a continued heredoc consumer cannot be read faithfully" ;; esac
     htline=$(printf '%s' "$hdline" | tr '|;&()<>' '        ')
     words "$htline"
     while [ -n "$wl" ]; do
       ht=${wl%%"$soh"*} wl=${wl#*"$soh"}
       prog "$ht"
-      case $w in ssh) hrun=r ;; bash | sh | zsh | dash | ksh | ash | mksh | pwsh | powershell) [ "$hrun" = r ] || hrun=x ;; esac
+      case $w in ssh) hrun=r ;; source | . | bash | sh | zsh | dash | ksh | ash | mksh | pwsh | powershell) [ "$hrun" = r ] || hrun=x ;; esac
     done
   fi
   while [ -n "$hdq" ]; do
@@ -340,10 +355,12 @@ check_part() {
           =*) w=${2#=}; shift 2; set -- "$w" "$@"; continue ;;
         esac
         case $1 in *=?*) w=${1#*=}; shift; set -- "$w" "$@"; continue ;; *=) shift; continue ;; esac
+        # A variable executor can interpret stdin the hook cannot resolve.
+        case $pipein$hdq in 0) ;; *) refuse "a variable names a program fed by a pipe or heredoc" ;; esac
         # A variable names the program: refuse when what follows reads like one of ours.
         for t; do
           lower "$t"
-          case $lc in push | tag | release | merge) refuse "a variable names the program in: $*" ;; esac
+          case $lc in -c | push | tag | release | merge) refuse "a variable names the program in: $*" ;; esac
         done
         return 0 ;;
       *=*) shift; continue ;; # NAME=value before a command
@@ -436,6 +453,8 @@ change_dir() {
 check_git() {
   while [ $# -gt 0 ]; do
     case $1 in
+      '<' | '<<' | '<<-' | '>' | '>>') shift; [ $# -gt 0 ] && shift ;;
+      '<'* | '>'*) shift ;;
       -C | -c | --git-dir | --work-tree | --namespace | --config-env | --attr-source)
         [ $# -ge 2 ] || return 0
         gopts=$gopts$1$soh$2$soh
@@ -445,7 +464,8 @@ check_git() {
       *) break ;;
     esac
   done
-  [ $# -gt 0 ] || return 0
+  # xargs can supply a missing subcommand from stdin.
+  [ $# -gt 0 ] || { [ "$fromstdin" = 1 ] && refuse "xargs hides the subcommand"; return 0; }
   lower "$1"
   sub=$lc
   shift
@@ -608,12 +628,15 @@ check_bare() {
 check_gh() {
   while [ $# -gt 0 ]; do
     case $1 in
+      '<' | '<<' | '<<-' | '>' | '>>') shift; [ $# -gt 0 ] && shift ;;
+      '<'* | '>'*) shift ;;
       -R | --repo) shift; [ $# -gt 0 ] && shift ;;
       '' | -*) shift ;;
       *) break ;;
     esac
   done
-  [ $# -gt 0 ] || return 0
+  # xargs can supply a missing subcommand from stdin.
+  [ $# -gt 0 ] || { [ "$fromstdin" = 1 ] && refuse "xargs hides the subcommand"; return 0; }
   lower "$1"
   sub=$lc
   shift
@@ -660,6 +683,8 @@ check_api() {
   ep=$lc
   case $ep in *://*) ep=${ep#*://}; ep=${ep#*/} ;; esac
   while :; do case $ep in /*) ep=${ep#/} ;; *) break ;; esac; done
+  ep=${ep%%[?#]*}
+  while :; do case $ep in */) ep=${ep%/} ;; *) break ;; esac; done
   case $ep in *graphql) graphql=1 ;; *) graphql= ;; esac
   if [ -n "$graphql" ]; then
     [ "$fromstdin" = 1 ] && refuse "gh api under xargs takes arguments the hook cannot see"
@@ -712,6 +737,8 @@ main() {
       case $rest in *\\*) refuse "the cwd holds an escape the hook cannot read faithfully" ;; esac
       ;;
   esac
+  # Joining a continued heredoc line would hide the consumer boundary before parsing.
+  case $cmd in *'<<'*'\\\n'*) refuse "a continued heredoc consumer cannot be read faithfully" ;; esac
   case $cwd$cmd in
     *\\*)
       # Both through one sed; the x keeps a trailing empty line.

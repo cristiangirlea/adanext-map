@@ -253,4 +253,7 @@ repository); a fail-closed push guard (#8).
   data consumers or assignments without code execution; read cmd hashes/caret escapes,
   restore subshell directories, normalize GraphQL endpoint spellings and refuse mutations and
   hidden queries, and allow read-only tag listings and release list/view. Unsupported escapes and dynamic or remote state fail closed;
-  regression cases cover refused and allowed forms.
+  regression cases cover refused and allowed forms. Refuse continued heredoc consumer lines,
+  scan source/dot heredocs, strip GraphQL query/fragment suffixes and trailing slashes, require
+  visible git/gh subcommands under xargs, and refuse variable executors with -c or stdin from a
+  pipe/heredoc. Pin PowerShell message/body here-string refusals and document file arguments.

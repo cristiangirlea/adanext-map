@@ -423,6 +423,38 @@ refused "Unknown-Consumer @'\\ngit push origin main\\n'@" . PowerShell
 refused 'gh release view v1 && gh release delete v1'
 refused 'git tag -l x && git push origin main'
 
+# Continued heredoc consumers cannot hide executable input on a later line.
+refused "cat <<'EOF' |\ngit push origin main\nEOF\nbash"
+refused "cat <<'EOF' ||  \ngit push origin main\nEOF\nbash"
+refused "cat <<'EOF' &&  \ngit push origin main\nEOF\nbash"
+refused "cat <<'EOF' \\\\\ngit push origin main\nEOF\nbash"
+refused "cat <<'EOF' \\  \ngit push origin main\nEOF\nbash"
+# Sourcing stdin executes a quoted heredoc too.
+refused "source /dev/stdin <<'EOF'\ngit push origin main\nEOF"
+refused ". /dev/stdin <<'EOF'\ngit push origin main\nEOF"
+# GraphQL suffixes cannot disguise mutations.
+refused "gh api 'graphql?x=1' -f query='mutation{createRef(input:{}){clientMutationId}}'"
+refused "gh api graphql/ -f query='mutation{createRef(input:{}){clientMutationId}}'"
+refused "gh api 'graphql/#fragment' -f query='mutation{createRef(input:{}){clientMutationId}}'"
+allowed "gh api 'graphql/?x=1' -f query='query{viewer{login}}'"
+# xargs may supply the subcommand from stdin.
+refused 'echo push origin main | xargs git'
+refused "xargs git <<'EOF'\npush origin main\nEOF"
+refused "cat <<'EOF' | xargs git\npush origin main\nEOF"
+refused 'echo pr merge 5 --auto | xargs gh'
+refused 'echo push origin main | xargs git -C .'
+allowed 'git ls-files | xargs grep foo'
+# Variable executors cannot hide shell commands or executable stdin.
+refused '$SHELL -c \"git push origin main\"'
+refused "cat <<'EOF' | \$SHELL\ngit push origin main\nEOF"
+refused '${SHELL} -c \"git push origin main\"'
+refused '\"$SHELL\" -c \"git push origin main\"'
+refused "\$SHELL <<'EOF'\ngit push origin main\nEOF"
+allowed '$EDITOR file.txt'
+# Message and body files are required instead of PowerShell here-strings.
+refused "git commit -m @'\ntext\n'@" . PowerShell
+refused "gh pr create --body @'\ntext\n'@" . PowerShell
+
 # settings.json runs the hook before every Bash and PowerShell call.
 settings="$(dirname "$hook")/../settings.json"
 tr -d ' \t\r\n' < "$settings" |

@@ -17,10 +17,15 @@ separator is refused too. Literal backslashes followed by escape-like text remai
 
 The parser treats `<<` in `$[...]`, `$((...))` and `((...))` arithmetic as a shift,
 including letter operands; nested brackets in `$[...]` are refused. Unquoted `let x=1<<n`
-uses heredoc syntax. At the end of a heredoc command line, any shell or `ssh` word, including
+uses heredoc syntax. At the end of a heredoc command line, any shell, `source`, `.`, or `ssh` word, including
 a consumer after the delimiter or in another pipeline stage, makes the body executable
 even with quoted delimiters. Shell bodies are scanned as commands, and `ssh` bodies as remote
 commands. Remote pushes are refused when repository state is needed: local Git configuration cannot resolve a remote destination.
+Heredoc lines ending in `|`, `||`, `&&` or a backslash after trimming trailing blanks are refused
+because a consumer on a later line cannot be resolved. Variable command words (`$X`, `${X}` or
+`"$X"`) are refused with `-c` or when fed by a pipe or heredoc; `$EDITOR file.txt` remains allowed.
+`xargs git` and `xargs gh` must name their subcommand on the command line, including after global
+options; an unseen subcommand from stdin is refused. `git ls-files | xargs grep foo` remains allowed.
 Text heredocs remain text; unquoted bodies containing substitutions are inspected as before.
 Directory changes inside parentheses and command substitutions are restored at the closing token.
 
@@ -30,9 +35,13 @@ refused, as are dangling carets and caret line continuations. Literal PowerShell
 are accepted only with known data consumers (`Write-Output`, `Write-Host`, `Set-Content`,
 `Out-File`, `Add-Content`) or variable assignments of data. Code execution syntax, unknown
 consumers, expanding double here-strings, and malformed delimiters are refused when inspected.
+Here-strings used as commit messages or PR bodies are refused too: use a message or body file
+with `git commit -F file` or `gh pr create --body-file file` (and `--body-file` for other gh commands
+that accept it).
 
 GraphQL endpoints are matched case-insensitively after removing a URL scheme, host and leading
-slashes; any endpoint ending in `graphql`, including `api/graphql`, gets the same checks.
+slashes, cutting at the first `?` or `#`, and stripping trailing `/`; any endpoint ending in
+`graphql`, including `api/graphql`, gets the same checks.
 GraphQL API calls must contain a visible read-only query. Mutations (including `createRef` and
 `updateRef`), query files, and hidden queries are refused even with `--method GET`.
 `git tag -l` and `git tag --list` allow patterns and known read-only formatting/sorting options;
