@@ -48,11 +48,15 @@ first: a label for its kind, then its detail.
 
 Files are in rank order. A file that defines nothing the map shows is left out, and so are local
 symbols, namespaces (packages, modules) and parameters. Fields and enum members (the SCIP kinds
-`Field`, `StaticField`, `StaticDataMember`, `EnumMember`, `Property` and `StaticProperty`) are not
+`Field`, `StaticField`, `StaticDataMember`, `EnumMember`, `Property`, `StaticProperty`, `Getter`,
+`Setter` and `Accessor`) are not
 shown either: the line of the struct, class or enum that holds them is the one to read, and a
 member would take a line of the budget from a symbol that matters more. A file that defines only
 members is left out. References to a member still link the files, so they count in the ranking
 (see below); `adamap find`, `outline` and `refs` still list members.
+Filtering uses the SCIP kind only: a class property holding a function is hidden when indexed as
+`Property`, even with a callable signature. Symbols indexed as `Method` remain visible.
+`Attribute` remains visible: SCIP uses it for a C++ attribute, not a class member.
 
 A path is printed quoted, so each line stays one line and shows what it holds, when it holds a
 control or format character (bidi overrides, zero-width characters) or a line or paragraph
@@ -78,8 +82,10 @@ point: `a` + U+200D + `b` reads as `a b`. The `--json` form keeps the original (
    rises but does not always lead. When no file matches, the map is the unpersonalised one.
 4. **Test files.** The rank of a test file is multiplied by 0.25 once PageRank is done, so tests
    take a smaller share of the budget than the code they test. A test file is one named
-   `*_test.go`, `*.test.ts` or `*.spec.ts` (also `.tsx`, `.js`, `.jsx`), or under a directory named
-   `tests` or `test` at any depth. This is by path only: a Rust `#[cfg(test)]` module inside a
+   `*_test.go`, `test_*.py`, `*_test.py`, `*.test.mjs`, `*.test.ts` or `*.spec.ts` (also `.tsx`, `.js`,
+   `.jsx`), or under a directory named `tests`, `test` or `__tests__` at any depth. `testdata/` alone
+   does not mark a file as a test; a matching filename or another matching directory still does.
+   This is by path only: a Rust `#[cfg(test)]` module inside a
    source file is not told apart. A test file's references still count in step 1, so the code it
    exercises keeps the rank those references give it. The ranks `rank` shows (JSON below) sum to 1
    only when no file is a test file.
