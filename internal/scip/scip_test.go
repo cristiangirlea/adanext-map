@@ -2,6 +2,7 @@ package scip
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	scippb "github.com/scip-code/scip/bindings/go/scip"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/cristiangirlea/adanext-map/internal/model"
 	"github.com/cristiangirlea/adanext-map/internal/scip/sciptest"
@@ -377,7 +380,7 @@ func TestConvertSkipsADocumentOutsideTheProject(t *testing.T) {
 }
 
 func TestConvertSkipsEveryKindOfPathOutsideTheProject(t *testing.T) {
-	paths := []string{"/etc/passwd", `\x.go`, `C:\Windows\x.go`, "C:x.go", `\server\share\x.go`,
+	paths := []string{"/etc/passwd", `\x.go`, `C:\Windows\x.go`, `\server\share\x.go`,
 		`\\server\share\x.go`, `\..`, `a\..\..\b`, "../x.go", "pkg/../../x.go", `pkg\..\..\x.go`,
 		// Paths that clean to the project root itself name no file.
 		"pkg/..", ".", `pkg\..`}
@@ -473,25 +476,23 @@ func TestDecodeRefusesMoreSymbolsThanTheLimitOnceDefinitionsAreConverted(t *test
 }
 
 func TestConvertSkipsAPathWindowsCannotHold(t *testing.T) {
-	paths := []string{"a.go:x", "dir/a:x.go", "a\x00b.go", "a\nb.go", "a\x7fb.go",
-		"nul", "con.txt", "pkg/aux.go", `pkg\com1.go`, "LPT9.go", "nul.", "com².go"}
-	x := sciptest.Index()
+	paths := []string{"aux.go", "pkg/com1.go", "a:x.go", "a.go:x", "dir/a:x.go", "a\x00b.go", "a\nb.go", "a\x7fb.go",
+		"nul", "con.txt", "pkg/aux.go", `pkg\com1.go`, "LPT9.go", "nul.", "com\u00b2.go"}
 	for _, p := range paths {
-		x.Documents = append(x.Documents, &scippb.Document{RelativePath: p})
+		t.Run(strconv.Quote(p), func(t *testing.T) {
+			x := sciptest.Index()
+			x.Documents = append(x.Documents, &scippb.Document{RelativePath: p})
+			got, skipped, err := Convert(x)
+			if err != nil || skipped.Count != 1 || !slices.Equal(skipped.Paths, []string{strconv.Quote(p)}) {
+				t.Fatalf("Convert: skipped %+v, err %v, want one quoted skip", skipped, err)
+			}
+			diff(t, got, wantFixture())
+		})
 	}
-	got, skipped, err := Convert(x)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if skipped.Count != len(paths) {
-		t.Errorf("skipped %d, want %d", skipped.Count, len(paths))
-	}
-	diff(t, got, wantFixture())
 }
 
 // An index is untrusted, and its text reaches a terminal in an error: a path holding a
-// right-to-left override must come out quoted, never raw. (A path with a control character such as
-// ESC is skipped before any error can name it, so the override is what reaches this far.)
+// right-to-left override must come out quoted, never raw.
 func TestConvertErrorsQuoteTheDocumentPath(t *testing.T) {
 	const hostile = "a\u202egp.go"
 	cases := []struct {
@@ -517,5 +518,336 @@ func TestConvertErrorsQuoteTheDocumentPath(t *testing.T) {
 				t.Fatalf("err = %q, want the path quoted as %s", err, strconv.Quote(hostile))
 			}
 		})
+	}
+}
+
+func TestDecodeStopsAtTheFirstDocumentOverTheLimit(t *testing.T) {
+	x := &scippb.Index{Documents: []*scippb.Document{{RelativePath: "a.go"}, {RelativePath: "b.go"}}}
+	data := sciptest.Bytes(t, x)
+	data = protowire.AppendTag(data, 2, protowire.BytesType)
+	data = protowire.AppendBytes(data, []byte{0xff})
+	_, _, err := decode(data, model.Limits{Documents: 1, Symbols: 10, Occurrences: 10, Relationships: 10})
+	if err == nil || !strings.Contains(err.Error(), "limit of 1 documents") {
+		t.Fatalf("err = %v, want the document limit before decoding the later malformed document", err)
+	}
+}
+
+func wireOrderIndex(t testing.TB) []byte {
+	t.Helper()
+	x := sciptest.Index()
+	x.ExternalSymbols = append(x.ExternalSymbols, &scippb.SymbolInformation{Symbol: sciptest.Add, DisplayName: "external name"})
+	x.Documents = append(x.Documents, &scippb.Document{RelativePath: "pkg/a.go", Occurrences: []*scippb.Occurrence{{Symbol: sciptest.Add, Range: []int32{20, 0, 3}}}}, &scippb.Document{RelativePath: "../outside.go"})
+	data := sciptest.Bytes(t, &scippb.Index{ExternalSymbols: x.ExternalSymbols})
+	data = append(data, sciptest.Bytes(t, &scippb.Index{Documents: x.Documents})...)
+	data = append(data, sciptest.Bytes(t, &scippb.Index{Metadata: &scippb.Metadata{ToolInfo: &scippb.ToolInfo{Name: x.Metadata.ToolInfo.Name}}})...)
+	data = append(data, sciptest.Bytes(t, &scippb.Index{Metadata: &scippb.Metadata{ToolInfo: &scippb.ToolInfo{Version: x.Metadata.ToolInfo.Version}, ProjectRoot: x.Metadata.ProjectRoot}})...)
+	data = protowire.AppendTag(data, 100, protowire.BytesType)
+	data = protowire.AppendBytes(data, []byte("unknown field"))
+	return data
+}
+
+func TestDecodePreservesWireOrderCompatibility(t *testing.T) {
+	data := wireOrderIndex(t)
+	var x scippb.Index
+	if err := proto.Unmarshal(data, &x); err != nil {
+		t.Fatal(err)
+	}
+	want, skipped, err := Convert(&x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, gotSkipped, err := Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff(t, got, want)
+	if !reflect.DeepEqual(gotSkipped, skipped) {
+		t.Fatalf("skipped = %+v, want %+v", gotSkipped, skipped)
+	}
+}
+
+func TestDecodeRefusesInvalidFieldLengths(t *testing.T) {
+	for _, data := range [][]byte{append(protowire.AppendVarint(nil, uint64(protowire.MaxValidNumber+1)<<3), 0), {0x12, 0x80}, {0x12, 0xff, 0xff, 0xff, 0xff, 0x7f}, {0x12, 2, 0}, {0x12, 1, 0xff}} {
+		if _, _, err := Decode(data); err == nil {
+			t.Fatalf("accepted malformed index %x", data)
+		}
+	}
+}
+
+func TestDecodeAcceptsAnOverlongFieldTag(t *testing.T) {
+	data := sciptest.Bytes(t, sciptest.Index())
+	data = append([]byte{data[0] | 0x80, 0}, data[1:]...)
+	got, _, err := Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff(t, got, wantFixture())
+}
+
+func TestDecodeCountsItemsAcrossSkippedAndMergedDocuments(t *testing.T) {
+	for _, kind := range []string{"symbols", "occurrences", "relationships"} {
+		t.Run(kind, func(t *testing.T) {
+			x := &scippb.Index{}
+			for _, path := range []string{"a.go", "a.go", "../outside.go"} {
+				d := &scippb.Document{RelativePath: path}
+				switch kind {
+				case "symbols":
+					d.Symbols = []*scippb.SymbolInformation{{Symbol: "s"}}
+				case "occurrences":
+					d.Occurrences = []*scippb.Occurrence{{Range: []int32{0, 0, 1}}}
+				case "relationships":
+					d.Symbols = []*scippb.SymbolInformation{{Symbol: "s", Relationships: []*scippb.Relationship{{Symbol: "t"}}}}
+				}
+				x.Documents = append(x.Documents, d)
+			}
+			lim := model.Limits{Documents: 3, Symbols: 3, Occurrences: 3, Relationships: 3}
+			switch kind {
+			case "symbols":
+				lim.Symbols = 2
+			case "occurrences":
+				lim.Occurrences = 2
+			case "relationships":
+				lim.Relationships = 2
+			}
+			_, _, err := decode(sciptest.Bytes(t, x), lim)
+			if err == nil || !strings.Contains(err.Error(), "limit of 2 "+kind) {
+				t.Fatalf("err = %v, want cumulative %s limit", err, kind)
+			}
+		})
+	}
+}
+
+func TestDecodeMergesExplicitlyEmptyMetadataFields(t *testing.T) {
+	data := sciptest.Bytes(t, sciptest.Index())
+	tool := protowire.AppendTag(nil, 1, protowire.BytesType)
+	tool = protowire.AppendString(tool, "")
+	metadata := protowire.AppendTag(nil, 2, protowire.BytesType)
+	metadata = protowire.AppendBytes(metadata, tool)
+	data = protowire.AppendTag(data, 1, protowire.BytesType)
+	data = protowire.AppendBytes(data, metadata)
+	got, _, err := Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := wantFixture()
+	want.Tool.Name = ""
+	diff(t, got, want)
+}
+
+func TestDecodeVisitorErrorsKeepTheirMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		bad   *scippb.Document
+		limit int
+		want  string
+	}{
+		{"limit", &scippb.Document{RelativePath: "c.go"}, 2, "the SCIP index has more than the limit of 2 documents"},
+		{"conversion", &scippb.Document{RelativePath: "c.go", Symbols: []*scippb.SymbolInformation{{}}}, 3, `document "c.go": symbol information 0 has no symbol`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			x := &scippb.Index{Documents: []*scippb.Document{{RelativePath: "a.go"}, {RelativePath: "b.go"}, tc.bad}}
+			idx, skipped, err := decode(sciptest.Bytes(t, x), model.Limits{Documents: tc.limit, Symbols: 10, Occurrences: 10, Relationships: 10})
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+			if idx != nil || skipped.Count != 0 {
+				t.Fatal("failed decoding returned a partial result")
+			}
+		})
+	}
+}
+
+func TestDecodeAcceptsAnOverlongDocumentLength(t *testing.T) {
+	data := overlongDocumentLength(t)
+	var x scippb.Index
+	if err := proto.Unmarshal(data, &x); err != nil {
+		t.Fatal(err)
+	}
+	want, _, err := Convert(&x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff(t, got, want)
+}
+
+func overlongDocumentLength(t testing.TB) []byte {
+	t.Helper()
+	payload, err := proto.Marshal(&scippb.Document{RelativePath: "a.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append([]byte{0x12, byte(len(payload)) | 0x80, 0}, payload...)
+}
+
+func TestDecodeKnownFieldsWithOtherWireTypes(t *testing.T) {
+	for num := protowire.Number(1); num <= 3; num++ {
+		for _, typ := range []protowire.Type{protowire.VarintType, protowire.Fixed32Type, protowire.Fixed64Type, protowire.StartGroupType} {
+			data := protowire.AppendTag(nil, num, typ)
+			switch typ {
+			case protowire.VarintType:
+				data = protowire.AppendVarint(data, 1)
+			case protowire.Fixed32Type:
+				data = protowire.AppendFixed32(data, 1)
+			case protowire.Fixed64Type:
+				data = protowire.AppendFixed64(data, 1)
+			case protowire.StartGroupType:
+				data = protowire.AppendTag(data, num, protowire.EndGroupType)
+			}
+			data = append(data, sciptest.Bytes(t, sciptest.Index())...)
+			var x scippb.Index
+			if err := proto.Unmarshal(data, &x); err != nil {
+				t.Fatal(err)
+			}
+			want, skipped, err := Convert(&x)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, gotSkipped, err := Decode(data)
+			if err != nil {
+				t.Fatalf("field %d type %d: %v", num, typ, err)
+			}
+			diff(t, got, want)
+			if !reflect.DeepEqual(gotSkipped, skipped) {
+				t.Fatal("skipped differs")
+			}
+		}
+	}
+}
+
+func TestConvertRefusesDifferentSpellingsOfOnePath(t *testing.T) {
+	for _, spelling := range []string{`pkg\a.go`, "pkg/./a.go", "pkg//a.go", "pkg/sub/../a.go"} {
+		t.Run(spelling, func(t *testing.T) {
+			for _, reverse := range []bool{false, true} {
+				x := sciptest.Index()
+				alias := &scippb.Document{RelativePath: spelling,
+					Symbols:     []*scippb.SymbolInformation{{Symbol: "local 0", DisplayName: "different"}},
+					Occurrences: []*scippb.Occurrence{{Symbol: "local 0", Range: []int32{0, 0, 1}, SymbolRoles: int32(scippb.SymbolRole_Definition)}}}
+				x.Documents = append(x.Documents, alias)
+				if reverse {
+					x.Documents[0], x.Documents[2] = x.Documents[2], x.Documents[0]
+				}
+				if _, _, err := Convert(x); err == nil || !strings.Contains(err.Error(), "different spellings") {
+					t.Fatalf("err = %v, want a path spelling collision", err)
+				}
+			}
+		})
+	}
+}
+
+func TestConvertDoesNotValidateSkippedContents(t *testing.T) {
+	for _, d := range []*scippb.Document{
+		{RelativePath: "../symbol.go", Symbols: []*scippb.SymbolInformation{{}}},
+		{RelativePath: "../range.go", Occurrences: []*scippb.Occurrence{{Symbol: "s", Range: []int32{-1, 0, 1}}}},
+		{RelativePath: "../enclosing.go", Occurrences: []*scippb.Occurrence{{Symbol: "s", Range: []int32{0, 0, 1}, EnclosingRange: []int32{1}}}},
+	} {
+		x := sciptest.Index()
+		x.Documents = append(x.Documents, d)
+		got, skipped, err := Convert(x)
+		if err != nil || skipped.Count != 1 {
+			t.Fatalf("skipped %+v, err %v", skipped, err)
+		}
+		diff(t, got, wantFixture())
+	}
+}
+
+func TestConvertKeepsReferencesToASkippedDefinition(t *testing.T) {
+	const symbol = "outside."
+	for _, external := range []bool{false, true} {
+		x := &scippb.Index{Documents: []*scippb.Document{
+			{RelativePath: "../outside.go", Symbols: []*scippb.SymbolInformation{{Symbol: symbol, DisplayName: "discarded"}},
+				Occurrences: []*scippb.Occurrence{{Symbol: symbol, Range: []int32{0, 0, 1}, SymbolRoles: int32(scippb.SymbolRole_Definition)}}},
+			{RelativePath: "kept.go", Occurrences: []*scippb.Occurrence{{Symbol: symbol, Range: []int32{1, 0, 1}}}},
+		}}
+		want := &model.Index{Documents: []model.Document{{Path: "kept.go", Occurrences: []model.Occurrence{{Symbol: symbol, Range: rng(1, 0, 1, 1), Roles: model.RoleReference}}}}}
+		if external {
+			x.ExternalSymbols = []*scippb.SymbolInformation{{Symbol: symbol, DisplayName: "external"}}
+			want.Symbols = []model.Symbol{{ID: symbol, DisplayName: "external"}}
+		}
+		got, skipped, err := Convert(x)
+		if err != nil || skipped.Count != 1 {
+			t.Fatalf("skipped %+v, err %v", skipped, err)
+		}
+		diff(t, got, want)
+	}
+}
+
+func TestSkippedPathsAreBoundedAndQuoted(t *testing.T) {
+	for _, p := range []string{"../short.go", "../" + strings.Repeat("x", 194), "../" + strings.Repeat("x", 195), "../" + strings.Repeat("x", 196), "../" + strings.Repeat("x", 1000), "../" + strings.Repeat("\x1b\n\"\\", 1000), "../" + strings.Repeat("\u754c", 1000), "../" + strings.Repeat("\xff", 1000)} {
+		var skipped Skipped
+		skipped.add(p)
+		q := skipped.Paths[0]
+		if len(q) > 200 {
+			t.Fatalf("quoted path is %d bytes, want at most 200", len(q))
+		}
+		raw, err := strconv.Unquote(q)
+		if err != nil {
+			t.Fatalf("invalid quoted path %q: %v", q, err)
+		}
+		if len(strconv.Quote(p)) <= 200 {
+			if raw != p {
+				t.Fatalf("short path changed to %q", raw)
+			}
+		} else if !strings.HasSuffix(raw, "...") || !strings.HasPrefix(p, strings.TrimSuffix(raw, "...")) {
+			t.Fatalf("truncated path %q is not a marked prefix", raw)
+		}
+	}
+}
+
+func TestConvertClassifiesPathsBeforeDiscardingContents(t *testing.T) {
+	for _, tc := range []struct {
+		path      string
+		wantError string
+	}{
+		{"x:y.go", ""},
+		{`\\server\share\x.go`, ""},
+		{`\\?\C:\x`, ""},
+		{"pkg/..", ""},
+		{"", "document 2: no path"},
+	} {
+		t.Run(strconv.Quote(tc.path), func(t *testing.T) {
+			x := sciptest.Index()
+			x.Documents = append(x.Documents, &scippb.Document{RelativePath: tc.path,
+				Symbols: []*scippb.SymbolInformation{{}}})
+			got, skipped, err := Convert(x)
+			if tc.wantError != "" {
+				if err == nil || err.Error() != tc.wantError || got != nil || skipped.Count != 0 {
+					t.Fatalf("Convert = %v, %+v, %v, want fatal %q", got, skipped, err, tc.wantError)
+				}
+				return
+			}
+			if err != nil || skipped.Count != 1 || !slices.Equal(skipped.Paths, []string{strconv.Quote(tc.path)}) {
+				t.Fatalf("Convert: skipped %+v, err %v, want one skip", skipped, err)
+			}
+			diff(t, got, wantFixture())
+		})
+	}
+}
+
+func TestConvertOnlySkipsKnownPathRefusals(t *testing.T) {
+	unexpected := errors.New("unexpected path refusal")
+	for _, refusal := range []error{fmt.Errorf("wrapped: %w", model.ErrUnsafeName), unexpected} {
+		x := &scippb.Index{Documents: []*scippb.Document{{RelativePath: "x:y.go"}}}
+		called := false
+		got, skipped, err := convert(x, func(p string) error {
+			called = true
+			if p != "x:y.go" {
+				t.Fatalf("checked path %q, want x:y.go", p)
+			}
+			return refusal
+		})
+		if !called {
+			t.Fatal("relative colon path was classified as outside the project")
+		}
+		if errors.Is(refusal, model.ErrUnsafeName) {
+			if err != nil || skipped.Count != 1 || !slices.Equal(skipped.Paths, []string{`"x:y.go"`}) || len(got.Documents) != 0 {
+				t.Fatalf("known refusal: got %v, skipped %+v, err %v", got, skipped, err)
+			}
+		} else if !errors.Is(err, unexpected) || err.Error() != "document 0: unexpected path refusal" || got != nil || skipped.Count != 0 {
+			t.Fatalf("unknown refusal: got %v, skipped %+v, err %v", got, skipped, err)
+		}
 	}
 }

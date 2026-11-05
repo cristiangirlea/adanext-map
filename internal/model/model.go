@@ -4,6 +4,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -118,8 +119,11 @@ func (x *Index) Counts() Counts {
 	return c
 }
 
+// ErrUnsafeName identifies known file names that cannot be stored safely on every OS.
+var ErrUnsafeName = errors.New("unsafe file name")
+
 // CheckPath refuses a document path that could point outside the project: empty, absolute in any
-// platform's spelling, or with a `..` segment; or that a file system cannot hold: a NUL or other
+// platform's spelling, or with a `..` segment; or that is unsafe in a portable store: a NUL or other
 // control character, a colon (an alternate data stream on Windows), or a Windows device name. It
 // checks the same on every OS: a store written on Linux is read on Windows.
 func CheckPath(p string) error {
@@ -127,12 +131,12 @@ func CheckPath(p string) error {
 	case p == "":
 		return fmt.Errorf("no path")
 	case strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) || filepath.IsAbs(p) ||
-		(len(p) >= 2 && p[1] == ':'):
+		(len(p) >= 3 && ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':' && (p[2] == '/' || p[2] == '\\')):
 		return fmt.Errorf("path %q is absolute", p)
 	}
 	for _, r := range p {
 		if r == ':' || unicode.IsControl(r) {
-			return fmt.Errorf("path %q has a control character or a colon", p)
+			return fmt.Errorf("%w: path %q has a control character or a colon", ErrUnsafeName, p)
 		}
 	}
 	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
@@ -140,7 +144,7 @@ func CheckPath(p string) error {
 			return fmt.Errorf("path %q has a .. segment", p)
 		}
 		if isDeviceName(seg) {
-			return fmt.Errorf("path %q names a Windows device", p)
+			return fmt.Errorf("%w: path %q names a Windows device", ErrUnsafeName, p)
 		}
 	}
 	return nil

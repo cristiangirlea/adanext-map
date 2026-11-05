@@ -39,7 +39,8 @@ printf '%s\n' "$out" | LC_ALL=C grep -q "$(printf '\342\200\256')" && fail "raw 
 for entry in '\342\200\252 U+202A' '\342\200\253 U+202B' '\342\200\254 U+202C' '\342\200\255 U+202D' \
 	'\342\200\256 U+202E' '\342\201\246 U+2066' '\342\201\247 U+2067' '\342\201\250 U+2068' \
 	'\342\201\251 U+2069' '\342\200\213 U+200B' '\342\200\214 U+200C' '\342\200\215 U+200D' \
-	'\357\273\277 U+FEFF'; do
+	'\357\273\277 U+FEFF' '\342\200\216 U+200E' '\342\200\217 U+200F' \
+ '\330\234 U+061C' '\342\201\240 U+2060'; do
 	esc=${entry% *}
 	label=${entry#* }
 	repo each
@@ -51,8 +52,8 @@ for entry in '\342\200\252 U+202A' '\342\200\253 U+202B' '\342\200\254 U+202C' '
 	rm -rf "$tmp/each"
 done
 repo allowed
-# U+200E (left-to-right mark), U+2065 (unassigned, next to the isolates) and U+00E9 are fine.
-printf 'a\342\200\216b\n\342\201\245\n\303\251\n' > "$tmp/allowed/f.txt"
+# U+2065 (unassigned, next to the isolates) and U+00E9 are fine.
+printf '\342\201\245\n\303\251\n' > "$tmp/allowed/f.txt"
 track allowed
 sh "$check" "$tmp/allowed" >/dev/null 2>&1 || fail "allowed neighbours: expected exit 0"
 
@@ -83,5 +84,28 @@ sh "$check" "$tmp/untracked" >/dev/null 2>&1 || fail "untracked: expected exit 0
 mkdir "$tmp/plain"
 out=$(sh "$check" "$tmp/plain" 2>&1); code=$?
 [ "$code" -eq 2 ] || fail "not a repository: exit $code, want 2"
+
+
+repo invalid
+printf 'a\377\342\200\256b\n' > "$tmp/invalid/f.txt"
+track invalid
+out=$(LC_ALL=C.UTF-8 sh "$check" "$tmp/invalid" 2>&1); code=$?
+[ "$code" -eq 1 ] || fail "invalid UTF-8: exit $code, want 1"
+case "$out" in *f.txt:1:*U+202E*) ;; *) fail "invalid UTF-8: missing location" ;; esac
+printf '%s\n' "$out" | LC_ALL=C grep -q "$(printf '\377')" && fail "invalid UTF-8 echoed raw"
+
+# Git warnings on stderr must not be interpreted as grep records.
+mkdir "$tmp/bin"
+real_git=$(command -v git)
+cat > "$tmp/bin/git" <<'EOF'
+#!/bin/sh
+printf 'warning from git\n' >&2
+exec "$REAL_GIT" "$@"
+EOF
+chmod +x "$tmp/bin/git"
+out=$(PATH="$tmp/bin:$PATH" REAL_GIT="$real_git" sh "$check" "$tmp/raw" 2>&1); code=$?
+[ "$code" -eq 1 ] || fail "git warning: exit $code, want 1"
+case "$out" in *warning\ from\ git*) fail "git stderr entered formatted output" ;; esac
+case "$out" in *main.go:3:*U+202E*) ;; *) fail "git warning: missing match" ;; esac
 
 echo "hidden-chars.test: ok"

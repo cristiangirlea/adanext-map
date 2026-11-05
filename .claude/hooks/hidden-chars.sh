@@ -1,7 +1,7 @@
 #!/bin/sh
 # Fails when a tracked text file holds a character that makes source read differently from what
 # it compiles to: the bidi controls U+202A-U+202E and U+2066-U+2069, and the zero-width
-# characters U+200B-U+200D and U+FEFF. Write them as escapes instead (a backslash, u, and the
+# characters U+200B-U+200F, U+061C, U+2060 and U+FEFF. Write them as escapes instead (a backslash, u, and the
 # four hex digits). Names each file and line.
 # Usage: hidden-chars.sh [directory]   (default: the current directory, a git repository)
 #
@@ -12,24 +12,25 @@ dir=${1:-.}
 tab=$(printf '\t')
 found=0
 tmp=$(mktemp) || exit 2
-trap 'rm -f "$tmp"' EXIT
+errtmp=$(mktemp) || { rm -f "$tmp"; exit 2; }
+trap 'rm -f "$tmp" "$errtmp"' EXIT
 
 while read -r esc label; do
 	seq=$(printf "$esc")
 	# --null puts a NUL after the file name and after the line number, so a name with a colon in
 	# it stays whole; the output goes through a file because a shell variable cannot hold a NUL.
-	git -C "$dir" grep -nI -F --null -e "$seq" >"$tmp" 2>&1; code=$?
+	git -C "$dir" grep -nI -F --null -e "$seq" >"$tmp" 2>"$errtmp"; code=$?
 	case $code in
 	0) ;;
 	1) continue ;; # no match
 	*)
 		printf 'hidden-chars: git grep failed in %s: ' "$dir" >&2
-		cat "$tmp" >&2
+		cat "$errtmp" >&2
 		exit 2
 		;;
 	esac
 	found=1
-	tr '\0' '\t' <"$tmp" | sed "s/^\\([^$tab]*\\)$tab\\([0-9]*\\)$tab.*/\\1:\\2: $label/" >&2
+	LC_ALL=C tr '\0' '\t' <"$tmp" | LC_ALL=C sed "s/^\\([^$tab]*\\)$tab\\([0-9]*\\)$tab.*/\\1:\\2: $label/" >&2
 done <<'EOF'
 \342\200\252 U+202A
 \342\200\253 U+202B
@@ -44,6 +45,10 @@ done <<'EOF'
 \342\200\214 U+200C
 \342\200\215 U+200D
 \357\273\277 U+FEFF
+\342\200\216 U+200E
+\342\200\217 U+200F
+\330\234 U+061C
+\342\201\240 U+2060
 EOF
 
 if [ "$found" -ne 0 ]; then

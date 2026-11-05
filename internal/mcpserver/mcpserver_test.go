@@ -827,7 +827,7 @@ func shellReads(t *testing.T, p string) string {
 }
 
 func TestTheRefreshCommandQuotesThePathForTheShell(t *testing.T) {
-	for _, p := range []string{hardPath, "/work/plain", "/work/it's", `/work/back\slash`, "/work/tab\there", ""} {
+	for _, p := range []string{hardPath, "/work/plain", "/work/it's", `/work/back\slash`, `C:\work\x`, `C:\work\a&b`, `C:\work\a|b`, "/work/tab\there", ""} {
 		if got := shellReads(t, p); got != p {
 			t.Errorf("shellArg(%q) is read back by the shell as %q", p, got)
 		}
@@ -837,7 +837,7 @@ func TestTheRefreshCommandQuotesThePathForTheShell(t *testing.T) {
 func TestPOSIXAndPowerShellQuotingHaveTheirExactForms(t *testing.T) {
 	for _, tc := range []struct{ in, posix, powershell string }{
 		{"/work/plain", "/work/plain", "/work/plain"},
-		{`C:\work\plain`, `'C:\work\plain'`, `C:\work\plain`},
+		{`C:\work\plain`, `'C:\work\plain'`, `'C:\work\plain'`},
 		{"", "''", "''"},
 		{"/work/it's", `'/work/it'\''s'`, "'/work/it''s'"},
 		{"a b", "'a b'", "'a b'"},
@@ -1039,5 +1039,95 @@ func TestImpactStructuredContentCountsTheReferencesOutsideEveryDefinition(t *tes
 	}
 	if a := ok(t, cs, "impact", map[string]any{"target": "C", "depth": 1}); a.structured["unattributed"] != nil {
 		t.Errorf("unattributed = %v, want it left out when 0", a.structured["unattributed"])
+	}
+}
+
+func TestRefreshBackslashesSurviveGitBash(t *testing.T) {
+	for _, p := range []string{`C:\work\x`, `C:\work\a&b`, `C:\work\a|b`} {
+		if got := runShell(t, "sh", "-c", "printf %s "+shellArg(p)); got != p {
+			t.Errorf("refresh argument %q read as %q", p, got)
+		}
+	}
+}
+
+func TestRepairedFailedStoreIsNoticedWithinOneClockTick(t *testing.T) {
+	repo := t.TempDir()
+	writeStore(t, repo, commitA, sciptest.Index())
+	s := &stores{repo: repo}
+	if _, err := s.get(); err != nil {
+		t.Fatal(err)
+	}
+	writeStore(t, repo, commitB, sciptest.CallGraph())
+	latest := filepath.Join(repo, store.DirName, "latest")
+	header := filepath.Join(store.Dir(repo, commitB), "header.json")
+	tick := time.Now().Add(time.Minute).Truncate(time.Second)
+	for _, p := range []string{latest, header} {
+		if err := os.Chtimes(p, tick, tick); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(store.Dir(repo, commitB), "store.json.gz"), []byte("broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if snap, newer, err := s.current(); err != nil || newer == nil || snap.header.Commit != commitA {
+		t.Fatalf("expected fallback after damage: %v %v", newer, err)
+	}
+	writeStore(t, repo, commitB, sciptest.CallGraph())
+	for _, p := range []string{latest, header} {
+		if err := os.Chtimes(p, tick, tick); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap, newer, err := s.current()
+	if err != nil || newer != nil || snap.header.Commit != commitB {
+		t.Fatalf("repair with unchanged timestamps was missed: %v %v, snapshot %s", newer, err, snap.header.Commit)
+	}
+}
+
+func TestStructuredContentEscapesDELAndC1OnTheWire(t *testing.T) {
+	repo := t.TempDir()
+	name := "hostile\x7f\u0080\u009f\n\t\r\b\f"
+	idx := &model.Index{Symbols: []model.Symbol{{ID: "s m p v hostile().", DisplayName: name}}}
+	if _, err := store.Write(repo, store.Header{Commit: commitA}, idx); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Config{Repo: repo})
+	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			res, err := next(ctx, method, req)
+			if method == "tools/call" && err == nil {
+				data, e := json.Marshal(res)
+				if e != nil {
+					t.Error(e)
+				}
+				for _, r := range string(data) {
+					if r == 0x7f || r >= 0x80 && r <= 0x9f {
+						t.Errorf("raw control %U on wire", r)
+					}
+				}
+				for _, esc := range []string{`\u007f`, `\u0080`, `\u009f`} {
+					if !strings.Contains(string(data), esc) {
+						t.Errorf("missing %s", esc)
+					}
+				}
+			}
+			return res, err
+		}
+	})
+	ctx := context.Background()
+	se, ce := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, se, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil).Connect(ctx, ce, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cs.Close(); ss.Wait() }()
+	got := ok(t, cs, "find_symbol", map[string]any{"name": "hostile"})
+	syms := got.structured["symbols"].([]any)
+	if syms[0].(map[string]any)["name"] != name {
+		t.Fatalf("decoded value changed: %v", syms)
 	}
 }

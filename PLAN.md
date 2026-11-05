@@ -165,6 +165,79 @@ repository); a fail-closed push guard (#8).
   so a resume before the reset starts nothing, and each record keeps its last reading per window
   as `plan_meter`. A reading without `resetsAt` stops nothing, since it cannot be waited out.
   Issue #70's text was taken from the task brief, as `gh` had no valid credentials in this session.
+- 2026-11-05 (#73): the push guard and its tests are adanext-exec's merged files, unchanged; the
+  comparison found no map-only behaviour to keep. `macos-latest` joins the public, hosted CI matrix
+  so macOS's `sh` (bash 3.2) runs the hook tests. Escapes the hook cannot decode faithfully are
+  refused in the command and the cwd. adanext-exec #23, #24 and #25 stay open and apply here too.
+- 2026-11-05 (#43): the indexer's temporary output directory is made absolute before the indexer
+  runs in the repository, with tests for a relative temporary directory and for cleanup when the
+  indexer panics. A hard kill can still leave `adamap-index-*` directories (docs/index.md); removing
+  stale ones at start would be new behaviour and is not done.
+- 2026-11-05 (#38): colons stay refused on every OS, to avoid Windows alternate data streams and
+  keep stores portable; this drops some names legal on Linux and macOS (Go modules already forbid
+  them), and the skipped-document count and sampled paths show it. No runtime or store change. A
+  validation change and the fixtures it invalidates go in one commit; the merged device-names
+  history is not rewritten.
+- 2026-11-05 (#44, follow-ups from #30): members are hidden from the map's output and symbol
+  budget but retain their reference edges. Test files carry a 0.25 factor after PageRank, chosen
+  from the harness run. Recognise `__tests__/`, `test_*.py`, `*_test.py` and `.test.mjs` alongside
+  the existing layouts; these extra test layouts were added ahead of a repository needing them.
+  `testdata/` alone is not a test layout. Keep kind-only filtering: `Property` hides a
+  function-valued class property too; do not infer callability from signatures.
+  Hide `Getter`: reading a property is a member operation covered by its enclosing type.
+  Hide `Setter`: writing a property is a member operation covered by its enclosing type.
+  Hide `Accessor`: property access is a member operation covered by its enclosing type.
+  Keep `Attribute` visible: SCIP uses it for a C++ attribute, not a class member.
+- 2026-11-05 (#56): create the new `.gitignore` at 0644 (the decision of 2026-10-13) directly,
+  temporary file and exclusive-create fallback alike, instead of chmod after CreateTemp, so the
+  umask applies and filesystems without permission bits can write stores; store files stay
+  0600. Quote only unexpected JSON
+  string tokens and display delimiters as characters. Cache Windows file identity immediately
+  after Lstat, and open Unix store files nonblocking so a swapped-in FIFO cannot block the
+  descriptor's regular-file check. Use plain os.Open on other non-Windows systems, which cannot
+  rely on Unix flags. Always check the opened descriptor is regular before trusting its identity.
+  Test delimiter and string diagnostics, same-path replacement, and bounded Unix FIFO refusal.
+  Share `query.SafeLines` and correct the install test comment as part of this item.
+- 2026-11-05 (#62): git commands have a two-minute timeout, allowing status in large repositories;
+  the test override remains. Caller repository-selection and config-injection environment variables
+  are removed alongside pathspec settings so git reads the requested repository. Unix git calls
+  use a separate process group killed on timeout or an interrupt/SIGTERM signal; other systems
+  use plain process cancellation, and Windows kills only git itself. Dirty status
+  stops at its first NUL-terminated record. MCP structured JSON uses the CLI's DEL/C1 escaping.
+  Encoder buffers above 64 KiB are released after each value; allocation measurement runs in an
+  isolated test subprocess so parallel package tests cannot change its process-wide counters.
+- 2026-11-05 (#29): documents outside the project or at its root are skipped before their
+  discarded contents are validated. A kept document whose name `CheckPath` refuses as a known
+  unsafe name (`ErrUnsafeName`: a Windows device name, a colon or a control character) is still
+  skipped with a note, as before; any other `CheckPath` refusal is fatal. A drive path needs an
+  ASCII letter, a colon and a separator, so a relative `x:y.go` is an unsafe name, not outside.
+  Two spellings of one normalized path are refused instead of merged; exact duplicates still
+  merge. References from kept documents to symbols defined in skipped ones are kept. Each quoted
+  path in the skip note is cut to 200 bytes, and one skip says `document`. The store format is
+  unchanged.
+- 2026-11-05: SCIP decoding converts each document before reading the next and decodes external
+  symbols after all documents to preserve merge precedence. Peak memory includes the serialized
+  file, the largest decoded document and the model; no fixed reduction is claimed. Visitor limit
+  and conversion refusals keep their messages; only protobuf parse failures say "not a SCIP index".
+  Wire-order, overlong tag and length encodings, unknown wire types on known fields, and a failed
+  CLI decode leaving the commit store absent and latest unchanged are covered by fixture tests.
+- 2026-11-05 (#50): detect replacement of latest by file identity without changing the store format;
+  retry both Windows sharing violations and access denied within the existing bounded retry. Add
+  U+200E, U+200F, U+061C and U+2060 to the hidden-character check. Refresh commands keep targeting
+  PowerShell on Windows (Git Bash preserves ordinary single-quoted paths); cmd.exe remains outside
+  the documented shell support.
+  Assert 200 successful readLatest calls while a
+  goroutine replaces latest, counting underlying read errors without failing on rename contention.
+  The verbose run on this Windows machine recorded 200 successful reads, 7
+  ERROR_SHARING_VIOLATION errors and 0 ERROR_ACCESS_DENIED errors, with 32 successful renames
+  and 15 failed rename attempts. Replacements pause one millisecond so retries can observe a
+  completed rename rather than an uninterrupted stream of replacements. These counts describe one run, not a guarantee about every
+  Windows environment. Add a per-store latest-reader seam beside the existing pause seam to
+  verify recovery after two ERROR_ACCESS_DENIED errors and the five-attempt limit for persistent
+  denial. No pending-deletion cause is established by the run; docs and code comments avoid
+  claiming one. When either latest file identity is unreadable, compare modification time, size
+  and header time alone to avoid reloading an unchanged store on every call; test both missing
+  identities and each missing side, including changes to each metadata field.
 - 2026-11-05 (#48): correct the earlier item-count decision: larger real repositories can exceed
   the defaults, and the defaults are not a safe RAM budget. Retain the count defaults and document
   their cost rather than reduce supported repository sizes: 6.08 GB of struct elements on 64-bit Go

@@ -7,6 +7,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -89,6 +90,23 @@ func New(cfg Config) *mcp.Server {
 	mcp.AddTool(srv, readOnly("callers", "Callers of a symbol", callersDescription), s.callers)
 	mcp.AddTool(srv, readOnly("impact", "What depends on a symbol or file", impactDescription), s.impact)
 	mcp.AddTool(srv, readOnly("status", "Index status", statusDescription), s.status)
+	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if err != nil {
+				return result, err
+			}
+			if r, ok := result.(*mcp.CallToolResult); ok && r.StructuredContent != nil {
+				data, err := json.Marshal(r.StructuredContent)
+				if err != nil {
+					return nil, err
+				}
+				// Raw JSON preserves the escapes when the SDK encodes the response.
+				r.StructuredContent = json.RawMessage(query.EscapeJSONControls(data))
+			}
+			return result, nil
+		}
+	})
 	return srv
 }
 
@@ -237,21 +255,11 @@ type (
 // strings. The answers escape each store string already; this catches what reaches the text
 // another way, such as an error.
 func text(s string) *mcp.CallToolResult {
-	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: safeLines(s)}}}
-}
-
-// safeLines is s with each line that holds a control or format character, or invalid UTF-8, quoted
-// by query.Safe. A line the answers built is printable already and stays as it is.
-func safeLines(s string) string {
-	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		lines[i] = query.Safe(l)
-	}
-	return strings.Join(lines, "\n")
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: query.SafeLines(s)}}}
 }
 
 // toolError is err as the tool error the model reads, its lines escaped like text content.
-func toolError(err error) error { return errors.New(safeLines(err.Error())) }
+func toolError(err error) error { return errors.New(query.SafeLines(err.Error())) }
 
 // note is a remark about an answer, such as that it is empty, on a line of its own: the CLI puts it
 // on stderr, which a tool result does not have.
@@ -487,7 +495,7 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 	var b strings.Builder
 	snap, newerErr, err := s.stores.current()
 	if err != nil {
-		out.StoreError = safeLines(err.Error())
+		out.StoreError = query.SafeLines(err.Error())
 		fmt.Fprintf(&b, "no store: %v\n", err)
 	} else {
 		h := snap.header
@@ -508,7 +516,7 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 		}
 		fmt.Fprintf(&b, ": %d documents, %d symbols, %d occurrences\n", h.Counts.Documents, h.Counts.Symbols, h.Counts.Occurrences)
 		if newerErr != nil {
-			out.NewerStoreError = safeLines(newerErr.Error())
+			out.NewerStoreError = query.SafeLines(newerErr.Error())
 			fmt.Fprintf(&b, "a newer store failed to load, so this one still serves: %v\n", newerErr)
 		}
 	}
@@ -517,7 +525,7 @@ func (s *server) status(_ context.Context, _ *mcp.CallToolRequest, _ statusIn) (
 	if s.cfg.Head == nil {
 		out.GitError = "git was not asked"
 	} else if head, dirty, err := s.cfg.Head(); err != nil {
-		out.GitError = safeLines(err.Error())
+		out.GitError = query.SafeLines(err.Error())
 	} else {
 		known = true
 		out.Head, out.Dirty = head, dirty
@@ -608,9 +616,9 @@ func posixArg(p string) string {
 
 // powershellArg is p as a PowerShell single-quoted string, in which every character is itself but
 // the quotes: PowerShell reads ' and the typographic quotes U+2018 to U+201B as one, and a doubled
-// one stands for itself. Backslash, the Windows separator, needs no quoting.
+// one stands for itself. Quoting backslashes also preserves them in Git Bash.
 func powershellArg(p string) string {
-	if p != "" && !strings.ContainsFunc(p, func(r rune) bool { return !plainRune(r) && r != '\\' }) {
+	if p != "" && !strings.ContainsFunc(p, func(r rune) bool { return !plainRune(r) }) {
 		return p
 	}
 	var b strings.Builder

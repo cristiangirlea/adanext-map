@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -415,8 +416,7 @@ func TestInstallWritesAndPrintsAPathWithSpacesAndNonASCIIBackAsItWas(t *testing.
 	}
 }
 
-// The server name in the error comes from a file a cloned repository supplies, so a terminal must
-// not act on an ESC or a bidirectional override in it.
+// Exercise the helper with an unsafe name; production callers use the constant adamap.
 func TestSetServerQuotesTheServerNameInItsError(t *testing.T) {
 	name := "a\x1b[31m\xe2\x80\xaeb" // ESC, then U+202E (right-to-left override)
 	key, err := json.Marshal(name)
@@ -430,5 +430,53 @@ func TestSetServerQuotesTheServerNameInItsError(t *testing.T) {
 	}
 	if msg := err.Error(); strings.ContainsAny(msg, "\x1b\xe2\x80\xae") || !strings.Contains(msg, strconv.Quote(name)) {
 		t.Errorf("error %q holds the name raw; want it as %s", msg, strconv.Quote(name))
+	}
+}
+
+func TestAtomicInstallSyncsBeforeReplacingDestination(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(strconv.FormatBool(fail), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".mcp.json")
+			if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			original := syncMCPFile
+			t.Cleanup(func() { syncMCPFile = original })
+			syncErr := errors.New("sync failed")
+			calls := 0
+			syncMCPFile = func(f *os.File) error {
+				calls++
+				if data, err := os.ReadFile(path); err != nil || string(data) != "old" {
+					t.Fatalf("destination replaced before sync: %q %v", data, err)
+				}
+				if data, err := os.ReadFile(f.Name()); err != nil || string(data) != "new" {
+					t.Fatalf("sync before complete write: %q %v", data, err)
+				}
+				if fail {
+					return syncErr
+				}
+				return f.Sync()
+			}
+			err := writeFileAtomic(path, []byte("new"), 0o644)
+			want := "new"
+			if fail {
+				want = "old"
+				if !errors.Is(err, syncErr) {
+					t.Fatalf("sync error lost: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if calls != 1 {
+				t.Fatalf("sync called %d times", calls)
+			}
+			if data, err := os.ReadFile(path); err != nil || string(data) != want {
+				t.Fatalf("destination %q, want %q: %v", data, want, err)
+			}
+			files, err := filepath.Glob(path + ".*.tmp")
+			if err != nil || len(files) != 0 {
+				t.Fatalf("temporary files left: %v %v", files, err)
+			}
+		})
 	}
 }

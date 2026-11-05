@@ -161,8 +161,8 @@ func isHidden(r rune) bool {
 	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
 }
 
-// oneLine turns runs of white space, control and format characters into one space, and invalid UTF-8
-// into replacement characters, and trims the ends.
+// oneLine turns runs of white space, line and paragraph separators, control and format characters
+// into one space, invalid UTF-8 into replacement characters, and trims the ends.
 func oneLine(s string) string {
 	s = strings.Map(func(r rune) rune {
 		if isHidden(r) {

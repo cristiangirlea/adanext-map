@@ -20,7 +20,7 @@ type snapshot struct {
 }
 
 // stores keeps the store the server answers from. A pinned commit is loaded once. Otherwise it
-// follows .adamap/latest: at every call it compares latest's modification time and size with those
+// follows .adamap/latest: at every call it compares latest's identity, modification time and size with those
 // it saw when it last loaded, and loads again when they differ, so a new `adamap index` is answered
 // from without a restart. store.Write rewrites latest after the store is complete, so a changed
 // latest never names a store half written. When the store latest now names does not load, the
@@ -34,21 +34,23 @@ type stores struct {
 	stamp  stamp    // latest as it was when cur was loaded
 	failed *failure // the newer store that did not load, if any
 
-	pause func(time.Duration) // waits between attempts to read latest; nil is time.Sleep
+	pause  func(time.Duration)          // waits between attempts to read latest; nil is time.Sleep
+	latest func(string) (string, error) // reads latest; nil is store.Latest
 }
 
-// stamp is what tells one version of the store from the next: .adamap/latest's modification time
-// and size, and the modification time of the header of the store being served. Indexing a commit
-// again rewrites latest with the same size and, on a file system with a coarse clock, the same
-// time; the header it writes just before is what differs.
+// stamp tracks latest's identity, time and size, and the served store's header time.
+// Replacement identity detects re-indexing even when every timestamp is unchanged.
 type stamp struct {
+	file   os.FileInfo
 	mod    time.Time
 	size   int64
 	header time.Time
 }
 
 func (a stamp) equal(b stamp) bool {
-	return a.mod.Equal(b.mod) && a.size == b.size && a.header.Equal(b.header)
+	// Unreadable identities leave metadata as the available evidence of a change.
+	return a.mod.Equal(b.mod) && a.size == b.size && a.header.Equal(b.header) &&
+		(a.file == nil || b.file == nil || os.SameFile(a.file, b.file))
 }
 
 // headerTime is the modification time of commit's header.json, or the zero time when it cannot be
@@ -98,7 +100,11 @@ func (s *stores) current() (snap *snapshot, newerErr, err error) {
 	var now stamp
 	fi, statErr := os.Lstat(filepath.Join(s.repo, store.DirName, "latest"))
 	if statErr == nil {
-		now = stamp{mod: fi.ModTime(), size: fi.Size()}
+		// Windows resolves file identity lazily, so capture it before the path can be replaced.
+		now = stamp{mod: fi.ModTime(), size: fi.Size(), file: fi}
+		if !os.SameFile(fi, fi) {
+			now.file = nil
+		}
 		if s.cur != nil {
 			now.header = s.headerTime(s.cur.header.Commit)
 			if now.header.IsZero() {
@@ -152,14 +158,18 @@ const (
 	latestPause    = 5 * time.Millisecond
 )
 
-// readLatest is store.Latest, tried again while the read meets a sharing violation.
+// readLatest retries Windows sharing violations and access-denied errors.
 func (s *stores) readLatest() (string, error) {
 	pause := s.pause
 	if pause == nil {
 		pause = time.Sleep
 	}
+	latest := s.latest
+	if latest == nil {
+		latest = store.Latest
+	}
 	for attempt := 1; ; attempt++ {
-		commit, err := store.Latest(s.repo)
+		commit, err := latest(s.repo)
 		if err == nil || attempt == latestAttempts || !isSharingViolation(err) {
 			return commit, err
 		}

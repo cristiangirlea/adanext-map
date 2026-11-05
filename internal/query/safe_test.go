@@ -88,3 +88,16 @@ func TestSafeQuotesEveryFormatCharacter(t *testing.T) {
 		t.Errorf("only %d format characters found: is the table loaded?", n)
 	}
 }
+
+func TestSafeLinesPreservesLinesAndQuotesUnsafeText(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", ""},
+		{"one\ntwo\n", "one\ntwo\n"},
+		{"ok\na\x1b[2J\n", "ok\n" + `"a\x1b[2J"` + "\n"},
+		{"a\u202e\nb\xff", `"a\u202e"` + "\n" + `"b\xff"`},
+	} {
+		if got := SafeLines(tc.in); got != tc.want {
+			t.Errorf("SafeLines(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
