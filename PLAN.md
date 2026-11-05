@@ -246,3 +246,9 @@ repository); a fail-closed push guard (#8).
   hitting a count limit without CLI overrides. A model test pins the four documented struct sizes
   on 64-bit builds so layout changes require revisiting the estimate. The store format and runtime
   behavior are unchanged.
+- 2026-11-05 (#54): close the push guard's remaining parsing gaps without new dependencies:
+  distinguish let and legacy arithmetic shifts from heredocs, scan executable shell/ssh heredocs,
+  support ANSI-C apostrophes/backslashes and PowerShell here-strings, read cmd hashes/caret escapes,
+  restore subshell directories, refuse GraphQL mutations and hidden queries, and allow read-only
+  tag listings and release list/view. Unsupported escapes and dynamic or remote state fail closed;
+  regression cases cover refused and allowed forms.

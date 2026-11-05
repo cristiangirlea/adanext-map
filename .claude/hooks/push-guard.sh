@@ -1,6 +1,6 @@
 #!/bin/sh
 # Before a Bash or PowerShell call: refuse what only the owner does. That is a git push whose
-# destination is main or a tag, a force push, any git tag, any gh release, gh pr merge with --auto
+# destination is main or a tag, a force push, tag or release writes, gh pr merge with --auto
 # or --admin, and a mutating gh api call on releases or git refs. Exit 2 blocks the call and shows
 # the one-line reason; everything else exits 0.
 # settings.json's deny rules match spellings, so a new spelling gets through. This reads what the
@@ -81,11 +81,11 @@ unescape() {
     -e 's/\\u[0-9a-fA-F]\{4\}/ /g' -e 's/'"$soh"'/\\/g'
 }
 
-# use_lang LANG: how the text is quoted: sh (\ escapes), ps (PowerShell, ` escapes) or cmd (none,
+# use_lang LANG: how the text is quoted: sh (\ escapes), ps (PowerShell, ` escapes) or cmd (^ escapes,
 # and ' is no quote).
 use_lang() {
   lang=$1
-  case $1 in sh) esc='\' ;; ps) esc='`' ;; *) esc= ;; esac
+  case $1 in sh) esc='\' ;; ps) esc='`' ;; cmd) esc='^' ;; *) esc= ;; esac
 }
 
 # words TEXT: sets wl to the words of one simple command, each followed by $soh, with one level of
@@ -95,9 +95,9 @@ words() {
   ws=$1 wl= wd= wq= wm=o
   while :; do
     case $wm in
-      o) wp=${ws%%[\"\'\\\`\ \	,$nl]*} ;;
+      o) wp=${ws%%[\^\"\'\\\`\ \	,$nl]*} ;;
       s) wp=${ws%%\'*} ;;
-      *) wp=${ws%%[\"\\\`]*} ;;
+      *) wp=${ws%%[\^\"\\\`]*} ;;
     esac
     wd=$wd$wp ws=${ws#"$wp"}
     [ -n "$ws" ] || break
@@ -106,7 +106,8 @@ words() {
       s\' | d\") wm=o ;;
       o\') if [ "$lang" = cmd ]; then wd=$wd$wc; else wm=s wq=1; fi ;;
       o\") wm=d wq=1 ;;
-      [od]\\ | [od]\`)
+      [od]\\ | [od]\` | [od]^)
+        [ "$wm$lang$wc" != dcmd^ ] || refuse "a quoted cmd caret cannot be read faithfully"
         if [ "$wc" = "$esc" ]; then
           wn=${ws%"${ws#?}"} ws=${ws#?}
           # In sh's double quotes, \ escapes only " \ $ and `.
@@ -126,7 +127,7 @@ words() {
 # git_in_dir ARGS: git in the directory the command runs in, with the command's own -C, -c and
 # --git-dir options. Fails when that directory is unknown.
 git_in_dir() {
-  [ -n "$dir" ] || return 1
+  [ "${remote_dir:-0}" = 0 ] && [ -n "$dir" ] || return 1
   IFS=$soh
   git -C "$dir" $gopts "$@" 2>/dev/null
   gs=$?
@@ -140,15 +141,15 @@ current_branch() {
 # check_cmd TEXT: each simple command in TEXT, split at ; | & ( ) { } and newlines outside quotes.
 # A command substitution, $( ) or sh's backticks, in double quotes too, is checked as commands, and
 # the command around it gets a $ where it was, as what it adds cannot be seen. A comment is skipped,
-# and so is a heredoc's body, unless its word is unquoted and the body has a substitution: then the
-# body is checked as commands.
+# and so is a text heredoc's body; shell stdin and expanding bodies with substitutions are scanned.
 check_cmd() {
-  cs=$1 cur= md=o stk= lastc= hdq=
+  cs=$1 cur= md=o stk= dirstk= lastc= hdq=
   while [ -n "$cs" ]; do
     case $md in
-      o) pre=${cs%%[\;\|\&\(\)\{\}\<\#\"\'\\\`$nl]*} ;;
+      o) pre=${cs%%[\^@\[\]\;\|\&\(\)\{\}\<\#\"\'\\\`$nl]*} ;;
       s) pre=${cs%%\'*} ;;
-      *) pre=${cs%%[\"\\\`\(]*} ;;
+      c) pre=${cs%%[\'\\]*} ;;
+      *) pre=${cs%%[\^\"\\\`\(]*} ;;
     esac
     cur=$cur$pre cs=${cs#"$pre"}
     case $pre in ?*) lastc=${pre#"${pre%?}"} ;; esac
@@ -156,10 +157,21 @@ check_cmd() {
     ch=${cs%"${cs#?}"} cs=${cs#?}
     case $md$ch in
       s\' | d\") cur=$cur$ch md=o ;;
-      o\') cur=$cur$ch; [ "$lang" = cmd ] || md=s ;;
+      o\')
+        case $lang$cur in sh*'$') cur=${cur%?}$ch md=c ;; *) cur=$cur$ch; [ "$lang" = cmd ] || md=s ;; esac ;;
+      c\') cur=$cur$ch md=o ;;
+      c\\)
+        ac=${cs%"${cs#?}"} cs=${cs#?}
+        case $ac in "'") cur=$cur"'\\''" ;; '\') cur=$cur$ac ;; *) refuse "an ANSI-C escape cannot be read faithfully" ;; esac ;;
+      o@) if [ "$lang" = ps ]; then ps_here; else cur=$cur$ch; fi ;;
+      o\[) case $lang$cur in sh*'$') sub_start b ;; *) cur=$cur$ch ;; esac ;;
+      o\]) case $stk in b*) check_part "$cur"; sub_end ;; *) cur=$cur$ch ;; esac ;;
+
       o\") cur=$cur$ch md=d ;;
-      [od]\\ | [od]\`)
+      [od]\\ | [od]\` | [od]^)
+        [ "$md$lang$ch" != dcmd^ ] || refuse "a quoted cmd caret cannot be read faithfully"
         if [ "$ch" = "$esc" ]; then
+          case $lang$cs in cmd | cmd"$nl"*) refuse "a dangling or continued cmd caret cannot be read faithfully" ;; esac
           cur=$cur$ch${cs%"${cs#?}"} cs=${cs#?}
         elif [ "$ch$lang" = '`sh' ]; then
           case $md$stk in
@@ -175,11 +187,12 @@ check_cmd() {
         # A ( straight after another one, as in $(( or ((, opens arithmetic, and so does any ( inside
         # it: a << there is a shift.
         case $stk in
-          a*) sub_start a ;;
+          [ab]*) sub_start a ;;
           *) if [ "$lastc" = '(' ] && [ -z "$cur" ]; then sub_start a; else cur=$cur$ch; sub_start o; fi ;;
         esac ;;
-      o\)) check_part "$cur"; case $stk in [oda]*) sub_end ;; *) cur= ;; esac ;;
+      o\)) check_part "$cur"; case $stk in [odab]*) sub_end ;; *) cur= ;; esac ;;
       o\#)
+        if [ "$lang" = cmd ]; then cur=$cur$ch; lastc=$ch; continue; fi
         case $lastc in
           '' | [\ \	\;\&\|\(\)] | "$nl") case $cs in *"$nl"*) cs=$nl${cs#*"$nl"} ;; *) cs= ;; esac ;;
           *) cur=$cur$ch ;;
@@ -188,7 +201,8 @@ check_cmd() {
         cur=$cur$ch
         case $lang$cs in
           sh\<\<*) cur=$cur'<<' cs=${cs#??} ;; # <<<, a here-string
-          sh\<*) cs=${cs#?}; cur=$cur'<'; case $stk in a*) ;; *) heredoc_start ;; esac ;;
+          sh\<*) cs=${cs#?}; cur=$cur'<'; case $stk in [ab]*) ;; *)
+            case ${cur#"${cur%%[!\ \	]*}"} in let[\ \	]*) ;; *) heredoc_start ;; esac ;; esac ;;
         esac ;;
       o"$nl") check_part "$cur"; cur=; heredoc_skip ;;
       *) check_part "$cur"; cur= ;;
@@ -198,6 +212,22 @@ check_cmd() {
   check_part "$cur"
   while [ -n "$stk" ]; do sub_end; check_part "$cur"; done
   return 0
+}
+# ps_here: consume literal here-string data; dynamic data and executable consumers fail closed.
+ps_here() {
+  case $cs in "'"* | '"'*) pq=${cs%"${cs#?}"} cs=${cs#?} ;; *) cur=$cur@; return ;; esac
+  case $cs in "$nl"*) cs=${cs#?} ;; *) refuse "a PowerShell here-string has an unreadable opener" ;; esac
+  ph= closed=
+  while [ -n "$cs" ]; do
+    case $cs in *"$nl"*) pl=${cs%%"$nl"*} cs=${cs#*"$nl"} ;; *) pl=$cs cs= ;; esac
+    case $pl in "$pq"@*) cs=${pl#??}$nl$cs; closed=1; break ;; esac
+    ph=$ph$pl$nl
+  done
+  [ -n "$closed" ] || refuse "a PowerShell here-string is unterminated"
+  case $pq$ph in '"'*'$'* | '"'*'`'*) refuse "an expanding PowerShell here-string cannot be read faithfully" ;; esac
+  lower "$cmd"
+  case $lc in *iex* | *invoke-expression* | *-command* | *' -c '* | *start-process* | *bash* | *pwsh* | *powershell* | *' sh'* | *'|sh'* | *'/sh'* | *dash* | *zsh* | *ksh* | *' cmd'* | *'|cmd'* | *'& '*) refuse "an executable PowerShell here-string cannot be read faithfully" ;; esac
+  cur=$cur"'here-string'"
 }
 # heredoc_start: after <<, queues the heredoc's word, if it has one: u or q (unquoted, quoted), - or _ (<<- or <<),
 # then the word without its quotes.
@@ -215,6 +245,13 @@ heredoc_start() {
   while :; do
     case $hw in *[\'\"\\]*) hq=q hw=${hw%%[\'\"\\]*}${hw#*[\'\"\\]} ;; *) break ;; esac
   done
+  # Shell stdin is executable even when the delimiter disables expansion.
+  words "$cur"
+  while [ -n "$wl" ]; do
+    ht=${wl%%"$soh"*} wl=${wl#*"$soh"}
+    prog "$ht"
+    case $w in ssh) hq=r ;; bash | sh | zsh | dash | ksh | ash | mksh) [ "$hq" = r ] || hq=x ;; esac
+  done
   [ -z "$hw" ] || hdq=$hdq$hq$hd$hw$nl
 }
 # heredoc_skip: at a newline, takes the queued heredocs' bodies off the text. <<- ends at the word
@@ -231,20 +268,22 @@ heredoc_skip() {
       [ "$hl" = "$he" ] && break
       hbody=$hbody$hl$nl
     done
-    case $hq$hbody in u*'$('* | u*'`'*) (check_cmd "$hbody") || exit $? ;; esac
+    case $hq$hbody in r*) (dir= remote_dir=1; check_cmd "$hbody") || exit $? ;; x* | u*'$('* | u*'`'*) (check_cmd "$hbody") || exit $? ;; esac
   done
 }
 # sub_start MODE: a substitution or a group begins; MODE (o, d, or O, D for backticks) is the mode to
 # return to, and the command so far is set aside. MODE a is arithmetic, $(( or ((: back to o at its
 # end, and a << inside it is a shift, not a heredoc.
 sub_start() {
+  dirstk=$dir$soh$dirstk
   stk=$1$cur$soh$stk cur= md=o
 }
 # sub_end: back to the command around it.
 sub_end() {
+  dir=${dirstk%%"$soh"*} dirstk=${dirstk#*"$soh"}
   top=${stk%%"$soh"*} stk=${stk#*"$soh"}
   cur=${top#?}
-  case $top in [oOa]*) md=o ;; *) md=d ;; esac
+  case $top in [oOab]*) md=o ;; *) md=d ;; esac
 }
 
 # check_part TEXT: one simple command, in words. Wrappers (env, sudo, xargs, Start-Process...) are
@@ -378,7 +417,19 @@ check_git() {
   case $sub in
     *'$'* | *%*) refuse "a variable names the git command" ;;
     push) check_push "$@" ;;
-    tag) refuse "git tag: tags are the owner's" ;;
+    tag)
+      listing=
+      for t; do
+        case $t in
+          *'$'* | *'!'*) refuse "a variable can hide a git tag option" ;;
+          -l | --list) listing=1 ;;
+          --format=* | --sort=* | --ignore-case | --column | --no-column)
+            case $lang$t in cmd*%*) refuse "a variable can hide a git tag option" ;; esac ;;
+          *%*) refuse "a variable can hide a git tag option" ;;
+          -*) refuse "git tag option is not known to be read-only" ;;
+        esac
+      done
+      [ -n "$listing" ] || refuse "git tag: tags are the owner's" ;;
     # Built-in commands: git never lets an alias replace one.
     add | am | apply | bisect | blame | branch | checkout | cherry-pick | clean | clone | commit | config | \
       describe | diff | fetch | grep | init | log | ls-files | ls-remote | merge | merge-base | mv | pull | \
@@ -533,7 +584,8 @@ check_gh() {
   shift
   case $sub in
     *'$'* | *%*) refuse "a variable names the gh command" ;;
-    release) refuse "gh release: releases are the owner's" ;;
+    release)
+      case ${1-} in list | view) ;; *) refuse "gh release: releases are the owner's" ;; esac ;;
     pr)
       while [ $# -gt 0 ]; do
         case $1 in -R | --repo) shift; [ $# -gt 0 ] && shift ;; '' | -*) shift ;; *) break ;; esac
@@ -552,7 +604,8 @@ check_gh() {
 # on a release or a git ref endpoint, or on one the hook cannot see, is refused. The endpoint is the
 # first argument that is not an option or an option's value.
 check_api() {
-  method= fields= ep= target= hidden=
+  apiargs=$*
+  method= fields= ep= target= hidden= query=
   while [ $# -gt 0 ]; do
     t=$1
     shift
@@ -560,14 +613,23 @@ check_api() {
       -X | --method) method=${1-}; [ $# -gt 0 ] && shift ;;
       -X*) method=${t#-X} ;;
       --method=*) method=${t#*=} ;;
-      -f | -F | --field | --raw-field | --input) fields=1; [ $# -gt 0 ] && shift ;;
-      -f* | -F* | --field=* | --raw-field=* | --input=*) fields=1 ;;
+      -f | -F | --field | --raw-field | --input) fields=1; case ${1-} in query=*) query=${1#query=} ;; esac; [ $# -gt 0 ] && shift ;;
+      -f* | -F* | --field=* | --raw-field=* | --input=*) fields=1; case $t in *query=*) query=${t#*query=} ;; esac ;;
       -H | --header | -q | --jq | -t | --template | -p | --preview | --hostname | --cache)
         [ $# -gt 0 ] && shift ;;
       -*) ;;
       *) [ -n "$ep" ] || ep=$t ;;
     esac
   done
+  if [ "$ep" = graphql ]; then
+    [ "$fromstdin" = 1 ] && refuse "gh api under xargs takes arguments the hook cannot see"
+    # Files, variables and mutations cannot be proved to be a read-only GraphQL query.
+    lower "$apiargs"
+    case $lc in *mutation* | *createref* | *updateref* | *--input* | *query@*) refuse "a GraphQL mutation or hidden query can write refs" ;; esac
+    case $query in '$'* | *'`'* | *%*) refuse "a GraphQL query contains an unresolved value" ;; esac
+    query=${query#"${query%%[![:space:]]*}"}
+    case $query in query* | '{'*) return 0 ;; *) refuse "cannot prove the GraphQL call is read-only" ;; esac
+  fi
   case $ep in *'$'* | *%*) hidden=1 ;; esac
   lower "$ep"
   case $lc in *releases* | *git/refs*) target=1 ;; esac
@@ -583,7 +645,7 @@ check_api() {
 }
 
 main() {
-  depth=0 fromstdin=0 gopts=
+  depth=0 fromstdin=0 gopts= remote_dir=0
   if ! json_string command; then
     mentions "$input" && refuse "the hook could not read this command, and it mentions a push, a tag, a release, a merge or the API"
     exit 0
@@ -624,12 +686,11 @@ main() {
   exit 0
 }
 
-# Nothing guarded can run without one of these words: the common path ends here, before any other
-# process starts.
+# Guarded words or quoting/escape syntax need inspection before the common path can exit.
 if json_string command; then
   case $val in
     *[Gg][Ii][Tt]* | *[Gg][Hh]* | *[Pp][Uu][Ss][Hh]* | *[Tt][Aa][Gg]* | *[Rr][Ee][Ll][Ee][Aa][Ss][Ee]* | \
-      *[Mm][Ee][Rr][Gg][Ee]* | *[Pp][Ww][Ss][Hh]* | *[Pp][Oo][Ww][Ee][Rr][Ss][Hh][Ee][Ll][Ll]* | *\\u*) ;;
+      *'^'* | *"$'"* | *[Mm][Ee][Rr][Gg][Ee]* | *[Pp][Ww][Ss][Hh]* | *[Pp][Oo][Ww][Ee][Rr][Ss][Hh][Ee][Ll][Ll]* | *\\u*) ;;
     *) exit 0 ;;
   esac
 fi
