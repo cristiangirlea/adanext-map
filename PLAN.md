@@ -164,3 +164,8 @@ repository); a fail-closed push guard (#8).
   so a resume before the reset starts nothing, and each record keeps its last reading per window
   as `plan_meter`. A reading without `resetsAt` stops nothing, since it cannot be waited out.
   Issue #70's text was taken from the task brief, as `gh` had no valid credentials in this session.
+- 2026-11-05 (#38): colons stay refused on every OS, to avoid Windows alternate data streams and
+  keep stores portable; this drops some names legal on Linux and macOS (Go modules already forbid
+  them), and the skipped-document count and sampled paths show it. No runtime or store change. A
+  validation change and the fixtures it invalidates go in one commit; the merged device-names
+  history is not rewritten.
