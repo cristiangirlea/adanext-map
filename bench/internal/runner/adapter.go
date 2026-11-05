@@ -136,6 +136,9 @@ func (Claude) Command(c Cell) (Invocation, error) {
 func subscriptionOnly(meter map[string]record.PlanWindow) func(line []byte) error {
 	seen := false
 	return func(line []byte) error {
+		if len(bytes.TrimSpace(line)) == 0 {
+			return nil
+		}
 		// After the init only the meter matters: skip the turns, which can be large, unread.
 		if seen && !bytes.Contains(line, []byte(`"rate_limit_event"`)) {
 			return nil
@@ -201,11 +204,11 @@ func subscriptionOnly(meter map[string]record.PlanWindow) func(line []byte) erro
 // billed beyond the plan. The CLI is stopped, and the run keeps its .started marker.
 var ErrOverage = errors.New("overage in use (usage billed beyond the plan)")
 
-// overageInUse refuses truthy or unknown overage values because usage may be billed beyond the plan.
+// overageInUse checks use flags separately because overage metadata does not mean usage is billed.
 func overageInUse(v any, under bool, path string) string {
 	switch x := v.(type) {
 	case map[string]any:
-		if under && (len(x) == 0 || !strings.HasSuffix(strings.ToLower(path), ".overage")) {
+		if under {
 			return path
 		}
 		keys := make([]string, 0, len(x))
@@ -215,10 +218,21 @@ func overageInUse(v any, under bool, path string) string {
 		slices.Sort(keys)
 		for _, k := range keys {
 			key := strings.ToLower(k)
-			if strings.Contains(key, "disabled") {
+			if strings.Contains(key, "disabled") || strings.HasSuffix(key, "resetsat") {
 				continue
 			}
-			if p := overageInUse(x[k], under || strings.Contains(key, "overage"), path+"."+k); p != "" {
+			if key == "overagestatus" {
+				if status, ok := x[k].(string); ok {
+					switch strings.ToLower(strings.TrimSpace(status)) {
+					case "in_use":
+						return path + "." + k
+					}
+				}
+				continue
+			}
+			flag := strings.Contains(strings.ToLower(path+"."+k), "overage") &&
+				(strings.Contains(key, "using") || strings.Contains(key, "inuse"))
+			if p := overageInUse(x[k], flag, path+"."+k); p != "" {
 				return p
 			}
 		}

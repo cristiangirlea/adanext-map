@@ -91,9 +91,12 @@ The runner also reads the plan's meter: Claude Code's `rate_limit_event`, which 
 in `unifiedWindows` (`five_hour`, `seven_day`, any other) and for the event's own `rateLimitType`.
 
 - **Overage is refused.** Overage is usage billed beyond the plan. A meter that shows it in use
-  (`isUsingOverage: true`, `"true"`, a non-zero number, or any other field named for overage
-  that is truthy or reads as in use; unknown values and types are refused;
-  a flag named for overage being disabled does not count) stops the CLI at once, before the init
+  (`isUsingOverage: true`, `"true"`, a non-zero number, or `overageStatus: "in_use"`)
+  stops the CLI at once. Strict truthy/unknown-value checks apply only to overage use flags
+  whose keys contain `using` or `inuse` (case-insensitive), including nested flags.
+  Statuses `allowed`, `allowed_warning`, and `rejected` do not mean overage is in use;
+  reset metadata (keys ending in `ResetsAt`, including null) and disabled flags are ignored.
+  The watch applies before the init
   event or after it. No record is written, the execution stops, and the run keeps its `.started`
   marker: it may have spent, so resume does not start it again. Turn overage off in the plan's
   settings, then remove the marker to run it again.
@@ -184,7 +187,8 @@ the session has, and the task repository's own `.claude/settings.json` is never 
 reads the transcript as it streams: unless the `system`/`init` event gives `apiKeySource` `"none"`
 (the subscription login), the CLI is killed there, no record is written and the execution stops.
 A missing `apiKeySource`, or a turn (any event but a `system` one or a `rate_limit_event`) before
-the init event, counts as API billing. An undecodable line before init or a `rate_limit_event`
+the init event, counts as API billing. Whitespace-only lines are skipped. Any other undecodable
+line before init or a `rate_limit_event`
 without an object in `rate_limit_info` is refused too. The final line is checked even without a
 trailing newline. Hooks' events and the meter may come first, as they do in Claude Code 2.1.284,
 and an init that never comes is bounded by `timeout_seconds`. The watch is a

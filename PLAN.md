@@ -247,8 +247,10 @@ repository); a fail-closed push guard (#8).
   on 64-bit builds so layout changes require revisiting the estimate. The store format and runtime
   behavior are unchanged.
 - 2026-11-05 (#71): the plan-meter watch is a backstop that may stop after a request has started.
-  Refuse undecodable lines before init and non-object meter info; check a final line without a
-  newline too. Overage flags accept truthy booleans, strings and non-zero numbers, and unknown
-  values are refused. Resets more than eight days ahead are unknown and stop nothing. Keep each
+  Skip whitespace-only lines; refuse other undecodable lines before init and non-object meter
+  info; check a final line without a newline too. Strict truthy/unknown-value checks apply only
+  to overage use flags (keys containing using or inuse, case-insensitive); overageStatus in_use
+  is refused, while allowed, allowed_warning and rejected are not in use. Ignore ResetsAt
+  metadata, including null. Resets more than eight days ahead are unknown and stop nothing. Keep each
   window's newest timestamped reading across attempts and runs, including resumed records;
   timestamp arrivals when the event has none and fall back to the run start for older records.
