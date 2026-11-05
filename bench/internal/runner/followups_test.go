@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -73,12 +74,39 @@ func TestFixTestsRejectWorkerAddedTests(t *testing.T) {
 			if err := os.WriteFile(target, []byte("package a\nimport (\"os\"; \"testing\")\nfunc TestMain(m *testing.M) { os.Exit(0) }\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			_, undo, err := (&Options{}).overlay(c, src, fix, nil)
-			if undo != nil {
-				defer undo()
+			before, err := Fingerprint(c.Workspace, nil)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if err == nil || !strings.Contains(err.Error(), "worker-added") {
-				t.Fatalf("error = %v", err)
+			files, undo, err := (&Options{}).overlay(c, src, fix, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer undo()
+			if _, err := os.Stat(target); !os.IsNotExist(err) {
+				t.Fatalf("added test still present: %v", err)
+			}
+			if !strings.Contains(strings.Join(files, ","), "escape_test.go") {
+				t.Fatal("set-aside file not named")
+			}
+			if err := undo(); err != nil {
+				t.Fatal(err)
+			}
+			restored, err := Fingerprint(c.Workspace, nil)
+			if err != nil || restored != before {
+				t.Fatalf("not restored: %+v, %v", restored, err)
+			}
+			self, _ := os.Executable()
+			env := append(os.Environ(), "BENCH_TEST_ABSENT="+target)
+			c.Condition.Index = nil
+			ch := manifest.Check{ID: "fix", Type: manifest.CheckFixTests, Command: []string{self, "-test.run=^TestFollowupCheckHelper$"}}
+			res, err := (&Options{}).check(context.Background(), c, ch, &record.Record{After: before}, src, env, 5*time.Second)
+			if err != nil || !res.Passed || !strings.Contains(res.Output, "escape_test.go") {
+				t.Fatalf("result %+v, error %v", res, err)
+			}
+			restored, err = Fingerprint(c.Workspace, nil)
+			if err != nil || restored != before {
+				t.Fatalf("check did not restore worker: %+v, %v", restored, err)
 			}
 		})
 	}
@@ -115,9 +143,9 @@ func TestCheckRefusesDriftBeforeNextCommand(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(c.Workspace, "leftover_test.go"), []byte("package a\n"), 0600)
 	self, _ := os.Executable()
-	_, err = (&Options{}).check(context.Background(), c, manifest.Check{ID: "next", Type: manifest.CheckCommand, Command: []string{self, "-test.run=^$"}}, &record.Record{After: fp}, "", os.Environ(), time.Second)
-	if err == nil || !strings.Contains(err.Error(), "tree") {
-		t.Fatalf("error = %v", err)
+	res, err := (&Options{}).check(context.Background(), c, manifest.Check{ID: "next", Type: manifest.CheckCommand, Command: []string{self, "-test.run=^$"}}, &record.Record{After: fp}, "", os.Environ(), time.Second)
+	if err != nil || res.Passed || res.Exit != nil || !strings.Contains(res.Output, "tree changed before") || res.OutputSHA256 != record.SHA256(res.Output) {
+		t.Fatalf("result %+v, error %v", res, err)
 	}
 }
 
@@ -232,5 +260,118 @@ func TestFingerprintStillSeesSubmoduleCommitChanges(t *testing.T) {
 	}
 	if before == after {
 		t.Fatal("submodule commit change disappeared from fingerprint")
+	}
+}
+
+func TestFollowupCheckHelper(t *testing.T) {
+	if target := os.Getenv("BENCH_TEST_ABSENT"); target != "" {
+		if _, err := os.Stat(target); !os.IsNotExist(err) {
+			t.Fatalf("worker test present: %v", err)
+		}
+	}
+	if os.Getenv("BENCH_TEST_MUTATE") == "1" {
+		if err := os.WriteFile("a.go", []byte("package changed\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCheckRecordsDriftAfterCommand(t *testing.T) {
+	for _, kind := range []string{manifest.CheckCommand, manifest.CheckFixTests} {
+		t.Run(kind, func(t *testing.T) {
+			src, _, _, c := followupRepo(t)
+			fp, err := Fingerprint(c.Workspace, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			self, _ := os.Executable()
+			ch := manifest.Check{ID: "mutate", Type: kind, Command: []string{self, "-test.run=^TestFollowupCheckHelper$"}}
+			r := &record.Record{After: fp}
+			res, err := (&Options{}).check(context.Background(), c, ch, r, src, append(os.Environ(), "BENCH_TEST_MUTATE=1"), 5*time.Second)
+			if err != nil || res.Passed || record.Passes(ch, res, r) || !strings.Contains(res.Output, "tree changed after") || res.OutputSHA256 != record.SHA256(res.Output) {
+				t.Fatalf("result %+v, error %v", res, err)
+			}
+			want := -1
+			ch.Expect.Exit = &want
+			if record.Passes(ch, res, r) {
+				t.Fatal("drift matched expected failure exit")
+			}
+			next, err := (&Options{}).check(context.Background(), c, ch, r, src, os.Environ(), 5*time.Second)
+			if err != nil || next.Passed || !strings.Contains(next.Output, "tree changed before") || record.Passes(ch, next, r) {
+				t.Fatalf("next result %+v, error %v", next, err)
+			}
+		})
+	}
+}
+
+func TestGitDisablesWorkerHooks(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		t.Run(strconv.FormatBool(configured), func(t *testing.T) {
+			_, pre, _, c := followupRepo(t)
+			hooks := filepath.Join(c.Workspace, ".git", "hooks")
+			if configured {
+				hooks = t.TempDir()
+				followupGit(t, c.Workspace, "config", "core.hooksPath", filepath.ToSlash(hooks))
+			}
+			if err := os.MkdirAll(hooks, 0700); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(t.TempDir(), "HOOK-RAN")
+			hook := filepath.Join(hooks, "reference-transaction")
+			if err := os.WriteFile(hook, []byte("#!/bin/sh\necho ran > '"+filepath.ToSlash(marker)+"'\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			followupGit(t, c.Workspace, "commit", "--allow-empty", "-qm", "worker")
+			if _, err := git(c.Workspace, "reset", "--soft", pre); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("hook ran: %v", err)
+			}
+		})
+	}
+}
+
+func TestGitDisablesWorkerFsmonitor(t *testing.T) {
+	_, _, _, c := followupRepo(t)
+	marker := filepath.Join(t.TempDir(), "FSMONITOR-RAN")
+	script := filepath.Join(t.TempDir(), "monitor")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho ran > '"+filepath.ToSlash(marker)+"'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	followupGit(t, c.Workspace, "config", "core.fsmonitor", filepath.ToSlash(script))
+	if _, err := Fingerprint(c.Workspace, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("monitor ran: %v", err)
+	}
+}
+
+func TestGitDisablesIncludedWorkerFilters(t *testing.T) {
+	for _, conditional := range []bool{false, true} {
+		t.Run(strconv.FormatBool(conditional), func(t *testing.T) {
+			_, _, _, c := followupRepo(t)
+			config := filepath.Join(t.TempDir(), "filters")
+			if err := os.WriteFile(config, []byte("[filter \"planted\"]\n clean = touch FILTER-RAN\n required = true\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			key := "include.path"
+			if conditional {
+				key = "includeIf.gitdir:**/ws/.git.path"
+			}
+			followupGit(t, c.Workspace, "config", key, filepath.ToSlash(config))
+			if got := followupGit(t, c.Workspace, "config", "--includes", "--get", "filter.planted.clean"); got != "touch FILTER-RAN" {
+				t.Fatalf("fixture filter not active: %q", got)
+			}
+			os.WriteFile(filepath.Join(c.Workspace, ".gitattributes"), []byte("*.go filter=planted\n"), 0600)
+			os.WriteFile(filepath.Join(c.Workspace, "a.go"), []byte("package a\n// changed\n"), 0600)
+			if _, err := Fingerprint(c.Workspace, nil); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(c.Workspace, "FILTER-RAN")); !os.IsNotExist(err) {
+				t.Fatalf("included filter ran: %v", err)
+			}
+		})
 	}
 }

@@ -122,8 +122,10 @@ given. The grader's checkout of the fix is always removed, and the fix's files a
 lays over the workspace are taken back out right after that check (added ones removed, replaced
 ones restored as the worker left them), so a later check and a kept workspace see the worker's tree.
 Before each executable check, and after its command and overlay restoration, the runner verifies
-that the workspace fingerprint is the recorded worker tree. A check that changes that tree stops
-the execution without a record. Each command result also records `checked_tree`, the fingerprint
+that the workspace fingerprint is the recorded worker tree. Tree drift before a command skips
+that command and records a failed check; drift after a command or overlay restoration also records a failed check with the reason in its output.
+Other planned runs continue. A command that was skipped or whose tree drifted has no exit code,
+so it fails regardless of `expect.exit`. Commands that ran also record `checked_tree`, the fingerprint
 immediately before the command, including any fix-test overlay; `content` remains the worker tree.
 A link or junction the worker left in the way of a fix file, or in its directory path, refuses the
 check and writes nothing outside the workspace.
@@ -161,7 +163,7 @@ A **check** is declared before execution, with what it `needs`:
 | Type | Passes when |
 |---|---|
 | `command` | The command, run in the workspace after the worker, exits with `expect.exit` (default 0). |
-| `fix-tests` | The same, after the fix revision's files matching `paths` (default `*_test.go`) are laid over the tree, from a grader checkout made after the worker finished. All original Go `_test.go` files are restored from the task revision during grading, with matching fix files taking precedence. Any worker-added Go `_test.go` file outside the expected set is refused across the workspace, excluding `.git`; this conservative scope covers checks such as `go test ./...`. Modified or deleted original tests, including `TestMain`, cannot replace the grader's tests. Worker files are restored after grading. |
+| `fix-tests` | The same, after the fix revision's files matching `paths` (default `*_test.go`) are laid over the tree, from a grader checkout made after the worker finished. All original Go `_test.go` files are restored from the task revision during grading, with matching fix files taking precedence. Worker-added Go `_test.go` files outside the expected set are temporarily set aside across the workspace, excluding `.git`, and named in the check output; this conservative scope covers checks such as `go test ./...`. Modified or deleted original tests, including `TestMain`, cannot replace the grader's tests. Worker files are restored after grading. |
 | `answer` | The final answer holds every `expect.contains` string. |
 | `no-changes` | The worker left the tree as it found it. |
 | `review` | Never by itself: a human-reviewed answer, recorded with its reviewer, and never an executable gate. Every task needs at least one executable check, and a fix task needs a command or fix-tests check. |
@@ -214,7 +216,9 @@ The manifest and task revisions are trusted executable inputs. Probe, index, inj
 MCP commands run with the runner's account and can execute arbitrary code, including code from
 the worker's tree during checks. Review them before approval; subscription guards do not sandbox
 these commands. Injection must be deterministic: validation refuses an `inject` naming `claude`,
-`codex`, `gemini`, `opencode` or `agy` (including executable paths and common shell arguments).
+`codex`, `gemini`, `opencode` or `agy`: the executable basename of `argv[0]` and words inside
+common shell command strings, with `.exe`, `.cmd`, `.bat` and `.ps1` removed. An agent name in a
+directory segment or an ordinary argument does not match.
 This name check cannot detect renamed binaries, wrappers or scripts: those remain the approver's
 responsibility, as do probe/index commands. The runner has no worker sandbox. `--keep` remains
 refused with fix-tests; moving state is protection against casual discovery, not a disk boundary.

@@ -535,12 +535,17 @@ func (o *Options) check(ctx context.Context, c Cell, ch manifest.Check, r *recor
 	if err != nil {
 		return record.CheckResult{}, err
 	}
-	if before != r.After {
-		return record.CheckResult{}, fmt.Errorf("tree changed before check %s", ch.ID)
-	}
-	res := record.CheckResult{ID: ch.ID, Type: ch.Type, Content: before.Content}
+	res := record.CheckResult{ID: ch.ID, Type: ch.Type, Content: r.After.Content}
 	switch ch.Type {
 	case manifest.CheckCommand, manifest.CheckFixTests:
+		if ch.Type == manifest.CheckFixTests {
+			res.Overlay = c.Task.Provenance.FixRevision
+		}
+		if before != r.After {
+			res.Output = "tree changed before check " + ch.ID + "\n"
+			res.OutputSHA256 = record.SHA256(res.Output)
+			return res, nil
+		}
 		var head string
 		restore := func() error { return nil }
 		if ch.Type == manifest.CheckFixTests {
@@ -568,15 +573,17 @@ func (o *Options) check(ctx context.Context, c Cell, ch manifest.Check, r *recor
 		if err != nil {
 			return res, err
 		}
-		if after != before {
-			return res, fmt.Errorf("tree changed after check %s or overlay restoration", ch.ID)
-		}
 		if p.err != nil && p.exit == 0 {
 			p.exit = -1
 		}
 		exit := p.exit
 		res.Exit = &exit
 		res.Output = head + string(p.stdout) + string(p.stderr)
+		if after != before {
+			// No exit code keeps drift failed even when the expected exit is nonzero.
+			res.Exit = nil
+			res.Output += "\ntree changed after check " + ch.ID + " or overlay restoration\n"
+		}
 	case manifest.CheckAnswer, manifest.CheckReview:
 		res.Output = r.Answer
 	case manifest.CheckNoChanges:
@@ -634,6 +641,7 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 			expected[f] = nil
 		}
 	}
+	var added []string
 	err = filepath.WalkDir(c.Workspace, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -648,7 +656,7 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 		}
 		if strings.HasSuffix(rel, "_test.go") {
 			if _, ok := expected[rel]; !ok {
-				return fmt.Errorf("worker-added Go test %s: fix-tests requires only expected tests", rel)
+				added = append(added, rel)
 			}
 		}
 		return nil
@@ -692,7 +700,7 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 		}
 		return errors.Join(errs...)
 	}
-	for _, f := range files {
+	for _, f := range append(slices.Clone(files), added...) {
 		dst := filepath.Join(c.Workspace, filepath.FromSlash(f))
 		if err := insideWorkspace(c.Workspace, dst); err != nil {
 			return nil, nil, errors.Join(fmt.Errorf("the worker left a link in the way of the fix's file %s: %w", f, err), undo())
@@ -712,7 +720,10 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 			was[dst] = saved{data: data, mode: fi.Mode().Perm(), had: true}
 		}
 		var err error
-		if data, ok := expected[f]; ok && data != nil {
+		if slices.Contains(added, f) {
+			// Set worker tests aside so only the expected tests participate in grading.
+			err = os.Remove(dst)
+		} else if data, ok := expected[f]; ok && data != nil {
 			err = os.MkdirAll(filepath.Dir(dst), 0o755)
 			if err == nil {
 				err = os.WriteFile(dst, data, 0o644)
@@ -723,6 +734,9 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 		if err != nil {
 			return nil, nil, errors.Join(err, undo())
 		}
+	}
+	for _, f := range added {
+		files = append(files, "set aside "+f)
 	}
 	return files, undo, nil
 }
