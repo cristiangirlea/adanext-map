@@ -105,7 +105,7 @@ func TestNewStoreFilesArePrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{filepath.Join(repo, DirName, gitignoreFile), filepath.Join(repo, DirName, latestFile), filepath.Join(dir, headerFile), filepath.Join(dir, storeFile)} {
+	for _, path := range []string{filepath.Join(repo, DirName, latestFile), filepath.Join(dir, headerFile), filepath.Join(dir, storeFile)} {
 		fi, err := os.Stat(path)
 		if err != nil {
 			t.Fatal(err)
@@ -116,7 +116,7 @@ func TestNewStoreFilesArePrivate(t *testing.T) {
 	}
 }
 
-func TestPublishNewFallbackIsPrivate(t *testing.T) {
+func TestPublishNewFallbackGivesAnOrdinaryFileMode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not expose Unix permission bits")
 	}
@@ -129,7 +129,8 @@ func TestPublishNewFallbackIsPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fi.Mode().Perm(); got&0o077 != 0 {
-		t.Errorf("fallback mode = %o, want private", got)
+	// The umask may take bits away, never add them.
+	if got := fi.Mode().Perm(); got&^0o644 != 0 || got&0o600 != 0o600 {
+		t.Errorf("fallback mode = %o, want 644 less the umask", got)
 	}
 }

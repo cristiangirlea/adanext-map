@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -151,7 +152,7 @@ func ensureGitignore(dir string) error {
 // temporary name first, so a reader never sees half of it, and then published without replacing
 // whatever appeared at the path since the caller looked.
 func createNew(dir, name string, content []byte) error {
-	tmp, err := writeTemp(dir, name, writeBytes(content))
+	tmp, err := writeTemp(dir, name, gitignoreMode, writeBytes(content))
 	if err != nil {
 		return err
 	}
@@ -166,7 +167,7 @@ func publishNew(tmp, path string, content []byte) error {
 	if err == nil || errors.Is(err, fs.ErrExist) {
 		return nil
 	}
-	f, openErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, openErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, gitignoreMode)
 	if errors.Is(openErr, fs.ErrExist) {
 		return nil
 	}
@@ -193,7 +194,7 @@ func writeBytes(b []byte) func(io.Writer) error {
 // writeAtomic writes name in dir through a temporary file in the same directory, renamed into
 // place once complete, so a reader sees the old file or the new one, never half of one.
 func writeAtomic(dir, name string, write func(io.Writer) error) error {
-	tmp, err := writeTemp(dir, name, write)
+	tmp, err := writeTemp(dir, name, 0o600, write)
 	if err != nil {
 		return err
 	}
@@ -204,9 +205,14 @@ func writeAtomic(dir, name string, write func(io.Writer) error) error {
 	return nil
 }
 
-// writeTemp writes name's content to a synced temporary file in dir and returns its path.
-func writeTemp(dir, name string, write func(io.Writer) error) (tmp string, err error) {
-	f, err := os.CreateTemp(dir, "."+name+".*.tmp")
+// gitignoreMode is an ordinary file's mode: git reads the .gitignore like any tracked file. The
+// umask applies, as no chmod follows the create.
+const gitignoreMode = 0o644
+
+// writeTemp writes name's content to a synced temporary file in dir, created with perm, and returns
+// its path.
+func writeTemp(dir, name string, perm fs.FileMode, write func(io.Writer) error) (tmp string, err error) {
+	f, err := createTemp(dir, name, perm)
 	if err != nil {
 		return "", err
 	}
@@ -226,6 +232,18 @@ func writeTemp(dir, name string, write func(io.Writer) error) (tmp string, err e
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+// createTemp is os.CreateTemp with a mode of the caller's choice; CreateTemp always uses 0600.
+func createTemp(dir, name string, perm fs.FileMode) (*os.File, error) {
+	for range 10000 {
+		path := filepath.Join(dir, "."+name+"."+strconv.FormatUint(rand.Uint64(), 36)+".tmp")
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, perm)
+		if !errors.Is(err, fs.ErrExist) {
+			return f, err
+		}
+	}
+	return nil, fmt.Errorf("no free temporary name for %s in %s", name, dir)
 }
 
 // MaxLoadBytes is how much Load decompresses before giving up: a repository can carry a planted

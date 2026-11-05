@@ -144,8 +144,9 @@ written earlier still load. The limits are not flags.
     store.json.gz              the model, gzip-compressed JSON
 ```
 
-New store files, including `.gitignore`, `header.json` and `latest`, use private permissions
-(0600, further restricted by the umask on Unix); an existing `.gitignore` keeps its permissions.
+New store files (`header.json`, `latest`, the store) use private permissions (0600); a new
+`.gitignore` is an ordinary 0644 file. On Unix the umask applies to both, and an existing
+`.gitignore` keeps its permissions.
 No chmod is required, including on filesystems without Unix permission bits.
 
 Each file is written to a temporary file in the same directory and renamed into place. Writing a
