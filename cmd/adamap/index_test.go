@@ -994,6 +994,31 @@ func TestRustupHintPreservesIndexerExitError(t *testing.T) {
 	}
 }
 
+func TestIndexMidStreamFailureLeavesStoreUntouched(t *testing.T) {
+	repo := t.TempDir()
+	latest := filepath.Join(repo, ".adamap", "latest")
+	if err := os.MkdirAll(filepath.Dir(latest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const previous = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+	writeFile(t, latest, previous)
+	x := sciptest.Index()
+	x.Documents = append(x.Documents, &scippb.Document{RelativePath: "bad.go", Symbols: []*scippb.SymbolInformation{{}}})
+	input := filepath.Join(t.TempDir(), "index.scip")
+	if err := os.WriteFile(input, sciptest.Bytes(t, x), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runIndexCmd("--scip", input, "--repo", repo, "--commit", testCommit)
+	if code != 1 || out != "" || !strings.Contains(errOut, `document "bad.go": symbol information 0 has no symbol`) {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	gone(t, filepath.Join(repo, ".adamap", testCommit))
+	got, err := os.ReadFile(latest)
+	if err != nil || string(got) != previous {
+		t.Fatalf("latest = %q, err %v", got, err)
+	}
+}
+
 func TestIndexUsesSingularForOneSkippedDocument(t *testing.T) {
 	for _, name := range []string{"../outside.go", "aux.go", "pkg/com1.go", "a:x.go", "a\nb.go"} {
 		t.Run(strconv.Quote(name), func(t *testing.T) {

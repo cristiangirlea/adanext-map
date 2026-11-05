@@ -214,6 +214,12 @@ repository); a fail-closed push guard (#8).
   merge. References from kept documents to symbols defined in skipped ones are kept. Each quoted
   path in the skip note is cut to 200 bytes, and one skip says `document`. The store format is
   unchanged.
+- 2026-11-05: SCIP decoding converts each document before reading the next and decodes external
+  symbols after all documents to preserve merge precedence. Peak memory includes the serialized
+  file, the largest decoded document and the model; no fixed reduction is claimed. Visitor limit
+  and conversion refusals keep their messages; only protobuf parse failures say "not a SCIP index".
+  Wire-order, overlong tag and length encodings, unknown wire types on known fields, and a failed
+  CLI decode leaving the commit store absent and latest unchanged are covered by fixture tests.
 - 2026-11-05 (#50): detect replacement of latest by file identity without changing the store format;
   retry both Windows sharing violations and access denied within the existing bounded retry. Add
   U+200E, U+200F, U+061C and U+2060 to the hidden-character check. Refresh commands keep targeting
