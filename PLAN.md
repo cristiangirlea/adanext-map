@@ -220,3 +220,20 @@ repository); a fail-closed push guard (#8).
   and conversion refusals keep their messages; only protobuf parse failures say "not a SCIP index".
   Wire-order, overlong tag and length encodings, unknown wire types on known fields, and a failed
   CLI decode leaving the commit store absent and latest unchanged are covered by fixture tests.
+- 2026-11-05 (#50): detect replacement of latest by file identity without changing the store format;
+  retry both Windows sharing violations and access denied within the existing bounded retry. Add
+  U+200E, U+200F, U+061C and U+2060 to the hidden-character check. Refresh commands keep targeting
+  PowerShell on Windows (Git Bash preserves ordinary single-quoted paths); cmd.exe remains outside
+  the documented shell support.
+  Assert 200 successful readLatest calls while a
+  goroutine replaces latest, counting underlying read errors without failing on rename contention.
+  The verbose run on this Windows machine recorded 200 successful reads, 7
+  ERROR_SHARING_VIOLATION errors and 0 ERROR_ACCESS_DENIED errors, with 32 successful renames
+  and 15 failed rename attempts. Replacements pause one millisecond so retries can observe a
+  completed rename rather than an uninterrupted stream of replacements. These counts describe one run, not a guarantee about every
+  Windows environment. Add a per-store latest-reader seam beside the existing pause seam to
+  verify recovery after two ERROR_ACCESS_DENIED errors and the five-attempt limit for persistent
+  denial. No pending-deletion cause is established by the run; docs and code comments avoid
+  claiming one. When either latest file identity is unreadable, compare modification time, size
+  and header time alone to avoid reloading an unchanged store on every call; test both missing
+  identities and each missing side, including changes to each metadata field.

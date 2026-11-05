@@ -827,7 +827,7 @@ func shellReads(t *testing.T, p string) string {
 }
 
 func TestTheRefreshCommandQuotesThePathForTheShell(t *testing.T) {
-	for _, p := range []string{hardPath, "/work/plain", "/work/it's", `/work/back\slash`, "/work/tab\there", ""} {
+	for _, p := range []string{hardPath, "/work/plain", "/work/it's", `/work/back\slash`, `C:\work\x`, `C:\work\a&b`, `C:\work\a|b`, "/work/tab\there", ""} {
 		if got := shellReads(t, p); got != p {
 			t.Errorf("shellArg(%q) is read back by the shell as %q", p, got)
 		}
@@ -837,7 +837,7 @@ func TestTheRefreshCommandQuotesThePathForTheShell(t *testing.T) {
 func TestPOSIXAndPowerShellQuotingHaveTheirExactForms(t *testing.T) {
 	for _, tc := range []struct{ in, posix, powershell string }{
 		{"/work/plain", "/work/plain", "/work/plain"},
-		{`C:\work\plain`, `'C:\work\plain'`, `C:\work\plain`},
+		{`C:\work\plain`, `'C:\work\plain'`, `'C:\work\plain'`},
 		{"", "''", "''"},
 		{"/work/it's", `'/work/it'\''s'`, "'/work/it''s'"},
 		{"a b", "'a b'", "'a b'"},
@@ -1039,6 +1039,48 @@ func TestImpactStructuredContentCountsTheReferencesOutsideEveryDefinition(t *tes
 	}
 	if a := ok(t, cs, "impact", map[string]any{"target": "C", "depth": 1}); a.structured["unattributed"] != nil {
 		t.Errorf("unattributed = %v, want it left out when 0", a.structured["unattributed"])
+	}
+}
+
+func TestRefreshBackslashesSurviveGitBash(t *testing.T) {
+	for _, p := range []string{`C:\work\x`, `C:\work\a&b`, `C:\work\a|b`} {
+		if got := runShell(t, "sh", "-c", "printf %s "+shellArg(p)); got != p {
+			t.Errorf("refresh argument %q read as %q", p, got)
+		}
+	}
+}
+
+func TestRepairedFailedStoreIsNoticedWithinOneClockTick(t *testing.T) {
+	repo := t.TempDir()
+	writeStore(t, repo, commitA, sciptest.Index())
+	s := &stores{repo: repo}
+	if _, err := s.get(); err != nil {
+		t.Fatal(err)
+	}
+	writeStore(t, repo, commitB, sciptest.CallGraph())
+	latest := filepath.Join(repo, store.DirName, "latest")
+	header := filepath.Join(store.Dir(repo, commitB), "header.json")
+	tick := time.Now().Add(time.Minute).Truncate(time.Second)
+	for _, p := range []string{latest, header} {
+		if err := os.Chtimes(p, tick, tick); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(store.Dir(repo, commitB), "store.json.gz"), []byte("broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if snap, newer, err := s.current(); err != nil || newer == nil || snap.header.Commit != commitA {
+		t.Fatalf("expected fallback after damage: %v %v", newer, err)
+	}
+	writeStore(t, repo, commitB, sciptest.CallGraph())
+	for _, p := range []string{latest, header} {
+		if err := os.Chtimes(p, tick, tick); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap, newer, err := s.current()
+	if err != nil || newer != nil || snap.header.Commit != commitB {
+		t.Fatalf("repair with unchanged timestamps was missed: %v %v, snapshot %s", newer, err, snap.header.Commit)
 	}
 }
 

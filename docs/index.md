@@ -88,9 +88,10 @@ failed or panicked. An `index.scip` already in the repository is neither read no
 kill prevents cleanup and can leave `adamap-index-*` directories behind; adamap does not remove
 stale directories at startup. Remove them manually when no indexer is using them, or rely on the
 system's temporary-directory cleanup policy, if configured. If the indexer is not on `PATH`,
-adamap names it and says how to install it. When rust-analyzer fails, adamap also suggests
-`rustup component add rust-analyzer`, since a rustup shim without that component fails the same
-way. The indexer's own output goes to stderr.
+adamap names it and says how to install it. On any rust-analyzer failure, adamap also suggests
+`rustup component add rust-analyzer`; this is a hint, not detection of a rustup shim without that
+component. The original indexer error remains available in the error chain. The indexer's own
+output goes to stderr.
 
 For any other language, run its SCIP indexer yourself and pass the output with `--scip`.
 
