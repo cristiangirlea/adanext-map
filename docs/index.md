@@ -122,7 +122,29 @@ it, while `--max-bytes` is what bounds the memory of reading the file. When the 
 enforced as the JSON streams in, one element at a time, and loading stops at the first one over its
 limit instead of after building them all; the counts in `header.json` are checked first, but only as a
 quick refusal, since a hand-edited header proves nothing. The store format is unchanged and stores
-written earlier still load. The limits are not flags.
+written earlier still load. The limits are not flags, and raising `--max-bytes` does not raise them.
+
+These defaults are count ceilings, not a safe RAM budget. On a 64-bit Go build the document, symbol,
+occurrence and relationship structs occupy 80, 112, 64 and 24 bytes respectively. At all four limits,
+their slice elements alone total 6,080,000,000 bytes (about 5.7 GiB). Spare slice capacity and old and
+new backing arrays coexisting during growth can bring allocations to roughly 10 GB, before string
+contents, definition/enclosing ranges, decoder buffers and validation maps. This is an estimate,
+not a measured peak or an upper bound: even a crafted store below the 4 GiB decompressed byte limit
+can exhaust memory. Use a process memory limit when loading untrusted stores.
+
+The decoder streams the counted arrays, but `json.Decoder.Decode` still buffers each whole value
+handled by it, including an occurrence, relationship, definition or tool object. Strings (including
+unknown-field strings) are also read whole. A single such value can approach the decompressed byte
+limit, so decoder buffering is linear in that limit, not constant space. Unknown objects and arrays
+are skipped token by token, with a nesting depth limit of 10,000 for the skipped value.
+
+A Chromium-scale repository can exceed 50,000,000 occurrences; the Rust measurement is not a
+promise that every real repository fits. If a trusted repository hits a count limit, index a smaller
+project or workspace separately with its own `--repo`, or report the named limit, actual counts and
+available RAM so a change to `model.DefaultLimits` can be evaluated. There is currently no CLI
+override. A locally raised limit needs a rebuilt binary for both indexing and querying, and enough
+memory for the decoded index and query structures; rebuilding the same index with the same defaults
+will not remove the limit.
 
 ## The store
 

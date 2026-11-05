@@ -13,6 +13,7 @@ import (
 // one is passed. json.Decoder.Decode would read a whole array first, and each tiny `{},` in it
 // becomes a struct: the bytes read would not bound the memory. The result is what Decode gives for
 // the same document (the keys match exactly, where encoding/json also ignores case).
+// Individual Decode calls and string tokens still buffer whole values, bounded only by r's byte limit.
 func decodeIndex(r io.Reader, lim model.Limits) (*model.Index, error) {
 	d := &decoder{dec: json.NewDecoder(r), lim: lim}
 	var idx model.Index

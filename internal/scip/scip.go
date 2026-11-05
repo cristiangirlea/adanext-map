@@ -77,8 +77,7 @@ func decode(data []byte, lim model.Limits) (*model.Index, Skipped, error) {
 	if err != nil {
 		return nil, Skipped{}, err
 	}
-	// Conversion makes a symbol of each definition occurrence that has no SymbolInformation, so the
-	// symbol count can grow; the others only shrink as documents and symbols merge or are skipped.
+	// Only symbols can grow from definitions lacking SymbolInformation; documents, occurrences and relationships cannot grow during conversion.
 	if err := lim.Check(idx.Counts(), 0); err != nil {
 		return nil, Skipped{}, fmt.Errorf("the converted SCIP index has %w", err)
 	}
