@@ -147,10 +147,16 @@ SCIP index and the store are refused with an error naming the limit when they ho
 documents, 20,000,000 symbols (global and local together, as in the header's `counts`), 50,000,000
 occurrences or 20,000,000 relationships (over all symbols). These are generous: a Rust workspace of
 2,000 files measured about 20,000 occurrences per 17 files, some 2.4 million occurrences in all, so
-the defaults leave room for some 40,000 such files. For an index the counts are checked right after the
-protobuf is parsed and before it is converted, so they bound the conversion and the store written from
-it, while `--max-bytes` is what bounds the memory of reading the file. When the store is loaded they are
-enforced as the JSON streams in, one element at a time, and loading stops at the first one over its
+the defaults leave room for some 40,000 such files. For an index the counts accumulate as each
+document or external symbol is decoded, before it is converted, including items in skipped or
+duplicate documents. Conversion stops at the first
+count over its limit. The serialized file stays in memory, bounded by `--max-bytes`, while the
+bindings decode and convert one document at a time; the whole decoded protobuf index is never
+retained alongside the model. Peak memory includes the serialized file, the largest decoded
+document and the model. The converted symbol
+count is checked again because definition occurrences can introduce symbols. When the store is
+loaded the limits are enforced as the JSON streams in, one element at a time, and loading stops at
+the first one over its
 limit instead of after building them all; the counts in `header.json` are checked first, but only as a
 quick refusal, since a hand-edited header proves nothing. The store format is unchanged and stores
 written earlier still load. The limits are not flags.
