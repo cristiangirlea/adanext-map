@@ -44,8 +44,8 @@ func Authorize(m *manifest.Manifest, approval int, environ []string) error {
 		errs = append(errs, "manifest: "+i.String())
 	}
 	if n := m.PlannedRuns(); approval != n {
-		errs = append(errs, fmt.Sprintf("a real run needs %s %d, the plan's run count, given by the owner's approval of that budget (got %d)",
-			ApprovalFlag, n, approval))
+		errs = append(errs, fmt.Sprintf("a real run needs %s %d, given by the owner (got %d): %s",
+			ApprovalFlag, n, approval, approvalScope(m)))
 	}
 	if keys := ProviderKeysSet(environ); len(keys) > 0 {
 		errs = append(errs, fmt.Sprintf("provider API key variables are set: %s; unset them, the benchmark runs CLIs on their subscription plans and never on API access",
@@ -171,4 +171,9 @@ func readSettings(p string, v any, issues *[]string) bool {
 		return false
 	}
 	return true
+}
+
+// approvalScope makes the session cost and the local resume boundary explicit.
+func approvalScope(m *manifest.Manifest) string {
+	return fmt.Sprintf("%d runs, maximum %d CLI sessions (%d attempts per run) per execution, excluding manual marker removal and limit restarts; resume checks only this records directory, cannot discover approvals or records elsewhere, and a new directory can repeat the whole plan", m.PlannedRuns(), m.PlannedRuns()*m.Execution.MaxAttempts, m.Execution.MaxAttempts)
 }

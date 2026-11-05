@@ -384,3 +384,19 @@ func TestPlanReserve(t *testing.T) {
 		t.Fatalf("decoded %v (%v)", e.PlanReserve, err)
 	}
 }
+
+func TestInjectRefusesAgentCLIs(t *testing.T) {
+	for _, command := range [][]string{{"claude", "-p"}, {"C:\\tools\\CODEX.EXE"}, {"sh", "-c", "gemini -p hello"}, {"cmd", "/c", "opencode"}, {"/usr/bin/agy"}, {"claude.ps1"}} {
+		m := benchtest.Synthetic()
+		m.Conditions[4].Inject = command
+		found := false
+		for _, issue := range m.Validate() {
+			if strings.Contains(issue.Path, "inject") && strings.Contains(issue.Msg, "agent CLI") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("accepted inject %q", command)
+		}
+	}
+}

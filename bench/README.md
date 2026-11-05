@@ -23,7 +23,7 @@ go run ./bench/cmd/adamap-bench validate --tasks bench/tasks.example.json
 # 2. Print every planned cell and the command its first attempt would run. Runs nothing.
 go run ./bench/cmd/adamap-bench run --manifest bench/manifest.example.json --dry-run
 
-# 3. Run the plan, once the owner has approved its exact run count.
+# 3. Run the plan, once the owner has approved its exact run count and maximum sessions.
 go run ./bench/cmd/adamap-bench run --manifest bench/manifest.example.json \
   --records bench/records/pilot-1 --source cristiangirlea/harness=/path/to/harness \
   --i-have-approval-for-N-runs 240
@@ -41,7 +41,10 @@ A real `run` refuses unless every one of these holds:
 
 - the manifest has no issue at all;
 - `--i-have-approval-for-N-runs` equals the plan's run count (tasks x conditions x backends x
-  repeats), and the budget's `max_runs` covers it;
+  repeats), and the budget's `max_runs` covers it. The approval error, dry run and execution
+  log state the maximum CLI sessions: runs x `execution.max_attempts` (240 runs with two
+  attempts means up to 480 sessions per execution). Manual marker removal and limit restarts
+  can spend more sessions across executions; the flag is not a lifetime session budget;
 - no provider key variable is set (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
   `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, the Bedrock, Vertex and Foundry switches,
   endpoints and credentials (`AWS_ACCESS_KEY_ID`, `AWS_PROFILE`, `GOOGLE_APPLICATION_CREDENTIALS`
@@ -56,7 +59,11 @@ A real `run` refuses unless every one of these holds:
   reads away from the ones scanned.
 
 Records go to `--records`, one `<run id>.json` per run. A run whose record exists is skipped, so an
-interrupted run resumes; the approval still names the whole plan. Before a run's first attempt the
+interrupted run resumes; the approval still names the whole plan. Resume checks only this records
+directory: it cannot discover approvals or records elsewhere. A new `--records` directory can
+repeat the entire plan with the same N. The approval text states this boundary; keep using the
+same records directory for a plan, and obtain approval again before intentionally repeating it.
+Before a run's first attempt the
 runner writes `<run id>.started` beside the records, and removes it once the record is written. A
 run that stops after that point (a failed check, a refused login, an interruption) may have spent
 a session: its marker stays and says why, resume does not start it again, and the execution ends
@@ -106,11 +113,18 @@ in `unifiedWindows` (`five_hour`, `seven_day`, any other) and for the event's ow
   cannot be waited out and stops nothing; overage and a rejected request still do.
 
 Transcripts and the warm index
-cache go to `--work` (default: a temp directory). Each workspace is a directory of its own in the
+cache go to `--work` (default: `<user cache>/adamap-bench/<manifest name>`, from the OS user
+cache directory, rather than temporary workspace storage). Keep a custom `--work` outside the
+temporary workspace storage too; putting state beneath a workspace's ancestors makes it easy to
+find through parent-directory exploration. Each workspace is a directory of its own in the
 system temp directory, away from `--work`, and is removed after its record unless `--keep` is
 given. The grader's checkout of the fix is always removed, and the fix's files a `fix-tests` check
 lays over the workspace are taken back out right after that check (added ones removed, replaced
 ones restored as the worker left them), so a later check and a kept workspace see the worker's tree.
+Before each executable check, and after its command and overlay restoration, the runner verifies
+that the workspace fingerprint is the recorded worker tree. A check that changes that tree stops
+the execution without a record. Each command result also records `checked_tree`, the fingerprint
+immediately before the command, including any fix-test overlay; `content` remains the worker tree.
 A link or junction the worker left in the way of a fix file, or in its directory path, refuses the
 check and writes nothing outside the workspace.
 `--keep` is refused for a plan with a `fix-tests` check: the worker is not sandboxed, so a kept
@@ -147,7 +161,7 @@ A **check** is declared before execution, with what it `needs`:
 | Type | Passes when |
 |---|---|
 | `command` | The command, run in the workspace after the worker, exits with `expect.exit` (default 0). |
-| `fix-tests` | The same, after the fix revision's files matching `paths` (default `*_test.go`) are laid over the tree, from a grader checkout made after the worker finished. |
+| `fix-tests` | The same, after the fix revision's files matching `paths` (default `*_test.go`) are laid over the tree, from a grader checkout made after the worker finished. All original Go `_test.go` files are restored from the task revision during grading, with matching fix files taking precedence. Any worker-added Go `_test.go` file outside the expected set is refused across the workspace, excluding `.git`; this conservative scope covers checks such as `go test ./...`. Modified or deleted original tests, including `TestMain`, cannot replace the grader's tests. Worker files are restored after grading. |
 | `answer` | The final answer holds every `expect.contains` string. |
 | `no-changes` | The worker left the tree as it found it. |
 | `review` | Never by itself: a human-reviewed answer, recorded with its reviewer, and never an executable gate. Every task needs at least one executable check, and a fix task needs a command or fix-tests check. |
@@ -164,7 +178,9 @@ record cannot claim a run it is not, and a swapped task and condition names no p
 2. The source fingerprint: the commit, plus the hash of every difference from it by content
    (tracked and untracked). A commit alone does not identify a dirty tree.
 3. The condition's probe, then its index: built, or (warm) copied back from the cell's first
-   build. The digest covers every file of the output. Then its injection.
+   build. Cache paths include the task revision and source commit/content fingerprint, and reuse
+   verifies the cached source, digest and size. The digest covers every file of the output.
+   Then its injection.
 4. Up to `max_attempts` attempts, each a fresh CLI session with the prompt on stdin. Each
    attempt keeps its transcript and the transcript's hash, its exit code, wall time, usage, cost
    and the tool calls and file reads its transcript shows. Failed attempts stay in the record.
@@ -175,7 +191,10 @@ The claude adapter runs `claude -p --output-format stream-json --verbose --model
 --permission-mode <mode> --setting-sources user --strict-mcp-config --mcp-config <state>/mcp.json
 --settings <state>/settings.json --allowedTools <fixed tools plus the condition's>
 [--disallowedTools ...] [--append-system-prompt <map>]`. The condition's MCP server is the only one
-the session has, and the task repository's own `.claude/settings.json` is never loaded. The runner
+the session has, and the task repository's own `.claude/settings.json` is never loaded. Its `CLAUDE.md` instruction
+files still load from each task revision and can differ across tasks. This is not normalized by
+the framework: inspect those instructions when approving tasks and interpret cross-task results
+with that limit. The runner
 reads the transcript as it streams: unless the `system`/`init` event gives `apiKeySource` `"none"`
 (the subscription login), the CLI is killed there, no record is written and the execution stops.
 A missing `apiKeySource`, or a turn (any event but a `system` one or a `rate_limit_event`) before
@@ -190,6 +209,24 @@ user's own settings and memory files, and the worker is not sandboxed from the n
 paths outside its workspace beyond the CLI's permission mode: keeping the other runs' state away
 from the workspace hides nothing from a worker that searches the disk. Isolation records only what is
 observable.
+
+The manifest and task revisions are trusted executable inputs. Probe, index, inject, check and
+MCP commands run with the runner's account and can execute arbitrary code, including code from
+the worker's tree during checks. Review them before approval; subscription guards do not sandbox
+these commands. Injection must be deterministic: validation refuses an `inject` naming `claude`,
+`codex`, `gemini`, `opencode` or `agy` (including executable paths and common shell arguments).
+This name check cannot detect renamed binaries, wrappers or scripts: those remain the approver's
+responsibility, as do probe/index commands. The runner has no worker sandbox. `--keep` remains
+refused with fix-tests; moving state is protection against casual discovery, not a disk boundary.
+
+Every runner Git call has a two-minute timeout and a clean Git environment: caller `GIT_*`
+settings are removed, system/global config and system attributes are disabled, and repository
+hooks, fsmonitor and every configured clean/smudge/process filter are disabled. Repository
+attributes cannot activate those filters. Unrepresentable filter names are refused. Status
+skips dirty submodule contents while still detecting commit changes; diffs disable external
+programs/textconv. Filtered files can therefore
+appear dirty by their literal content. On Windows timeout kills Git itself; inherited pipe waits
+are bounded, but this is not a sandbox for descendants.
 
 ## Records and the reducer
 
@@ -272,7 +309,7 @@ on the owner's Windows PC:
 Each condition has its own index command, MCP server and tools. The timeout, attempts,
 permission mode and the fixed tool set are the same for every condition.
 
-The plan is 16 tasks x 5 conditions x 1 backend x 3 repeats = **240 runs**, each up to 2 attempts.
+The plan is 16 tasks x 5 conditions x 1 backend x 3 repeats = **240 runs**, each up to 2 attempts: **maximum 480 CLI sessions per execution**, excluding limit restarts or manual marker removal.
 The conditions are counterbalanced by a Latin square (seed 20261013). The cache is warm: repeat 1
 of each cell builds its index, and repeats 2 and 3 reuse it.
 

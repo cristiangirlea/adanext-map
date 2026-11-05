@@ -179,6 +179,14 @@ func (v *validator) conditions(m *Manifest) {
 			v.noKeysInArgs(p+".index.command", c.Index.Command)
 			v.noKeys(p+".index.settings", c.Index.Settings)
 		}
+		for _, arg := range c.Inject {
+			for _, token := range strings.FieldsFunc(strings.ToLower(strings.ReplaceAll(arg, "\\", "/")), func(r rune) bool { return strings.ContainsRune(" /\t\n;|&\"'()", r) }) {
+				name := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(token, ".exe"), ".cmd"), ".bat"), ".ps1")
+				if slices.Contains([]string{"claude", "codex", "gemini", "opencode", "agy"}, name) {
+					v.add(p+".inject", "agent CLI refused: injection must be deterministic; review all manifest commands as trusted code")
+				}
+			}
+		}
 		v.noKeysInArgs(p+".inject", c.Inject)
 		v.noKeysInArgs(p+".probe", c.Probe)
 		v.noKeys(p+".settings", c.Settings)

@@ -72,6 +72,21 @@ func TestCheckRejects(t *testing.T) {
 		{"a build without its time", func(r []record.Record) []record.Record { benchtest.Find(r, fix).Index.BuildMS = nil; return r }, fix, "build time"},
 		{"a planned reuse that built", func(r []record.Record) []record.Record { benchtest.Find(r, reuse).Index.Reused = false; return r }, reuse, "planned to reuse"},
 		// Checks.
+		{"a checked tree at another commit", func(r []record.Record) []record.Record {
+			x := benchtest.Find(r, fix)
+			x.Checks[0].CheckedTree = &record.Fingerprint{Commit: benchtest.Rev(99), Content: x.After.Content}
+			return r
+		}, fix, "another checked tree"},
+		{"a checked tree without content", func(r []record.Record) []record.Record {
+			x := benchtest.Find(r, fix)
+			x.Checks[0].CheckedTree = &record.Fingerprint{Commit: x.After.Commit}
+			return r
+		}, fix, "another checked tree"},
+		{"a plain check on another content", func(r []record.Record) []record.Record {
+			x := benchtest.Find(r, nav)
+			x.Checks[0].CheckedTree = &record.Fingerprint{Commit: x.After.Commit, Content: record.SHA256("other")}
+			return r
+		}, nav, "another checked tree"},
 		{"a declared check missing", func(r []record.Record) []record.Record {
 			x := benchtest.Find(r, control)
 			x.Checks = x.Checks[:1]

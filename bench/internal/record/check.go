@@ -222,6 +222,11 @@ func (c *checker) checks(r *Record, task manifest.Task) {
 		if res.Content != r.After.Content {
 			c.add(id, fmt.Sprintf("check %q ran on content %.12s, the run's tree is %.12s", res.ID, res.Content, r.After.Content))
 		}
+		if tree := res.CheckedTree; tree != nil {
+			if tree.Commit != r.After.Commit || tree.Content == "" || ch.Type != manifest.CheckFixTests && tree.Content != r.After.Content {
+				c.add(id, fmt.Sprintf("check %q names another checked tree", res.ID))
+			}
+		}
 		if ch.Type == manifest.CheckFixTests && res.Overlay != task.Provenance.FixRevision {
 			c.add(id, fmt.Sprintf("check %q: overlay %q, want the fix revision %s", res.ID, res.Overlay, task.Provenance.FixRevision))
 		}

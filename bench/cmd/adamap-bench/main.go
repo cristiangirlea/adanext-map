@@ -168,7 +168,7 @@ func runRun(args, environ []string, stdout, stderr io.Writer) int {
 	mpath := fl.String("manifest", "", "the manifest")
 	dry := fl.Bool("dry-run", false, "print every planned cell and the command it would run; run nothing")
 	rdir := fl.String("records", "", "the directory for the run records (a real run)")
-	work := fl.String("work", "", "the directory for workspaces, transcripts and the warm cache (default: a temp directory)")
+	work := fl.String("work", "", "the directory for transcripts and the warm cache (default: user cache/adamap-bench/<manifest>)")
 	approval := fl.Int(strings.TrimPrefix(runner.ApprovalFlag, "--"), 0, "the plan's run count, as the owner approved it")
 	keep := fl.Bool("keep", false, "leave each workspace in place (refused when a task has a fix-tests check)")
 	src := sources{}
@@ -200,7 +200,11 @@ func runRun(args, environ []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *work == "" {
-		*work = filepath.Join(os.TempDir(), "adamap-bench", m.Name)
+		*work, err = defaultWorkDir(m.Name)
+		if err != nil {
+			fmt.Fprintf(stderr, "adamap-bench: %v\n", err)
+			return 1
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -271,4 +275,12 @@ func fakeAgent(in io.Reader, out io.Writer, environ []string) int {
 		return 0
 	}
 	return runner.FakeAgent(in, out, get("ADAMAP_BENCH_ATTEMPT"), get("ADAMAP_BENCH_FAKE_FAIL"))
+}
+
+func defaultWorkDir(name string) (string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(cache, "adamap-bench", name), nil
 }
