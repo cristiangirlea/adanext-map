@@ -171,6 +171,7 @@ func TestRealLatestRenameErrors(t *testing.T) {
 	writeStore(t, repo, commitA, sciptest.Index())
 	path := filepath.Join(repo, store.DirName, "latest")
 	counts := map[syscall.Errno]int{}
+	replaced := 0
 	s := &stores{repo: repo, latest: func(repo string) (string, error) {
 		commit, err := store.Latest(repo)
 		if err == nil {
@@ -179,6 +180,8 @@ func TestRealLatestRenameErrors(t *testing.T) {
 			var errno syscall.Errno
 			if errors.As(err, &errno) {
 				counts[errno]++
+			} else if errors.Is(err, store.ErrReplaced) {
+				replaced++
 			} else {
 				t.Errorf("unexpected latest error: %v", err)
 			}
@@ -222,7 +225,7 @@ func TestRealLatestRenameErrors(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
-	t.Logf("real rename reads: success=%d, ERROR_ACCESS_DENIED=%d, ERROR_SHARING_VIOLATION=%d; renames=%d, rename failures=%d", counts[0], counts[syscall.ERROR_ACCESS_DENIED], counts[errorSharingViolation], renames, renameFailures)
+	t.Logf("real rename reads: success=%d, ERROR_ACCESS_DENIED=%d, ERROR_SHARING_VIOLATION=%d, replaced=%d; renames=%d, rename failures=%d", counts[0], counts[syscall.ERROR_ACCESS_DENIED], counts[errorSharingViolation], replaced, renames, renameFailures)
 	if writeErr != nil {
 		t.Fatal(writeErr)
 	}

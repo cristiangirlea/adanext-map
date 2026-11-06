@@ -246,6 +246,9 @@ func createTemp(dir, name string, perm fs.FileMode) (*os.File, error) {
 	return nil, fmt.Errorf("no free temporary name for %s in %s", name, dir)
 }
 
+// ErrReplaced is a file swapped between its check and its open; a second read can succeed.
+var ErrReplaced = errors.New("was replaced while it was opened, so what was read is not the file that was checked: run it again")
+
 // MaxLoadBytes is how much Load decompresses before giving up: a repository can carry a planted
 // store.json.gz that inflates without end.
 const MaxLoadBytes = 4 << 30
@@ -366,8 +369,7 @@ func openRegular(path string) (*os.File, error) {
 		err = fmt.Errorf("%s is not a regular file", path)
 	}
 	if err == nil && !os.SameFile(fi, opened) {
-		err = fmt.Errorf("%s was replaced while it was opened, so what was read is not the file that was checked: "+
-			"run it again", path)
+		err = fmt.Errorf("%s %w", path, ErrReplaced)
 	}
 	if err != nil {
 		f.Close()

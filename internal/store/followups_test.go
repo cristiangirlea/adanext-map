@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -59,7 +60,7 @@ func TestOpenRegularRefusesReplacementAtSamePath(t *testing.T) {
 	if f != nil {
 		f.Close()
 	}
-	if err == nil || !strings.Contains(err.Error(), "was replaced") {
+	if !errors.Is(err, ErrReplaced) || !strings.Contains(err.Error(), "was replaced") {
 		t.Fatalf("openRegular = %v, want replacement refusal", err)
 	}
 }
