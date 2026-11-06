@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -170,7 +171,7 @@ func (s *stores) readLatest() (string, error) {
 	}
 	for attempt := 1; ; attempt++ {
 		commit, err := latest(s.repo)
-		if err == nil || attempt == latestAttempts || !isSharingViolation(err) {
+		if err == nil || attempt == latestAttempts || !(isSharingViolation(err) || errors.Is(err, store.ErrReplaced)) {
 			return commit, err
 		}
 		pause(latestPause)
