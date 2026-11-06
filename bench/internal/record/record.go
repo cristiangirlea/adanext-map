@@ -189,11 +189,13 @@ type CheckResult struct {
 	Exit         *int   `json:"exit,omitempty"`
 	Output       string `json:"output"`
 	OutputSHA256 string `json:"output_sha256"`
-	// Content is the tree the check ran on; it must be the record's After.
+	// Content is the worker tree before any trusted overlay; it must equal the record's After.
 	Content string `json:"content"`
 	// Overlay is the fix revision whose test files a fix-tests check laid over the tree.
 	Overlay string `json:"overlay,omitempty"`
-	Passed  bool   `json:"passed"`
+	// CheckedTree identifies the actual command input, including any trusted test overlay.
+	CheckedTree *Fingerprint `json:"checked_tree,omitempty"`
+	Passed      bool         `json:"passed"`
 	// Reviewer and ReviewedOn are set when a human reviewed the answer (review checks only).
 	Reviewer   string `json:"reviewer,omitempty"`
 	ReviewedOn string `json:"reviewed_on,omitempty"`

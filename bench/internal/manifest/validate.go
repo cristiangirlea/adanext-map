@@ -179,6 +179,9 @@ func (v *validator) conditions(m *Manifest) {
 			v.noKeysInArgs(p+".index.command", c.Index.Command)
 			v.noKeys(p+".index.settings", c.Index.Settings)
 		}
+		if agentInjection(c.Inject) {
+			v.add(p+".inject", "agent CLI refused: injection must be deterministic; review all manifest commands as trusted code")
+		}
 		v.noKeysInArgs(p+".inject", c.Inject)
 		v.noKeysInArgs(p+".probe", c.Probe)
 		v.noKeys(p+".settings", c.Settings)
@@ -588,4 +591,39 @@ func Inside(p string) bool {
 	}
 	c := path.Clean(p)
 	return c != "." && c != ".." && !strings.HasPrefix(c, "../")
+}
+
+func executableName(word string) string {
+	name := path.Base(strings.ToLower(strings.ReplaceAll(word, "\\", "/")))
+	for _, ext := range []string{".exe", ".cmd", ".bat", ".ps1"} {
+		name = strings.TrimSuffix(name, ext)
+	}
+	return name
+}
+
+func agentInjection(argv []string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	isAgent := func(word string) bool {
+		return slices.Contains([]string{"claude", "codex", "gemini", "opencode", "agy"}, executableName(word))
+	}
+	if isAgent(argv[0]) {
+		return true
+	}
+	if !slices.Contains([]string{"sh", "bash", "dash", "zsh", "ksh", "cmd", "powershell", "pwsh"}, executableName(argv[0])) {
+		return false
+	}
+	for i := 1; i+1 < len(argv); i++ {
+		if !slices.Contains([]string{"-c", "-lc", "-ic", "/c", "-command"}, strings.ToLower(argv[i])) {
+			continue
+		}
+		// Keep path separators inside words so an agent-named directory is harmless.
+		for _, word := range strings.FieldsFunc(argv[i+1], func(r rune) bool { return strings.ContainsRune(" \t\r\n;|&\"'()", r) }) {
+			if isAgent(word) {
+				return true
+			}
+		}
+	}
+	return false
 }

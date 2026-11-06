@@ -28,7 +28,7 @@ type Options struct {
 	// Environ is the environment the runner checks and passes on, scrubbed of API keys.
 	Environ []string
 	// RecordsDir receives one <run id>.json per run; a run whose record exists is skipped, so
-	// an interrupted execution resumes. WorkDir holds the workspaces, transcripts and warm cache.
+	// an interrupted execution resumes. WorkDir holds transcripts and the warm cache.
 	RecordsDir, WorkDir string
 	// Sources maps a task's repository name to where to fetch it from (a local clone or a URL);
 	// without an entry, the repository's URL.
@@ -98,6 +98,7 @@ func Execute(ctx context.Context, o Options) error {
 	for _, b := range m.Backends {
 		backends[b.ID] = b
 	}
+	fmt.Fprintln(o.Log, "approval:", approvalScope(m))
 	env := scrub(o.Environ)
 	meter, err := lastMeter(o.RecordsDir)
 	if err != nil {
@@ -493,7 +494,7 @@ type indexMeta struct {
 func (o *Options) index(ctx context.Context, c Cell, source record.Fingerprint, env []string, timeout time.Duration) (*record.Index, error) {
 	x := c.Condition.Index
 	out := filepath.Join(c.Workspace, filepath.FromSlash(x.Output))
-	cache := filepath.Join(o.WorkDir, "cache", c.Task.ID+"."+c.Condition.ID+"."+c.Backend.ID)
+	cache := filepath.Join(o.WorkDir, "cache", c.Task.ID+"."+c.Condition.ID+"."+c.Backend.ID, record.SHA256(c.Task.Revision+"\x00"+source.Commit+"\x00"+source.Content))
 	if c.Run.Index == "reuse" {
 		var meta indexMeta
 		data, err := os.ReadFile(filepath.Join(cache, "meta.json"))
@@ -503,12 +504,18 @@ func (o *Options) index(ctx context.Context, c Cell, source record.Fingerprint, 
 		if err := json.Unmarshal(data, &meta); err != nil {
 			return nil, err
 		}
+		if meta.Commit != source.Commit || meta.Content != source.Content {
+			return nil, fmt.Errorf("cached index was built from another tree")
+		}
 		if err := copyTree(filepath.Join(cache, "index"), out); err != nil {
 			return nil, err
 		}
 		digest, size, err := digestTree(out)
 		if err != nil {
 			return nil, err
+		}
+		if digest != meta.Digest || size != meta.Bytes {
+			return nil, fmt.Errorf("cached index digest or size changed")
 		}
 		return &record.Index{Digest: digest, Commit: meta.Commit, Content: meta.Content, Settings: x.Settings, Reused: true, Bytes: size}, nil
 	}
@@ -539,26 +546,56 @@ func (o *Options) index(ctx context.Context, c Cell, source record.Fingerprint, 
 
 // check runs one declared check on the tree the worker left and grades it with record.Passes.
 func (o *Options) check(ctx context.Context, c Cell, ch manifest.Check, r *record.Record, source string, env []string, timeout time.Duration) (record.CheckResult, error) {
+	var exclude []string
+	if c.Condition.Index != nil {
+		exclude = []string{c.Condition.Index.Output}
+	}
+	before, err := Fingerprint(c.Workspace, exclude)
+	if err != nil {
+		return record.CheckResult{}, err
+	}
 	res := record.CheckResult{ID: ch.ID, Type: ch.Type, Content: r.After.Content}
 	switch ch.Type {
 	case manifest.CheckCommand, manifest.CheckFixTests:
+		if ch.Type == manifest.CheckFixTests {
+			res.Overlay = c.Task.Provenance.FixRevision
+		}
+		if before != r.After {
+			res.Output = "tree changed before check " + ch.ID + "\n"
+			res.OutputSHA256 = record.SHA256(res.Output)
+			return res, nil
+		}
 		var head string
 		restore := func() error { return nil }
 		if ch.Type == manifest.CheckFixTests {
 			fix := c.Task.Provenance.FixRevision
 			files, undo, err := o.overlay(c, source, fix, ch.Paths)
 			if err != nil {
+				if errors.Is(err, errAddedTest) || errors.Is(err, errWorkerFile) {
+					res.Output = err.Error() + "\n"
+					res.OutputSHA256 = record.SHA256(res.Output)
+					return res, nil
+				}
 				return res, err
 			}
 			restore = undo
 			res.Overlay = fix
 			head = "overlay from " + fix + ": " + strings.Join(files, ", ") + "\n"
 		}
+		checked, err := Fingerprint(c.Workspace, exclude)
+		if err != nil {
+			return res, errors.Join(err, restore())
+		}
+		res.CheckedTree = &checked
 		p := runProcess(ctx, ch.Command, c.Workspace, env, "", timeout)
 		// The fix's files leave the workspace with the check: a later check, and a kept
 		// workspace, see the worker's tree.
 		if err := restore(); err != nil {
 			return res, fmt.Errorf("taking the fix's files back out of the workspace: %w", err)
+		}
+		after, err := Fingerprint(c.Workspace, exclude)
+		if err != nil {
+			return res, err
 		}
 		if p.err != nil && p.exit == 0 {
 			p.exit = -1
@@ -566,6 +603,11 @@ func (o *Options) check(ctx context.Context, c Cell, ch manifest.Check, r *recor
 		exit := p.exit
 		res.Exit = &exit
 		res.Output = head + string(p.stdout) + string(p.stderr)
+		if after != before {
+			// No exit code keeps drift failed even when the expected exit is nonzero.
+			res.Exit = nil
+			res.Output += "\ntree changed after check " + ch.ID + " or overlay restoration\n"
+		}
 	case manifest.CheckAnswer, manifest.CheckReview:
 		res.Output = r.Answer
 	case manifest.CheckNoChanges:
@@ -577,6 +619,12 @@ func (o *Options) check(ctx context.Context, c Cell, ch manifest.Check, r *recor
 	}
 	return res, nil
 }
+
+var errAddedTest = errors.New("cannot set aside worker-added test")
+var errWorkerFile = errors.New("cannot overlay worker file")
+
+// errWorkspaceEscape marks a path the worker can have bent out of the workspace, unlike a host error.
+var errWorkspaceEscape = errors.New("outside the workspace")
 
 // overlay lays the fix's matching files over the workspace, from a grader checkout made outside
 // it after the worker finished, and returns what undoes it: the files it added removed, the ones
@@ -602,8 +650,59 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 	if len(files) == 0 {
 		return nil, nil, fmt.Errorf("the fix %s changes no file matching %v", fix, patterns)
 	}
+	// Restore all original Go tests so a replaced TestMain cannot bypass the grader.
+	expected := map[string][]byte{}
+	tree, err := git(grader, "ls-tree", "-r", "--name-only", "-z", c.Task.Revision)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, f := range strings.Split(tree, "\x00") {
+		if !strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		data, err := git(grader, "show", c.Task.Revision+":"+f)
+		if err != nil {
+			return nil, nil, err
+		}
+		expected[f] = []byte(data)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			expected[f] = nil
+		}
+	}
+	var added []string
+	err = filepath.WalkDir(c.Workspace, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(c.Workspace, p)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() && rel == ".git" {
+			return filepath.SkipDir
+		}
+		if strings.HasSuffix(rel, "_test.go") {
+			if _, ok := expected[rel]; !ok {
+				added = append(added, rel)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	for f := range expected {
+		if !slices.Contains(files, f) {
+			files = append(files, f)
+		}
+	}
+	slices.Sort(files)
 	type saved struct {
 		data []byte
+		link string
 		mode os.FileMode
 		had  bool
 	}
@@ -611,8 +710,27 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 	undo := func() error {
 		var errs []error
 		for dst, s := range was {
+			if err := insideWorkspace(c.Workspace, dst); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			if fi, err := os.Lstat(dst); err == nil && !fi.Mode().IsRegular() {
+				errs = append(errs, fmt.Errorf("cannot restore non-regular file %s", dst))
+				continue
+			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+				errs = append(errs, err)
+				continue
+			}
 			if !s.had {
 				if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+					errs = append(errs, err)
+				}
+			} else if s.mode&os.ModeSymlink != 0 {
+				if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+					errs = append(errs, err)
+					continue
+				}
+				if err := os.Symlink(s.link, dst); err != nil {
 					errs = append(errs, err)
 				}
 			} else if err := os.WriteFile(dst, s.data, s.mode); err != nil {
@@ -621,18 +739,40 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 		}
 		return errors.Join(errs...)
 	}
-	for _, f := range files {
+	for _, f := range append(slices.Clone(files), added...) {
 		dst := filepath.Join(c.Workspace, filepath.FromSlash(f))
 		if err := insideWorkspace(c.Workspace, dst); err != nil {
-			return nil, nil, errors.Join(fmt.Errorf("the worker left a link in the way of the fix's file %s: %w", f, err), undo())
+			if restoreErr := undo(); restoreErr != nil || !errors.Is(err, errWorkspaceEscape) {
+				return nil, nil, errors.Join(err, restoreErr)
+			}
+			return nil, nil, fmt.Errorf("%w: the worker left a link in the way of the fix's file %s: %w", errWorkerFile, f, err)
 		}
 		switch fi, err := os.Lstat(dst); {
 		case errors.Is(err, os.ErrNotExist):
 			was[dst] = saved{}
 		case err != nil:
 			return nil, nil, errors.Join(err, undo())
+		case slices.Contains(added, f) && fi.Mode()&os.ModeSymlink != 0:
+			// Preserve the link itself without reading a worker-controlled target.
+			target, err := os.Readlink(dst)
+			if err != nil {
+				if restoreErr := undo(); restoreErr != nil {
+					return nil, nil, errors.Join(err, restoreErr)
+				}
+				return nil, nil, fmt.Errorf("%w %s: %v", errAddedTest, f, err)
+			}
+			was[dst] = saved{link: target, mode: fi.Mode(), had: true}
 		case !fi.Mode().IsRegular():
-			return nil, nil, errors.Join(fmt.Errorf("the worker left %s as something other than a file: the fix's file cannot be laid over it", f), undo())
+			if slices.Contains(added, f) {
+				if err := undo(); err != nil {
+					return nil, nil, err
+				}
+				return nil, nil, fmt.Errorf("%w %s: something other than a regular file or symlink", errAddedTest, f)
+			}
+			if err := undo(); err != nil {
+				return nil, nil, err
+			}
+			return nil, nil, fmt.Errorf("%w: the worker left %s as something other than a file: the fix's file cannot be laid over it", errWorkerFile, f)
 		default:
 			data, err := os.ReadFile(dst)
 			if err != nil {
@@ -640,9 +780,24 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 			}
 			was[dst] = saved{data: data, mode: fi.Mode().Perm(), had: true}
 		}
-		if err := copyFile(filepath.Join(grader, filepath.FromSlash(f)), dst); err != nil {
+		var err error
+		if slices.Contains(added, f) {
+			// Set worker tests aside so only the expected tests participate in grading.
+			err = os.Remove(dst)
+		} else if data, ok := expected[f]; ok && data != nil {
+			err = os.MkdirAll(filepath.Dir(dst), 0o755)
+			if err == nil {
+				err = os.WriteFile(dst, data, 0o644)
+			}
+		} else {
+			err = copyFile(filepath.Join(grader, filepath.FromSlash(f)), dst)
+		}
+		if err != nil {
 			return nil, nil, errors.Join(err, undo())
 		}
+	}
+	for _, f := range added {
+		files = append(files, "set aside "+f)
 	}
 	return files, undo, nil
 }
@@ -672,7 +827,7 @@ func insideWorkspace(workspace, dst string) error {
 				return err
 			}
 			if fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 || !fi.IsDir() {
-				return fmt.Errorf("%s is a link or not a directory", next)
+				return fmt.Errorf("%w: %s is a link or not a directory", errWorkspaceEscape, next)
 			}
 			parent = next
 		}
@@ -682,7 +837,7 @@ func insideWorkspace(workspace, dst string) error {
 		return err
 	}
 	if r, err := filepath.Rel(root, real); err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("%s resolves outside the workspace", parent)
+		return fmt.Errorf("%w: %s resolves outside it", errWorkspaceEscape, parent)
 	}
 	return nil
 }

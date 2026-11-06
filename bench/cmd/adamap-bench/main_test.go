@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -152,5 +153,35 @@ func TestUsageAndUnknownCommands(t *testing.T) {
 	}
 	if code, _, _ := call(nil); code != 2 {
 		t.Fatalf("no command: %d", code)
+	}
+}
+
+func TestDefaultTranscriptsOutsideWorkspaceAncestors(t *testing.T) {
+	temp := t.TempDir()
+	cache := t.TempDir()
+	for _, key := range []string{"TMP", "TEMP", "TMPDIR"} {
+		t.Setenv(key, temp)
+	}
+	for _, key := range []string{"LOCALAPPDATA", "XDG_CACHE_HOME"} {
+		t.Setenv(key, cache)
+	}
+	if runtime.GOOS == "darwin" {
+		t.Setenv("HOME", cache)
+		cache = filepath.Join(cache, "Library", "Caches")
+		if err := os.MkdirAll(cache, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := defaultWorkDir("pilot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := filepath.EvalSymlinks(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(got)))
+	if err != nil || parent != root {
+		t.Fatalf("work %s outside cache %s: %v", got, root, err)
 	}
 }

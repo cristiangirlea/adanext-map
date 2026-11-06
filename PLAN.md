@@ -279,3 +279,23 @@ repository); a fail-closed push guard (#8).
   Require known literal xargs subcommands without replacement words; refuse variable command
   option clusters and parameter operators, continued `|&` heredocs, and executable shell
   here-strings. Apply the same PowerShell message/body rule to both quote forms.
+- 2026-11-05 (#60): benchmark review follow-ups: approval text states runs x attempts as the
+  maximum CLI sessions per execution, excluding limit restarts and manual marker removal, and
+  that resume sees only its records directory; a fresh directory can repeat the plan. No global
+  approval ledger is introduced. Default transcripts/cache use the OS user cache, away from
+  temporary workspaces. Fix-tests restore all task-revision Go tests, overlay the selected fix
+  files and temporarily set aside worker-added Go tests, naming them in check output and restoring
+  them afterward, preserving added symlinks without reading their targets and recording unsupported
+  added test file types as failed checks. Non-regular expected tests and linked parent directories
+  also fail the check without aborting execution, restoring any earlier overlay changes.
+  Checks verify the worker tree before and after, record
+  drift as a failed check instead of aborting execution, and record the actual checked tree. Runner Git calls scrub Git
+  environment variables, disable hooks/fsmonitor/filters, skip dirty submodule contents in status
+  and bound commands with a timeout.
+  Tests cover worker hooks (configured and default), fsmonitor and filters from include.path or
+  includeIf. Injection matches executable basenames, allowing agent names in directory segments
+  and ordinary arguments while refusing direct agent CLIs and shell command words. Manifests and
+  task revisions remain trusted code, including wrappers, probe/index/check commands. Warm caches
+  include task revision and source
+  commit/content and verify metadata/digests. Document only: CLAUDE.md loads per task revision,
+  workers have no sandbox, and --keep stays refused with fix-tests. No measured run is claimed.

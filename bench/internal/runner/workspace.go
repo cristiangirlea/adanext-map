@@ -2,8 +2,10 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,24 +16,69 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/cristiangirlea/adanext-map/bench/internal/record"
 )
 
-// gitSafely goes in front of every git command the runner runs, as in cmd/adamap: a repository's
-// own config and hooks must not run programs (core.fsmonitor, the hooks path).
-var gitSafely = []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+// gitSafely prevents repository configuration from launching hooks or monitors.
+var gitSafely = []string{"--no-optional-locks", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null",
+	"-c", "core.attributesFile=/dev/null", "-c", "core.excludesFile=/dev/null",
 	"-c", "core.autocrlf=false", "-c", "advice.detachedHead=false"}
 
+var gitTimeout = 2 * time.Minute
+var gitCommand = exec.CommandContext
+
 func git(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", slices.Concat([]string{"-C", dir}, gitSafely, args)...)
+	keys, err := gitRaw(dir, nil, "config", "--null", "--name-only", "--get-regexp", `^filter\.`)
+	var exit *exec.ExitError
+	if err != nil && !(errors.As(err, &exit) && exit.ExitCode() == 1) {
+		return "", err
+	}
+	var off []string
+	for _, key := range strings.Split(keys, "\x00") {
+		rest := strings.TrimPrefix(key, "filter.")
+		dot := strings.LastIndex(rest, ".")
+		if dot < 1 {
+			continue
+		}
+		name := rest[:dot]
+		if strings.ContainsAny(name, "=\n\r") {
+			return "", fmt.Errorf("cannot disable filter %q", name)
+		}
+		for _, v := range []string{"clean", "smudge", "process"} {
+			off = append(off, "-c", "filter."+name+"."+v+"=")
+		}
+		off = append(off, "-c", "filter."+name+".required=false")
+	}
+	return gitRaw(dir, off, args...)
+}
+
+// gitEnvironment removes caller repository selection and injected Git configuration.
+func gitEnvironment() []string {
+	var env []string
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if !strings.HasPrefix(strings.ToUpper(key), "GIT_") {
+			env = append(env, entry)
+		}
+	}
+	return append(env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_ATTR_NOSYSTEM=1", "GIT_NO_LAZY_FETCH=1", "GIT_TERMINAL_PROMPT=0")
+}
+
+func gitRaw(dir string, opts []string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	cmd := gitCommand(ctx, "git", slices.Concat([]string{"-C", dir}, gitSafely, opts, args)...)
+	cmd.Env = gitEnvironment()
+	cmd.WaitDelay = time.Second
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(errOut.String()); msg != "" {
-			return "", fmt.Errorf("git %s: %s", args[0], msg)
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("git %s: timed out after %s: %w", args[0], gitTimeout, ctx.Err())
 		}
-		return "", fmt.Errorf("git %s: %w", args[0], err)
+		return "", fmt.Errorf("git %s: %s: %w", args[0], strings.TrimSpace(errOut.String()), err)
 	}
 	return out.String(), nil
 }
@@ -106,7 +153,7 @@ func Fingerprint(dir string, exclude []string) (record.Fingerprint, error) {
 	if err != nil {
 		return record.Fingerprint{}, err
 	}
-	out, err := git(dir, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=no")
+	out, err := git(dir, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=no", "--ignore-submodules=dirty")
 	if err != nil {
 		return record.Fingerprint{}, err
 	}
@@ -251,7 +298,7 @@ func fixFiles(grader, revision, fix string, patterns []string) ([]string, error)
 	if len(patterns) == 0 {
 		patterns = []string{"*_test.go"}
 	}
-	out, err := git(grader, "diff", "--name-only", "--no-renames", "--diff-filter=AM", "-z", revision, fix)
+	out, err := git(grader, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "--no-renames", "--diff-filter=AM", "-z", revision, fix)
 	if err != nil {
 		return nil, err
 	}

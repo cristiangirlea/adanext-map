@@ -37,7 +37,7 @@ func DryRun(m *manifest.Manifest, w io.Writer, fake Fake, environ []string) {
 	} else {
 		fmt.Fprintln(w, "provider API key variables: none set")
 	}
-	fmt.Fprintf(w, "a real run needs %s %d, after the owner approves that budget\n\n", ApprovalFlag, n)
+	fmt.Fprintf(w, "a real run needs %s %d, after the owner approves: %s\n\n", ApprovalFlag, n, approvalScope(m))
 
 	tasks := map[string]manifest.Task{}
 	for _, t := range m.Tasks {
@@ -61,7 +61,7 @@ func DryRun(m *manifest.Manifest, w io.Writer, fake Fake, environ []string) {
 			run.Seq, run.ID, run.Task, run.Condition, run.Backend, run.Repeat, run.Block, run.Position, run.Cache, index)
 		t := tasks[run.Task]
 		c := Cell{Run: run, Task: t, Condition: conds[run.Condition], Backend: backends[run.Backend], Execution: m.Execution,
-			Workspace: filepath.Join("<work>", run.ID, "ws"), StateDir: filepath.Join("<work>", run.ID, "state"), Attempt: 1}
+			Workspace: filepath.Join("<workspace-temp>", run.ID, "ws"), StateDir: filepath.Join("<work>", run.ID, "state"), Attempt: 1}
 		fmt.Fprintf(w, "  workspace: fresh shallow checkout of %s at %s\n", t.Repository.Name, t.Revision)
 		if c.Condition.Inject != nil {
 			c.Injected = "<output of " + strings.Join(c.Condition.Inject, " ") + ">"
