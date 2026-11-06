@@ -254,6 +254,9 @@ repository); a fail-closed push guard (#8).
   every init event for only its condition's MCP server and LSP only in the lsp condition, including
   servers from user plugins. Both task files record harness as public, verified by the owner
   with gh (public since 2026-10-12). No pilot or model call was run.
+- 2026-11-06 (#85): reading `latest` retries when the file is replaced between its check and its
+  open (`store.ErrReplaced`), as it retries sharing violations and access denied, on every OS:
+  a rename landing in that window is transient, and the bounded retry still ends in the error.
 - 2026-11-05 (#71): the plan-meter watch is a backstop that may stop after a request has started.
   Skip whitespace-only lines; refuse other undecodable lines before init and non-object meter
   info; check a final line without a newline too. Strict truthy/unknown-value checks apply only
