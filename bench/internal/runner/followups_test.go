@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -513,5 +514,19 @@ func TestGitDisablesIncludedWorkerFilters(t *testing.T) {
 				t.Fatalf("included filter ran: %v", err)
 			}
 		})
+	}
+}
+
+func TestInsideWorkspaceSeparatesWorkerObstructionsFromHostErrors(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "pkg"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := insideWorkspace(workspace, filepath.Join(workspace, "pkg", "a_test.go")); !errors.Is(err, errWorkspaceEscape) {
+		t.Fatalf("file in place of a directory: %v, want errWorkspaceEscape", err)
+	}
+	missing := filepath.Join(t.TempDir(), "gone")
+	if err := insideWorkspace(missing, filepath.Join(missing, "a_test.go")); err == nil || errors.Is(err, errWorkspaceEscape) {
+		t.Fatalf("missing workspace: %v, want a host error that is not the worker's", err)
 	}
 }

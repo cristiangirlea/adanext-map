@@ -604,6 +604,9 @@ func (o *Options) check(ctx context.Context, c Cell, ch manifest.Check, r *recor
 var errAddedTest = errors.New("cannot set aside worker-added test")
 var errWorkerFile = errors.New("cannot overlay worker file")
 
+// errWorkspaceEscape marks a path the worker can have bent out of the workspace, unlike a host error.
+var errWorkspaceEscape = errors.New("outside the workspace")
+
 // overlay lays the fix's matching files over the workspace, from a grader checkout made outside
 // it after the worker finished, and returns what undoes it: the files it added removed, the ones
 // it replaced as the worker left them.
@@ -720,7 +723,7 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 	for _, f := range append(slices.Clone(files), added...) {
 		dst := filepath.Join(c.Workspace, filepath.FromSlash(f))
 		if err := insideWorkspace(c.Workspace, dst); err != nil {
-			if restoreErr := undo(); restoreErr != nil {
+			if restoreErr := undo(); restoreErr != nil || !errors.Is(err, errWorkspaceEscape) {
 				return nil, nil, errors.Join(err, restoreErr)
 			}
 			return nil, nil, fmt.Errorf("%w: the worker left a link in the way of the fix's file %s: %w", errWorkerFile, f, err)
@@ -805,7 +808,7 @@ func insideWorkspace(workspace, dst string) error {
 				return err
 			}
 			if fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 || !fi.IsDir() {
-				return fmt.Errorf("%s is a link or not a directory", next)
+				return fmt.Errorf("%w: %s is a link or not a directory", errWorkspaceEscape, next)
 			}
 			parent = next
 		}
@@ -815,7 +818,7 @@ func insideWorkspace(workspace, dst string) error {
 		return err
 	}
 	if r, err := filepath.Rel(root, real); err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("%s resolves outside the workspace", parent)
+		return fmt.Errorf("%w: %s resolves outside it", errWorkspaceEscape, parent)
 	}
 	return nil
 }
