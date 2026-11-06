@@ -138,9 +138,9 @@ refused 'gh api -X POST repos/o/r/$path'
 # Tags and releases.
 refused 'git tag v1.1'
 refused 'git tag -a v1.1 -m release'
-refused 'git tag -l'
+allowed 'git tag -l'
 refused 'gh release create v1.0'
-refused 'gh release list'
+allowed 'gh release list'
 refused 'gh pr merge 5 --auto --merge'
 refused 'gh pr merge 5 --merge --admin'
 refused 'gh -R o/r pr merge 5 --admin'
@@ -344,6 +344,154 @@ if command -v cygpath >/dev/null 2>&1; then
   winspaced=$(cygpath -m "$spaced")
   allowed "cd \\\"$winspaced\\\" && git push origin feat"
 fi
+
+# Heredoc delimiters and arithmetic operands must not hide the next command.
+refused 'let x=1<<n\ntext\nn\ngit push origin main'
+allowed 'let x=1<<n\ntext\nn\ngit push origin my-branch'
+refused 'x=$[1<<n]\ngit push origin main'
+allowed 'x=$[1<<n]\ngit push origin my-branch'
+refused 'x=$[(1<<n)]\ngit push origin main'
+allowed 'x=$[(1<<n)]\ngit push origin my-branch'
+# A shell or remote shell consumes its heredoc as commands.
+refused "bash <<'EOF'\\ngit push origin main\\nEOF"
+refused 'sh <<EOF\ngit tag v1\nEOF'
+refused 'ssh h <<EOF\ngit push origin main\nEOF'
+allowed "bash <<'EOF'\\ngit status\\nEOF"
+allowed 'sh <<EOF\ngit push origin my-branch\nEOF'
+allowed 'ssh h <<EOF\ngit status\nEOF'
+refused 'ssh h <<EOF\ngit push\nEOF'
+refused "ssh h <<EOF\\ncd $onfeat; git push\\nEOF"
+# ANSI-C quotes keep an escaped apostrophe inside the word.
+refused "echo \$'it\\\\'s'; git push origin main"
+allowed "echo \$'it\\\\'s; git push origin main'"
+refused "git \$'pu\\\\x73h' origin main"
+# cmd has no hash comments and uses a caret to escape a character.
+refused 'cmd /c \"echo # & git push origin main\"'
+allowed 'cmd /c \"echo # & git push origin my-branch\"'
+# A subshell must restore the directory used by a following bare push.
+refused "(cd $onfeat; git status); git push" "$onmain"
+allowed "(cd $onmain; git status); git push" "$onfeat"
+# PowerShell here-strings are text unless passed to an executor.
+refused "Write-Output @'\\nit's text\\n'@; git push origin main" . PowerShell
+allowed "Write-Output @'\\nit's text; git push origin main\\n'@" . PowerShell
+refused 'Write-Output @\"\na \"quote\n\"@; git push origin main' . PowerShell
+allowed 'Write-Output @\"\na \"quote; git push origin main\n\"@' . PowerShell
+refused "Write-Output @'\\ntext\\n'@; git push origin main" . PowerShell
+allowed "Write-Output @'\\ngit push origin main\\n'@" . PowerShell
+refused 'Write-Output @\"\ntext\n\"@; git push origin main' . PowerShell
+allowed 'Write-Output @\"\ngit push origin main\n\"@' . PowerShell
+refused "iex @'\\ngit push origin main\\n'@" . PowerShell
+refused 'cmd /c g^it ta^g v1'
+allowed 'cmd /c g^it sta^tus'
+refused "@'\\ngit push origin main\\n'@ | sh" . PowerShell
+refused 'cmd /c git pu^sh origin main'
+refused 'cmd /c git pu^\nsh origin main'
+allowed 'cmd /c git pu^sh origin my-branch'
+refused 'cmd /c \"git \\\"pu^sh\\\" origin main\"'
+# GraphQL ref mutations write even when supplied with an explicit GET.
+refused "gh api graphql -f query='mutation {createRef(input:{}) {clientMutationId}}'"
+refused "gh api graphql -X GET -f query='mutation {updateRef(input:{}) {clientMutationId}}'"
+refused 'gh api graphql --input body.json'
+refused "echo x | xargs gh api graphql -f query='query {viewer {login}}'"
+allowed "gh api graphql -f query='query {viewer {login}}'"
+# Read-only tag and release commands remain useful.
+allowed 'git tag --list v*'
+allowed "git tag -l --format='%(refname)'"
+refused 'git tag --list --delete v1'
+refused 'git tag --list $option v1'
+allowed 'gh release view v1'
+refused 'gh release delete v1'
+
+# Unquoted let operands still use shell heredoc syntax.
+refused "let x=1<<n\\nit's\\nn\\ngit push origin main"
+# Nested brackets cannot end legacy arithmetic early.
+refused 'x=$[a[0]<<n]\ngit push origin main'
+# Shell consumers anywhere on the command line execute heredoc data.
+refused "cat <<'EOF' | bash\\ngit push origin main\\nEOF"
+refused "<<'EOF' bash\\ngit push origin main\\nEOF"
+# GraphQL endpoints retain their meaning with a slash or URL.
+refused "gh api /graphql -f query='mutation{createRef(input:{}){clientMutationId}}'"
+refused "gh api https://api.github.com/graphql -f query='mutation{createRef(input:{}){clientMutationId}}'"
+# Only known data consumers may receive literal PowerShell here-strings.
+refused "[scriptblock]::Create(@'\\ngit push origin main\\n'@).Invoke()" . PowerShell
+refused "@'\\ngit push origin main\\n'@ | Out-File x.ps1; ./x.ps1" . PowerShell
+allowed "Set-Content notes.txt @'\\ngit push origin main\\n'@" . PowerShell
+allowed "\$text = @'\\ngit push origin main\\n'@" . PowerShell
+refused "\$text = bash @'\\ngit push origin main\\n'@" . PowerShell
+refused "Unknown-Consumer @'\\ngit push origin main\\n'@" . PowerShell
+# A read-only command cannot exempt a later command.
+refused 'gh release view v1 && gh release delete v1'
+refused 'git tag -l x && git push origin main'
+
+# Continued heredoc consumers cannot hide executable input on a later line.
+refused "cat <<'EOF' |\ngit push origin main\nEOF\nbash"
+refused "cat <<'EOF' ||  \ngit push origin main\nEOF\nbash"
+refused "cat <<'EOF' &&  \ngit push origin main\nEOF\nbash"
+refused "cat <<'EOF' \\\\\ngit push origin main\nEOF\nbash"
+refused "cat <<'EOF' \\  \ngit push origin main\nEOF\nbash"
+# Sourcing stdin executes a quoted heredoc too.
+refused "source /dev/stdin <<'EOF'\ngit push origin main\nEOF"
+refused ". /dev/stdin <<'EOF'\ngit push origin main\nEOF"
+# GraphQL suffixes cannot disguise mutations.
+refused "gh api 'graphql?x=1' -f query='mutation{createRef(input:{}){clientMutationId}}'"
+refused "gh api graphql/ -f query='mutation{createRef(input:{}){clientMutationId}}'"
+refused "gh api 'graphql/#fragment' -f query='mutation{createRef(input:{}){clientMutationId}}'"
+allowed "gh api 'graphql/?x=1' -f query='query{viewer{login}}'"
+# xargs may supply the subcommand from stdin.
+refused 'echo push origin main | xargs git'
+refused "xargs git <<'EOF'\npush origin main\nEOF"
+refused "cat <<'EOF' | xargs git\npush origin main\nEOF"
+refused 'echo pr merge 5 --auto | xargs gh'
+refused 'echo push origin main | xargs git -C .'
+allowed 'git ls-files | xargs grep foo'
+# Variable executors cannot hide shell commands or executable stdin.
+refused '$SHELL -c \"git push origin main\"'
+refused "cat <<'EOF' | \$SHELL\ngit push origin main\nEOF"
+refused '${SHELL} -c \"git push origin main\"'
+refused '\"$SHELL\" -c \"git push origin main\"'
+refused "\$SHELL <<'EOF'\ngit push origin main\nEOF"
+allowed '$EDITOR file.txt'
+# Message and body files are required instead of PowerShell here-strings.
+refused "git commit -m @'\ntext\n'@" . PowerShell
+refused "gh pr create --body @'\ntext\n'@" . PowerShell
+
+# xargs must keep a literal known subcommand, even with replacement options.
+refused 'echo push origin main | xargs -I{} git {}'
+refused 'echo pr merge 5 | xargs -I{} gh {}'
+refused 'echo push | xargs -i git {}'
+refused 'echo push | xargs --replace=X git X'
+refused 'echo ush | xargs -IX git pX origin main'
+refused 'echo push | xargs git unknown'
+refused 'echo push | xargs -Istatus git status'
+refused 'echo push | xargs -Itat git status'
+refused 'echo release | xargs --replace=pr gh pr'
+refused 'echo pr | xargs gh unknown'
+allowed 'echo file | xargs git status'
+allowed 'echo 5 | xargs gh pr view'
+# Variable shell options and parameter operators cannot hide executors.
+refused '$SHELL -lc \"git push origin main\"'
+refused '$SHELL -ec \"git push origin main\"'
+refused '$SHELL --command \"git push origin main\"'
+refused 'bash -ec \"git push origin main\"'
+refused '${SHELL:-bash} -c \"git push origin main\"'
+refused '${SHELL-bash} -c \"git push origin main\"'
+refused '${SHELL#x} -c \"git push origin main\"'
+refused '${SHELL%x} -c \"git push origin main\"'
+refused '${SHELL/x/y} -c \"git push origin main\"'
+refused '${SHELL:=bash} -c \"git push origin main\"'
+refused '${SHELL:?missing} -c \"git push origin main\"'
+# A stderr pipeline continues a heredoc consumer, but a background operator does not.
+refused "cat <<'EOF' |&\ngit push origin main\nEOF\nbash"
+allowed "cat <<'EOF' &\ngit push origin main\nEOF\ngit status"
+# Shell here-strings are executable stdin, including variable and sourcing consumers.
+refused 'bash <<< \"git push origin main\"'
+refused '$SHELL <<< \"git push origin main\"'
+refused 'source /dev/stdin <<< \"git push origin main\"'
+refused '. /dev/stdin <<< \"git push origin main\"'
+allowed 'cat <<< \"git push origin main\"'
+# Both PowerShell quote forms require message and body files.
+refused 'git commit -m @\"\ntext\n\"@' . PowerShell
+refused 'gh pr create --body @\"\ntext\n\"@' . PowerShell
 
 # settings.json runs the hook before every Bash and PowerShell call.
 settings="$(dirname "$hook")/../settings.json"

@@ -265,3 +265,17 @@ repository); a fail-closed push guard (#8).
   metadata, including null. Resets more than eight days ahead are unknown and stop nothing. Keep each
   window's newest timestamped reading across attempts and runs, including resumed records;
   timestamp arrivals when the event has none and fall back to the run start for older records.
+- 2026-11-05 (#54): close the push guard's remaining parsing gaps without new dependencies:
+  distinguish legacy arithmetic shifts from heredocs, retain unquoted let heredoc syntax, and
+  refuse nested legacy arithmetic brackets; scan executable shell/ssh heredocs using the full line,
+  support ANSI-C apostrophes/backslashes and allow literal PowerShell here-strings only for known
+  data consumers or assignments without code execution; read cmd hashes/caret escapes,
+  restore subshell directories, normalize GraphQL endpoint spellings and refuse mutations and
+  hidden queries, and allow read-only tag listings and release list/view. Unsupported escapes and dynamic or remote state fail closed;
+  regression cases cover refused and allowed forms. Refuse continued heredoc consumer lines,
+  scan source/dot heredocs, strip GraphQL query/fragment suffixes and trailing slashes, require
+  visible git/gh subcommands under xargs, and refuse variable executors with -c or stdin from a
+  pipe/heredoc. Pin PowerShell message/body here-string refusals and document file arguments.
+  Require known literal xargs subcommands without replacement words; refuse variable command
+  option clusters and parameter operators, continued `|&` heredocs, and executable shell
+  here-strings. Apply the same PowerShell message/body rule to both quote forms.
