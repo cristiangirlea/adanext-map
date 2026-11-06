@@ -228,7 +228,7 @@ func TestClaudeWatchGoesOnOnlyOnTheSubscriptionLogin(t *testing.T) {
 		ok    bool
 	}{
 		{"subscription", []string{`{"type":"system","subtype":"init","apiKeySource":"none"}`, `{"type":"assistant","message":{}}`}, true},
-		{"hooks first", []string{"not json", `{"type":"system","subtype":"hook_started"}`, `{"type":"system","subtype":"init","apiKeySource":"none"}`}, true},
+		{"hooks first", []string{`{"type":"system","subtype":"hook_started"}`, `{"type":"system","subtype":"init","apiKeySource":"none"}`}, true},
 		{"an api key", []string{`{"type":"system","subtype":"init","apiKeySource":"ANTHROPIC_API_KEY"}`}, false},
 		{"a key helper", []string{`{"type":"system","subtype":"init","apiKeySource":"apiKeyHelper"}`}, false},
 		{"no source", []string{`{"type":"system","subtype":"init","session_id":"s"}`}, false},
@@ -386,5 +386,84 @@ func TestClaudeParseReadsThePlansMeter(t *testing.T) {
 	}
 	if o := (runner.Claude{}).Parse([]byte(syntheticTranscript), b); o.Meter != nil {
 		t.Fatalf("a transcript without a meter: %+v", o.Meter)
+	}
+}
+
+func TestClaudeWatchFailsClosed(t *testing.T) {
+	init := `{"type":"system","subtype":"init","apiKeySource":"none"}`
+	for _, bad := range []string{"not json", `{"type":"system",`, `{"type":"rate_limit_event","rate_limit_info":true}`, `{"type":"rate_limit_event","rate_limit_info":[]}`, `{"type":"rate_limit_event","rate_limit_info":null}`, `{"type":"rate_limit_event"}`} {
+		t.Run(bad, func(t *testing.T) {
+			if _, err := watchLines(t, []string{bad, init}); err == nil {
+				t.Fatal("unknown input accepted before init")
+			}
+			if strings.Contains(bad, "rate_limit_event") {
+				if _, err := watchLines(t, []string{init, bad}); err == nil {
+					t.Fatal("unknown meter accepted after init")
+				}
+			}
+		})
+	}
+}
+
+func TestClaudeWatchOverageValues(t *testing.T) {
+	for _, value := range []string{`true`, `"true"`, `1`, `-1`, `0.5`, `null`, `"unknown"`, `[]`, `{}`, `{"value":false}`} {
+		t.Run(value, func(t *testing.T) {
+			for _, prefix := range [][]string{nil, {`{"type":"system","subtype":"init","apiKeySource":"none"}`}} {
+				lines := append(slices.Clone(prefix), `{"type":"rate_limit_event","rate_limit_info":{"isUsingOverage":`+value+`}}`)
+				if _, err := watchLines(t, lines); !errors.Is(err, runner.ErrOverage) {
+					t.Fatalf("unknown or truthy overage accepted: %v", err)
+				}
+			}
+		})
+	}
+	for _, info := range []string{`{"isUsingOverage":false}`, `{"isUsingOverage":"false"}`, `{"isUsingOverage":0}`, `{"overageStatus":"allowed"}`, `{"overageStatus":"rejected"}`} {
+		if _, err := watchLines(t, []string{`{"type":"rate_limit_event","rate_limit_info":` + info + `}`}); err != nil {
+			t.Errorf("inactive %s: %v", info, err)
+		}
+	}
+}
+
+func TestClaudeWatchOverageMetadata(t *testing.T) {
+	init := `{"type":"system","subtype":"init","apiKeySource":"none"}`
+	for _, info := range []string{
+		`{"overageStatus":"allowed_warning","overageResetsAt":1792317600,"isUsingOverage":false}`,
+		`{"overageResetsAt":null}`,
+		`{"overageStatus":"allowed_warning"}`,
+		`{"overageStatus":"rejected"}`,
+		`{"overageStatus":" Allowed "}`,
+		`{"overage":{"resetsAt":null,"inUse":false}}`,
+	} {
+		for _, prefix := range [][]string{nil, {init}} {
+			if _, err := watchLines(t, append(slices.Clone(prefix), `{"type":"rate_limit_event","rate_limit_info":`+info+`}`)); err != nil {
+				t.Errorf("metadata %s: %v", info, err)
+			}
+		}
+	}
+	for _, info := range []string{
+		`{"overageStatus":"allowed_warning","isUsingOverage":true}`,
+		`{"USINGOVERAGE":"true"}`,
+		`{"overage":{"INUSE":1}}`,
+		`{"overage":{"inUse":null}}`,
+		`{"overageStatus":"in_use"}`,
+		`{"overageStatus":"in_use_billed"}`,
+		`{"overageStatus":null}`,
+		`{"overageStatus":1}`,
+		`{"overageStatus":true}`,
+	} {
+		if _, err := watchLines(t, []string{`{"type":"rate_limit_event","rate_limit_info":` + info + `}`}); !errors.Is(err, runner.ErrOverage) {
+			t.Errorf("use flag %s: %v", info, err)
+		}
+	}
+}
+
+func TestClaudeWatchSkipsWhitespace(t *testing.T) {
+	init := `{"type":"system","subtype":"init","apiKeySource":"none"}`
+	for _, blank := range []string{"", " ", "\t\r "} {
+		if _, err := watchLines(t, []string{blank, init, blank}); err != nil {
+			t.Errorf("whitespace %q: %v", blank, err)
+		}
+		if _, err := watchLines(t, []string{blank, "not json", init}); err == nil {
+			t.Errorf("whitespace %q hid an undecodable line", blank)
+		}
 	}
 }

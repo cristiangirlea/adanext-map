@@ -156,7 +156,7 @@ func Execute(ctx context.Context, o Options) error {
 		if err := record.Write(o.RecordsDir, r); err != nil {
 			return err
 		}
-		maps.Copy(meter, r.PlanMeter)
+		mergeMeter(meter, r.PlanMeter)
 		for _, f := range []string{marker, limited} {
 			if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
@@ -186,8 +186,7 @@ func Execute(ctx context.Context, o Options) error {
 // execution stops.
 var ErrPlanLimit = errors.New("the plan's usage limit (or a rate-limit or overload error)")
 
-// lastMeter is the plan's meter as the records in dir left it: each window's reading from the
-// latest run that has one, so a resumed execution starts from where the last one stopped.
+// lastMeter restores the newest timestamped reading so resume cannot use stale usage.
 func lastMeter(dir string) (map[string]record.PlanWindow, error) {
 	meter := map[string]record.PlanWindow{}
 	recs, err := record.ReadDir(dir)
@@ -196,9 +195,25 @@ func lastMeter(dir string) (map[string]record.PlanWindow, error) {
 	}
 	slices.SortStableFunc(recs, func(a, b record.Record) int { return strings.Compare(a.StartedAt, b.StartedAt) })
 	for _, r := range recs {
-		maps.Copy(meter, r.PlanMeter)
+		for name, w := range r.PlanMeter {
+			if w.ObservedAt == "" {
+				w.ObservedAt = r.StartedAt
+			}
+			mergeMeter(meter, map[string]record.PlanWindow{name: w})
+		}
 	}
 	return meter, nil
+}
+
+// mergeMeter compares instants so run order and timestamp offsets cannot hide newer usage.
+func mergeMeter(meter, readings map[string]record.PlanWindow) {
+	for name, w := range readings {
+		at, _ := time.Parse(time.RFC3339Nano, w.ObservedAt)
+		old, _ := time.Parse(time.RFC3339Nano, meter[name].ObservedAt)
+		if !at.Before(old) {
+			meter[name] = w
+		}
+	}
 }
 
 // reserveReached says which plan window, if any, is at or above the reserve and resets after now.
@@ -207,7 +222,7 @@ func reserveReached(meter map[string]record.PlanWindow, reserve float64, now tim
 	names := slices.Sorted(maps.Keys(meter))
 	for _, name := range names {
 		w := meter[name]
-		if w.Utilization >= reserve && w.ResetsAt > now.Unix() {
+		if w.Utilization >= reserve && w.ResetsAt > now.Unix() && w.ResetsAt <= now.Add(8*24*time.Hour).Unix() {
 			return fmt.Errorf("the plan's %s window is at %.0f%% of its use, at or above %w (%.0f%%), until it resets at %s",
 				name, w.Utilization*100, ErrPlanReserve, reserve*100, time.Unix(w.ResetsAt, 0).Local().Format("2006-01-02 15:04 MST"))
 		}
@@ -235,8 +250,9 @@ const limitHitsKey = "limit_hits: "
 
 // limitHits is the count a .limited note holds; 1 for a note without one, which still says a hit.
 func limitHits(note []byte) int {
-	for _, line := range strings.Split(string(note), "\n") {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(line), limitHitsKey); ok {
+	lines := strings.Split(string(note), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if v, ok := strings.CutPrefix(strings.TrimSuffix(lines[i], "\r"), limitHitsKey); ok {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				return n
 			}
@@ -287,6 +303,10 @@ func (o *Options) one(ctx context.Context, c Cell, env []string, restarts int) (
 	if err := leaks(c); err != nil {
 		return nil, err
 	}
+	c.Condition, err = resolveCodegraph(c.Condition, c.Workspace)
+	if err != nil {
+		return nil, err
+	}
 	condEnv := append(slices.Clone(env), envList(c.Condition.Env)...)
 	timeout := time.Duration(m.Execution.TimeoutSeconds) * time.Second
 	if len(c.Condition.Probe) > 0 {
@@ -325,10 +345,6 @@ func (o *Options) one(ctx context.Context, c Cell, env []string, restarts int) (
 	if err := os.WriteFile(o.startedMarker(run.ID), []byte(note), 0o644); err != nil {
 		return nil, err
 	}
-	// Started again after a limit: the marker now speaks for the run.
-	if err := os.Remove(o.limitedNote(run.ID)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
 	var answer string
 	for n := 1; n <= m.Execution.MaxAttempts; n++ {
 		c.Attempt = n
@@ -359,15 +375,18 @@ func (o *Options) one(ctx context.Context, c Cell, env []string, restarts int) (
 			return nil, err
 		}
 		if res.refused != nil {
-			// Stopped before its first turn: nothing to record, and every later run would bill the same way.
+			// The watch is a backstop: a request may have started, so stop without recording this run.
 			return nil, fmt.Errorf("attempt %d stopped: %w", n, res.refused)
 		}
 		out := ad.Parse(res.stdout, c.Backend)
+		if inv.meter != nil {
+			out.Meter = inv.meter
+		}
 		for name, w := range out.Meter {
 			if r.PlanMeter == nil {
 				r.PlanMeter = map[string]record.PlanWindow{}
 			}
-			r.PlanMeter[name] = w
+			mergeMeter(r.PlanMeter, map[string]record.PlanWindow{name: w})
 		}
 		limit := out.Limit
 		if limit == "" && (out.Err != "" || res.exit != 0) {
@@ -696,6 +715,14 @@ func runWatched(ctx context.Context, argv []string, dir string, env []string, st
 	lw := &lineWatcher{out: &out, watch: watch, stop: cancel}
 	cmd.Stdout, cmd.Stderr = lw, &errOut
 	err := cmd.Run()
+	// A final event need not have a newline to affect billing or the plan limit.
+	if lw.watch != nil && lw.err == nil && len(lw.partial) > 0 {
+		err := lw.watch(lw.partial)
+		// A timeout or interruption is not a plan limit, even when its final event says rejected.
+		if !errors.Is(err, ErrPlanLimit) || ctx.Err() == nil {
+			lw.err = err
+		}
+	}
 	res := processResult{stdout: out.Bytes(), stderr: errOut.Bytes(), refused: lw.err}
 	var exit *exec.ExitError
 	switch {

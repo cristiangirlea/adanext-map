@@ -39,6 +39,10 @@ func TestTheExampleManifestHasOnlyOwnerBlockers(t *testing.T) {
 	for _, task := range m.Tasks {
 		kinds[task.Kind]++
 		repos[task.Repository.Name]++
+		if task.Repository.Name == "cristiangirlea/harness" &&
+			(task.Repository.Visibility != "public" || strings.Contains(task.Leakage.Notes, "private repository")) {
+			t.Errorf("%s: harness must be recorded as public", task.ID)
+		}
 		if task.Repository.Visibility == "private" && task.Provenance.Source != "pr" {
 			t.Errorf("%s: a private repository's task comes from its PR title and revisions only", task.ID)
 		}

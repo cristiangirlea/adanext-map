@@ -114,6 +114,8 @@ type Refresh struct {
 type PlanWindow struct {
 	Utilization float64 `json:"utilization"`
 	ResetsAt    int64   `json:"resets_at,omitempty"`
+	// ObservedAt orders readings across runs so an older reading cannot replace a newer one.
+	ObservedAt string `json:"observed_at,omitempty"`
 }
 
 // Attempt is one try at the run. Failed attempts stay in the record and in every total.
