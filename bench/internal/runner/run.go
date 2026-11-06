@@ -250,8 +250,9 @@ const limitHitsKey = "limit_hits: "
 
 // limitHits is the count a .limited note holds; 1 for a note without one, which still says a hit.
 func limitHits(note []byte) int {
-	for _, line := range strings.Split(string(note), "\n") {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(line), limitHitsKey); ok {
+	lines := strings.Split(string(note), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if v, ok := strings.CutPrefix(strings.TrimSuffix(lines[i], "\r"), limitHitsKey); ok {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				return n
 			}
@@ -302,6 +303,10 @@ func (o *Options) one(ctx context.Context, c Cell, env []string, restarts int) (
 	if err := leaks(c); err != nil {
 		return nil, err
 	}
+	c.Condition, err = resolveCodegraph(c.Condition, c.Workspace)
+	if err != nil {
+		return nil, err
+	}
 	condEnv := append(slices.Clone(env), envList(c.Condition.Env)...)
 	timeout := time.Duration(m.Execution.TimeoutSeconds) * time.Second
 	if len(c.Condition.Probe) > 0 {
@@ -338,10 +343,6 @@ func (o *Options) one(ctx context.Context, c Cell, env []string, restarts int) (
 	note := fmt.Sprintf("started %s: the first attempt began; a run with this marker and no record is not started again.\n"+
 		"Look at its state in %s, then remove this file to run it again.\n", o.Now().UTC().Format(time.RFC3339), c.StateDir)
 	if err := os.WriteFile(o.startedMarker(run.ID), []byte(note), 0o644); err != nil {
-		return nil, err
-	}
-	// Started again after a limit: the marker now speaks for the run.
-	if err := os.Remove(o.limitedNote(run.ID)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 	var answer string

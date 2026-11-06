@@ -40,7 +40,7 @@
     {
       "id": "codegraph",
       "kind": "codegraph",
-      "description": "CodeGraph over MCP (serve --mcp, its own Claude Code config), the index built by codegraph init into .codegraph (codegraph index refuses a tree that was never initialised). Started as cmd /c codegraph, the npm shim found on PATH (npm's global folder is on PATH in a normal Windows terminal), because Claude Code cannot start a .cmd file without a shell. Telemetry off.",
+      "description": "CodeGraph over MCP (serve --mcp, its own Claude Code config), the index built by codegraph init into .codegraph (codegraph index refuses a tree that was never initialised). The runner resolves the npm shim on PATH outside the workspace and refuses a resolved path inside it; cmd /d /c receives its absolute path because Claude Code cannot start a .cmd file without a shell. Telemetry off.",
       "components": [
         {"name": "@colbymchenry/codegraph", "version": "1.6.2", "source": "npm, installed globally with npm install -g @colbymchenry/codegraph@1.6.2"},
         {"name": "node", "version": "v22.16.0", "source": "nodejs.org"}

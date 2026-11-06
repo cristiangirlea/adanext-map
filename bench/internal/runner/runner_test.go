@@ -867,9 +867,8 @@ func TestACompletedAttemptIsNotReadForALimit(t *testing.T) {
 	}
 }
 
-// A run that met the limit and, started again, stops for another reason keeps only its .started
-// marker: the .limited note, which says resume runs it again, goes when it starts again.
-func TestARunStartedAgainAfterALimitDropsItsNote(t *testing.T) {
+// Keep the count until a restart records its result, even when that restart is interrupted.
+func TestARunStartedAgainAfterALimitKeepsItsNote(t *testing.T) {
 	src, pre, fix := repo(t)
 	m := smoke(t, pre, fix)
 	o := options(t, m, src, 8)
@@ -883,8 +882,28 @@ func TestARunStartedAgainAfterALimitDropsItsNote(t *testing.T) {
 	}
 	started, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.started"))
 	limited, _ := filepath.Glob(filepath.Join(o.RecordsDir, "*.limited"))
-	if len(started) != 1 || len(limited) != 0 {
+	if len(started) != 1 || len(limited) != 1 {
 		t.Fatalf("started %v, limited %v", started, limited)
+	}
+	id := strings.TrimSuffix(filepath.Base(limited[0]), ".limited")
+	if err := os.Remove(started[0]); err != nil {
+		t.Fatal(err)
+	}
+	o.Fake.Env = []string{"BENCH_TEST_HELPER=agent"}
+	if err := runner.Execute(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := record.ReadDir(o.RecordsDir)
+	if err != nil || len(recs) != 8 {
+		t.Fatalf("records %d, err %v", len(recs), err)
+	}
+	for _, r := range recs {
+		if r.RunID == id && r.LimitRestarts != 1 {
+			t.Errorf("restart lost count after interruption: %d", r.LimitRestarts)
+		}
+	}
+	if _, err := os.Stat(limited[0]); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("note after recording: %v", err)
 	}
 }
 
@@ -1101,8 +1120,7 @@ func TestACancelledAttemptStopsBeforeTheGradingSteps(t *testing.T) {
 	}
 }
 
-// A run restarted after the plan's limit keeps the count in its record: the note it leaves says how
-// many times it was hit, the restart reads it before dropping it, and the record carries it.
+// Keep the accumulated limit count in the note until the record can carry it.
 func TestARestartAfterALimitIsCountedInTheRecord(t *testing.T) {
 	src, pre, fix := repo(t)
 	m := smoke(t, pre, fix)
