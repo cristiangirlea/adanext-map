@@ -1052,8 +1052,18 @@ func TestTheFixOverlayRefusesALinkOutOfTheWorkspace(t *testing.T) {
 		out := t.TempDir()
 		o.Fake.Env = []string{"BENCH_TEST_HELPER=agent-symlink", "BENCH_TEST_OUT=" + out, "BENCH_TEST_MODE=" + mode}
 		err := runner.Execute(context.Background(), o)
-		if err == nil || !strings.Contains(err.Error(), "fix") {
+		if err != nil {
 			t.Fatalf("%s: err %v", mode, err)
+		}
+		recs, err := record.ReadDir(o.RecordsDir)
+		if err != nil || len(recs) != 8 {
+			t.Fatalf("%s: records %d, error %v", mode, len(recs), err)
+		}
+		for _, id := range []string{"t01.none.fake.r1", "t01.adamap.fake.r2"} {
+			r := benchtest.Find(recs, id)
+			if len(r.Checks) != 1 || r.Checks[0].Passed || r.Checks[0].Exit != nil || !strings.Contains(r.Checks[0].Output, "tests/x_test.go") {
+				t.Fatalf("%s: %s checks %+v", mode, id, r.Checks)
+			}
 		}
 		if left, _ := os.ReadDir(out); len(left) != 0 {
 			t.Fatalf("%s: the fix was written outside the workspace: %v", mode, left)

@@ -127,8 +127,9 @@ that command and records a failed check; drift after a command or overlay restor
 Other planned runs continue. A command that was skipped or whose tree drifted has no exit code,
 so it fails regardless of `expect.exit`. Commands that ran also record `checked_tree`, the fingerprint
 immediately before the command, including any fix-test overlay; `content` remains the worker tree.
-A link or junction the worker left in the way of a fix file, or in its directory path, refuses the
-check and writes nothing outside the workspace.
+A link, junction or directory the worker left in place of an expected test, or a linked parent
+directory in a fix file's path, records a failed check with the reason in its output. Earlier
+overlay changes are undone, other planned runs continue, and nothing is written outside the workspace.
 `--keep` is refused for a plan with a `fix-tests` check: the worker is not sandboxed, so a kept
 workspace is within every later worker's reach.
 

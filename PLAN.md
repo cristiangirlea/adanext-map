@@ -253,7 +253,9 @@ repository); a fail-closed push guard (#8).
   temporary workspaces. Fix-tests restore all task-revision Go tests, overlay the selected fix
   files and temporarily set aside worker-added Go tests, naming them in check output and restoring
   them afterward, preserving added symlinks without reading their targets and recording unsupported
-  added test file types as failed checks. Checks verify the worker tree before and after, record
+  added test file types as failed checks. Non-regular expected tests and linked parent directories
+  also fail the check without aborting execution, restoring any earlier overlay changes.
+  Checks verify the worker tree before and after, record
   drift as a failed check instead of aborting execution, and record the actual checked tree. Runner Git calls scrub Git
   environment variables, disable hooks/fsmonitor/filters, skip dirty submodule contents in status
   and bound commands with a timeout.

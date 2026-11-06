@@ -552,7 +552,7 @@ func (o *Options) check(ctx context.Context, c Cell, ch manifest.Check, r *recor
 			fix := c.Task.Provenance.FixRevision
 			files, undo, err := o.overlay(c, source, fix, ch.Paths)
 			if err != nil {
-				if errors.Is(err, errAddedTest) {
+				if errors.Is(err, errAddedTest) || errors.Is(err, errWorkerFile) {
 					res.Output = err.Error() + "\n"
 					res.OutputSHA256 = record.SHA256(res.Output)
 					return res, nil
@@ -602,6 +602,7 @@ func (o *Options) check(ctx context.Context, c Cell, ch manifest.Check, r *recor
 }
 
 var errAddedTest = errors.New("cannot set aside worker-added test")
+var errWorkerFile = errors.New("cannot overlay worker file")
 
 // overlay lays the fix's matching files over the workspace, from a grader checkout made outside
 // it after the worker finished, and returns what undoes it: the files it added removed, the ones
@@ -719,7 +720,10 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 	for _, f := range append(slices.Clone(files), added...) {
 		dst := filepath.Join(c.Workspace, filepath.FromSlash(f))
 		if err := insideWorkspace(c.Workspace, dst); err != nil {
-			return nil, nil, errors.Join(fmt.Errorf("the worker left a link in the way of the fix's file %s: %w", f, err), undo())
+			if restoreErr := undo(); restoreErr != nil {
+				return nil, nil, errors.Join(err, restoreErr)
+			}
+			return nil, nil, fmt.Errorf("%w: the worker left a link in the way of the fix's file %s: %w", errWorkerFile, f, err)
 		}
 		switch fi, err := os.Lstat(dst); {
 		case errors.Is(err, os.ErrNotExist):
@@ -743,7 +747,10 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 				}
 				return nil, nil, fmt.Errorf("%w %s: something other than a regular file or symlink", errAddedTest, f)
 			}
-			return nil, nil, errors.Join(fmt.Errorf("the worker left %s as something other than a file: the fix's file cannot be laid over it", f), undo())
+			if err := undo(); err != nil {
+				return nil, nil, err
+			}
+			return nil, nil, fmt.Errorf("%w: the worker left %s as something other than a file: the fix's file cannot be laid over it", errWorkerFile, f)
 		default:
 			data, err := os.ReadFile(dst)
 			if err != nil {

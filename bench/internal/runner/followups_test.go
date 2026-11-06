@@ -165,6 +165,93 @@ func TestFixTestsRecordWorkerAddedNonRegularTest(t *testing.T) {
 	}
 }
 
+func TestFixTestsRecordWorkerObstructedExpectedTest(t *testing.T) {
+	for _, kind := range []string{"symlink", "directory", "linked-parent"} {
+		t.Run(kind, func(t *testing.T) {
+			src := t.TempDir()
+			followupGit(t, src, "init", "-q")
+			old := "old_test.go"
+			if kind == "linked-parent" {
+				old = "tests/old_test.go"
+			}
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(src, old)), 0700); err != nil {
+				t.Fatal(err)
+			}
+			for name, data := range map[string]string{"a.go": "package a\n", old: "package a\n// original\n"} {
+				if err := os.WriteFile(filepath.Join(src, name), []byte(data), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			followupGit(t, src, "add", ".")
+			followupGit(t, src, "commit", "-qm", "base")
+			pre := followupGit(t, src, "rev-parse", "HEAD")
+			// Sort this overlay first so rejection must undo an earlier replacement.
+			if err := os.WriteFile(filepath.Join(src, "a.go"), []byte("package a\n// fix\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			followupGit(t, src, "add", ".")
+			followupGit(t, src, "commit", "-qm", "fix")
+			fix := followupGit(t, src, "rev-parse", "HEAD")
+			ws := filepath.Join(t.TempDir(), "ws")
+			if err := Checkout(src, pre, ws); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(ws, filepath.FromSlash(old))
+			if err := os.Remove(target); err != nil {
+				t.Fatal(err)
+			}
+			why := "something other than a file"
+			switch kind {
+			case "symlink":
+				if err := os.Symlink("a.go", target); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+			case "directory":
+				if err := os.Mkdir(target, 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "linked-parent":
+				if err := os.Remove(filepath.Dir(target)); err != nil {
+					t.Fatal(err)
+				}
+				outside := t.TempDir()
+				if err := os.WriteFile(filepath.Join(outside, "old_test.go"), []byte("outside\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Dir(target)); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+				why = "link in the way"
+				t.Cleanup(func() {
+					data, err := os.ReadFile(filepath.Join(outside, "old_test.go"))
+					if err != nil || string(data) != "outside\n" {
+						t.Errorf("link target changed: %q, %v", data, err)
+					}
+				})
+			}
+			before, err := Fingerprint(ws, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := Cell{Workspace: ws, Task: manifest.Task{Revision: pre, Provenance: manifest.Provenance{FixRevision: fix}}}
+			ch := manifest.Check{ID: "fix", Type: manifest.CheckFixTests, Paths: []string{"a.go"}}
+			res, checkErr := (&Options{}).check(context.Background(), c, ch, &record.Record{After: before}, src, os.Environ(), time.Second)
+			if checkErr != nil || res.Passed || res.Exit != nil || !strings.Contains(res.Output, old) || !strings.Contains(res.Output, why) || res.OutputSHA256 != record.SHA256(res.Output) {
+				t.Errorf("result %+v, error %v", res, checkErr)
+			}
+			restored, err := Fingerprint(ws, nil)
+			if err != nil || restored != before {
+				t.Fatalf("failed check did not restore worker: %+v, %v", restored, err)
+			}
+			if kind == "directory" {
+				if fi, err := os.Lstat(target); err != nil || !fi.IsDir() {
+					t.Fatalf("worker directory not preserved: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestFixTestsRestoreExpectedTestsAndUndo(t *testing.T) {
 	src, _, fix, c := followupRepo(t)
 	p := filepath.Join(c.Workspace, "old_test.go")
