@@ -552,6 +552,11 @@ func (o *Options) check(ctx context.Context, c Cell, ch manifest.Check, r *recor
 			fix := c.Task.Provenance.FixRevision
 			files, undo, err := o.overlay(c, source, fix, ch.Paths)
 			if err != nil {
+				if errors.Is(err, errAddedTest) {
+					res.Output = err.Error() + "\n"
+					res.OutputSHA256 = record.SHA256(res.Output)
+					return res, nil
+				}
 				return res, err
 			}
 			restore = undo
@@ -595,6 +600,8 @@ func (o *Options) check(ctx context.Context, c Cell, ch manifest.Check, r *recor
 	}
 	return res, nil
 }
+
+var errAddedTest = errors.New("cannot set aside worker-added test")
 
 // overlay lays the fix's matching files over the workspace, from a grader checkout made outside
 // it after the worker finished, and returns what undoes it: the files it added removed, the ones
@@ -672,6 +679,7 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 	slices.Sort(files)
 	type saved struct {
 		data []byte
+		link string
 		mode os.FileMode
 		had  bool
 	}
@@ -694,6 +702,14 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 				if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
 					errs = append(errs, err)
 				}
+			} else if s.mode&os.ModeSymlink != 0 {
+				if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+					errs = append(errs, err)
+					continue
+				}
+				if err := os.Symlink(s.link, dst); err != nil {
+					errs = append(errs, err)
+				}
 			} else if err := os.WriteFile(dst, s.data, s.mode); err != nil {
 				errs = append(errs, err)
 			}
@@ -710,7 +726,23 @@ func (o *Options) overlay(c Cell, source, fix string, patterns []string) ([]stri
 			was[dst] = saved{}
 		case err != nil:
 			return nil, nil, errors.Join(err, undo())
+		case slices.Contains(added, f) && fi.Mode()&os.ModeSymlink != 0:
+			// Preserve the link itself without reading a worker-controlled target.
+			target, err := os.Readlink(dst)
+			if err != nil {
+				if restoreErr := undo(); restoreErr != nil {
+					return nil, nil, errors.Join(err, restoreErr)
+				}
+				return nil, nil, fmt.Errorf("%w %s: %v", errAddedTest, f, err)
+			}
+			was[dst] = saved{link: target, mode: fi.Mode(), had: true}
 		case !fi.Mode().IsRegular():
+			if slices.Contains(added, f) {
+				if err := undo(); err != nil {
+					return nil, nil, err
+				}
+				return nil, nil, fmt.Errorf("%w %s: something other than a regular file or symlink", errAddedTest, f)
+			}
 			return nil, nil, errors.Join(fmt.Errorf("the worker left %s as something other than a file: the fix's file cannot be laid over it", f), undo())
 		default:
 			data, err := os.ReadFile(dst)

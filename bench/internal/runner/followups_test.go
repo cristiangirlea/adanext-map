@@ -112,6 +112,59 @@ func TestFixTestsRejectWorkerAddedTests(t *testing.T) {
 	}
 }
 
+func TestFixTestsSetAsideWorkerAddedSymlink(t *testing.T) {
+	src, _, _, c := followupRepo(t)
+	link := filepath.Join(c.Workspace, "escape_test.go")
+	if err := os.Symlink("a.go", link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	before, err := Fingerprint(c.Workspace, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(), "BENCH_TEST_ABSENT="+link)
+	ch := manifest.Check{ID: "fix", Type: manifest.CheckFixTests, Command: []string{self, "-test.run=^TestFollowupCheckHelper$"}}
+	res, err := (&Options{}).check(context.Background(), c, ch, &record.Record{After: before}, src, env, 5*time.Second)
+	if err != nil || !res.Passed || !strings.Contains(res.Output, "set aside escape_test.go") {
+		t.Fatalf("result %+v, error %v", res, err)
+	}
+	if target, err := os.Readlink(link); err != nil || target != "a.go" {
+		t.Fatalf("restored link target %q, error %v", target, err)
+	}
+	restored, err := Fingerprint(c.Workspace, nil)
+	if err != nil || restored != before {
+		t.Fatalf("check did not restore worker: %+v, %v", restored, err)
+	}
+}
+
+func TestFixTestsRecordWorkerAddedNonRegularTest(t *testing.T) {
+	src, _, _, c := followupRepo(t)
+	dir := filepath.Join(c.Workspace, "escape_test.go")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	before, err := Fingerprint(c.Workspace, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := manifest.Check{ID: "fix", Type: manifest.CheckFixTests}
+	res, err := (&Options{}).check(context.Background(), c, ch, &record.Record{After: before}, src, os.Environ(), time.Second)
+	if err != nil || res.Passed || res.Exit != nil || !strings.Contains(res.Output, "escape_test.go") || res.OutputSHA256 != record.SHA256(res.Output) {
+		t.Fatalf("result %+v, error %v", res, err)
+	}
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		t.Fatalf("worker directory not preserved: %v", err)
+	}
+	restored, err := Fingerprint(c.Workspace, nil)
+	if err != nil || restored != before {
+		t.Fatalf("failed check did not restore worker: %+v, %v", restored, err)
+	}
+}
+
 func TestFixTestsRestoreExpectedTestsAndUndo(t *testing.T) {
 	src, _, fix, c := followupRepo(t)
 	p := filepath.Join(c.Workspace, "old_test.go")

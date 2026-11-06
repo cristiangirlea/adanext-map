@@ -252,8 +252,9 @@ repository); a fail-closed push guard (#8).
   approval ledger is introduced. Default transcripts/cache use the OS user cache, away from
   temporary workspaces. Fix-tests restore all task-revision Go tests, overlay the selected fix
   files and temporarily set aside worker-added Go tests, naming them in check output and restoring
-  them afterward. Checks verify the worker tree before and after, record drift as a failed check
-  instead of aborting execution, and record the actual checked tree. Runner Git calls scrub Git
+  them afterward, preserving added symlinks without reading their targets and recording unsupported
+  added test file types as failed checks. Checks verify the worker tree before and after, record
+  drift as a failed check instead of aborting execution, and record the actual checked tree. Runner Git calls scrub Git
   environment variables, disable hooks/fsmonitor/filters, skip dirty submodule contents in status
   and bound commands with a timeout.
   Tests cover worker hooks (configured and default), fsmonitor and filters from include.path or
