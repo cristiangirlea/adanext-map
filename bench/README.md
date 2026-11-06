@@ -74,8 +74,11 @@ starts no further run.
 A run that meets the plan's usage limit is not a task failure. The execution stops at once, with
 no retry and no record for that run, and its workspace is removed as usual. Its `.started` marker
 is replaced by `<run id>.limited`, which says when and why. Run the same command again once the
-limit resets: resume starts that run afresh, and its new first attempt removes the note, after reading
-from it how many times the run met the limit: the record it finally writes carries that count as
+limit resets: resume starts that run afresh, keeping the note until the restart records its result.
+An interrupted restart keeps both its `.started` marker and the note; after inspecting the run and
+removing the marker, another restart still reads the accumulated count. The final exact
+`limit_hits: ` line at the start of a line supplies the count, after any CLI limit text.
+The record it finally writes carries that count as
 `limit_restarts`, and the report totals it per condition. A timed-out attempt is never read as a
 limit, whatever its CLI printed last. A limit
 in a second attempt also discards the failed first attempt: the run is started again as a whole.
@@ -98,19 +101,28 @@ The runner also reads the plan's meter: Claude Code's `rate_limit_event`, which 
 in `unifiedWindows` (`five_hour`, `seven_day`, any other) and for the event's own `rateLimitType`.
 
 - **Overage is refused.** Overage is usage billed beyond the plan. A meter that shows it in use
-  (`isUsingOverage: true`, or any other field named for overage that is true or reads as in use;
-  a flag named for overage being disabled does not count) stops the CLI at once, before the init
+  (`isUsingOverage: true`, `"true"`, a non-zero number, or an `overageStatus` other than `allowed`,
+  `allowed_warning` or `rejected`)
+  stops the CLI at once. Strict truthy/unknown-value checks apply only to overage use flags
+  whose keys contain `using` or `inuse` (case-insensitive), including nested flags.
+  Statuses `allowed`, `allowed_warning`, and `rejected` do not mean overage is in use;
+  reset metadata (keys ending in `ResetsAt`, including null) and disabled flags are ignored.
+  The watch applies before the init
   event or after it. No record is written, the execution stops, and the run keeps its `.started`
   marker: it may have spent, so resume does not start it again. Turn overage off in the plan's
   settings, then remove the marker to run it again.
 - **The plan reserve.** `execution.plan_reserve` (a fraction above 0 and at most 1; 0.8 when
   absent) keeps part of the plan for the owner. The runner keeps each window's latest reading from
   the execution's runs, starting from the records already written, and each record keeps its own
-  last reading per window as `plan_meter`. Before it starts a run, a window at or above the
-  reserve whose `resetsAt` is still ahead stops the execution cleanly: no record for the run it
-  did not start and nothing marked. It prints the window, its use and its reset in local time.
-  Run the same command again after that reset: it resumes there. A reading with no `resetsAt`
-  cannot be waited out and stops nothing; overage and a rejected request still do.
+  newest reading per window as `plan_meter`, with its `observed_at` timestamp. Readings are
+  compared by timestamp across runs and attempts, rather than by run order. The event timestamp
+  is used when present and valid; otherwise the watch timestamps the reading as it arrives.
+  Older records without a reading timestamp use their run's `started_at` as a fallback. Before
+  it starts a run, a window at or above the reserve whose `resetsAt` is still ahead stops the
+  execution cleanly: no record for the run it did not start and nothing marked. It prints the window, its use and its reset in local time.
+  Run the same command again after that reset: it resumes there. A reading with no `resetsAt`,
+  or one more than eight days ahead (including a milliseconds value), has an unknown reset and
+  stops nothing; overage and a rejected request still do.
 
 Transcripts and the warm index
 cache go to `--work` (default: `<user cache>/adamap-bench/<manifest name>`, from the OS user
@@ -193,16 +205,20 @@ record cannot claim a run it is not, and a swapped task and condition names no p
 The claude adapter runs `claude -p --output-format stream-json --verbose --model <model>
 --permission-mode <mode> --setting-sources user --strict-mcp-config --mcp-config <state>/mcp.json
 --settings <state>/settings.json --allowedTools <fixed tools plus the condition's>
-[--disallowedTools ...] [--append-system-prompt <map>]`. The condition's MCP server is the only one
-the session has, and the task repository's own `.claude/settings.json` is never loaded. Its `CLAUDE.md` instruction
-files still load from each task revision and can differ across tasks. This is not normalized by
-the framework: inspect those instructions when approving tasks and interpret cross-task results
-with that limit. The runner
+[--disallowedTools ...] [--append-system-prompt <map>]`. Only the condition's MCP server is configured
+by the runner; the wiring smoke below checks for servers added by user plugins too. The task
+repository's own `.claude/settings.json` is never loaded. Its `CLAUDE.md` instruction files still
+load from each task revision and can differ across tasks. This is not normalized by the framework:
+inspect those instructions when approving tasks and interpret cross-task results with that limit.
+The runner
 reads the transcript as it streams: unless the `system`/`init` event gives `apiKeySource` `"none"`
 (the subscription login), the CLI is killed there, no record is written and the execution stops.
 A missing `apiKeySource`, or a turn (any event but a `system` one or a `rate_limit_event`) before
-the init event, counts as API billing; hooks' events and the meter may come first, as they do in
-Claude Code 2.1.284, and an init that never comes is bounded by `timeout_seconds`. The watch is a
+the init event, counts as API billing. Whitespace-only lines are skipped. Any other undecodable
+line before init or a `rate_limit_event`
+without an object in `rate_limit_info` is refused too. The final line is checked even without a
+trailing newline. Hooks' events and the meter may come first, as they do in Claude Code 2.1.284,
+and an init that never comes is bounded by `timeout_seconds`. The watch is a
 backstop, not a gate: the CLI starts its first request right after it writes the init event, so
 at most one request can get through before the process is stopped. `Authorize`'s checks of the
 environment and the user settings are what keep a run off API billing in the first place.
@@ -238,7 +254,7 @@ are bounded, but this is not a sandbox for descendants.
 A record carries the run's identity, the manifest's name and its synthetic flag, the source and
 after fingerprints, the index (digest, the tree it was built from, reused or built, build time,
 size, refreshes), every attempt, the answer and its hash, the check results with output hashes,
-the isolation outcome, the last plan meter reading per window (`plan_meter`, when the CLI gave
+the isolation outcome, the newest plan meter reading per window (`plan_meter`, when the CLI gave
 one), and any model-based overhead. It has no success field: success is
 recomputed from the check outputs.
 
@@ -311,6 +327,13 @@ on the owner's Windows PC:
 | `codegraph` | @colbymchenry/codegraph 1.6.2 through node v22.16.0 |
 | `adamap` | adamap at `c93f98e1f07f91045691c8055e2c3a1ea1651ca2`, scip-go v0.2.7; mode `queries` |
 
+CodeGraph's probe, index and MCP commands resolve `codegraph` with `exec.LookPath` at run time,
+before entering the workspace. Resolution must run outside the workspace and refuses a resolved
+path inside it (including a link into it). The Windows `cmd /d /c` wrapper receives the absolute
+shim path and uses an absolute `cmd` path resolved with the same checks, so a task's
+`codegraph.cmd` or `cmd.exe` cannot take precedence over PATH. No machine path is pinned
+in the manifest. A resolution refusal stops execution before an attempt.
+
 Each condition has its own index command, MCP server and tools. The timeout, attempts,
 permission mode and the fixed tool set are the same for every condition.
 
@@ -322,15 +345,21 @@ Before the wiring smoke, the owner:
 
 - installs the LSP plugin: `claude plugin install gopls-lsp@claude-plugins-official`. It is
   enabled for the `lsp` condition only (`enabledPlugins` in each condition's settings). Its probe
-  checks gopls alone, so the smoke must confirm that the `LSP` tool is in the session's init
-  event.
+  checks gopls alone; the smoke checks the init events below.
 - installs adamap at the pinned commit:
   `go install github.com/cristiangirlea/adanext-map/cmd/adamap@c93f98e1f07f91045691c8055e2c3a1ea1651ca2`.
   Otherwise every `adamap` run is recorded as *unsupported*, and resume does not rerun a recorded
   run.
 - runs a wiring smoke: a copy of `pilot-1.json` with `"scale": "smoke"`, one task, one repeat and
-  its own approval. It checks the points under "What a run does", and that Serena opens no
-  dashboard and CodeGraph leaves no daemon running.
+  its own approval. Inspect every condition's `attempt-*.jsonl` `system`/`init` event, not just
+  the settings files: `mcp_servers` must list exactly `serena`, `codegraph`, or `adamap` in that
+  condition, and no servers in `none` or `lsp`; each listed server must be connected. The
+  `tools` list must contain `LSP` only in `lsp`, and every `mcp__<server>__...` tool must belong
+  to that condition's server. Fail the smoke for any extra server, foreign MCP tool, missing
+  expected server, or LSP mismatch. User settings (`--setting-sources user`) load in every
+  condition, so configured plugin servers must also satisfy these checks. Keep these init
+  events as the wiring evidence before approving the pilot. Also check the points under
+  "What a run does", that Serena opens no dashboard and CodeGraph leaves no daemon running.
 
 The real run must start from a terminal outside Claude Code. A Claude Code session sets
 `ANTHROPIC_BASE_URL`, and the runner refuses any provider variable, as designed. From the

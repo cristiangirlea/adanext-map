@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -151,14 +152,14 @@ func (s *stores) keep(err error, now stamp, retry bool) (*snapshot, error, error
 	return s.cur, err, nil
 }
 
-// Windows fails an open of latest at the instant store.Write renames a new one over it. Such a
-// read is tried again a few times, a few milliseconds apart, before it counts as a failure.
+// A rename of latest landing during a read fails it (on Windows the open itself, everywhere the
+// check against the opened file). Such a read is tried again a few times, a few milliseconds apart.
 const (
 	latestAttempts = 5
 	latestPause    = 5 * time.Millisecond
 )
 
-// readLatest retries Windows sharing violations and access-denied errors.
+// readLatest retries Windows sharing violations, access denied and store.ErrReplaced.
 func (s *stores) readLatest() (string, error) {
 	pause := s.pause
 	if pause == nil {
@@ -170,7 +171,7 @@ func (s *stores) readLatest() (string, error) {
 	}
 	for attempt := 1; ; attempt++ {
 		commit, err := latest(s.repo)
-		if err == nil || attempt == latestAttempts || !isSharingViolation(err) {
+		if err == nil || attempt == latestAttempts || !(isSharingViolation(err) || errors.Is(err, store.ErrReplaced)) {
 			return commit, err
 		}
 		pause(latestPause)

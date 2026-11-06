@@ -397,7 +397,10 @@ func TestTheReportTotalsRestartsAfterALimit(t *testing.T) {
 		t.Fatalf("none restarts %d", c.LimitRestarts)
 	}
 	md := rep.Markdown()
-	if !strings.Contains(md, "restarts after a limit") || !strings.Contains(md, fmt.Sprintf("| %d |", want)) {
+	c := cond(t, rep, "adamap")
+	row := fmt.Sprintf("| %s | %s | %d | %d | %d | %d | %d | %d |", c.Condition, c.Backend,
+		c.Successes, c.Recorded-c.Unsupported, c.Attempts, c.FailedAttempts, c.IsolationFailures, want)
+	if !strings.Contains(md, "restarts after a limit") || !strings.Contains(md, "\n"+row+"\n") {
 		t.Fatalf("no restarts in:\n%s", md)
 	}
 }

@@ -44,6 +44,8 @@ type Invocation struct {
 	Timeout time.Duration
 	Files   map[string]string
 	Watch   func(line []byte) error
+	// meter preserves arrival times because parsing at exit can make an old reading look new.
+	meter map[string]record.PlanWindow
 }
 
 // Outcome is what an adapter reads from an attempt's output.
@@ -113,11 +115,13 @@ func (Claude) Command(c Cell) (Invocation, error) {
 	if c.Injected != "" {
 		argv = append(argv, "--append-system-prompt", c.Injected)
 	}
+	meter := map[string]record.PlanWindow{}
 	return Invocation{
 		Argv: argv, Dir: c.Workspace, Env: envList(c.Backend.Env, c.Condition.Env), Stdin: c.Task.Prompt,
 		Timeout: time.Duration(c.Execution.TimeoutSeconds) * time.Second,
 		Files:   map[string]string{mcpPath: string(mcp) + "\n", setPath: string(set) + "\n"},
-		Watch:   subscriptionOnly(),
+		Watch:   subscriptionOnly(meter),
+		meter:   meter,
 	}, nil
 }
 
@@ -129,30 +133,47 @@ func (Claude) Command(c Cell) (Invocation, error) {
 // status is "rejected" stops it as the plan's limit (ErrPlanLimit). It is a backstop,
 // not a gate: the CLI starts its first request right after writing the init, so at most one
 // request can get through before the process is stopped.
-func subscriptionOnly() func(line []byte) error {
+func subscriptionOnly(meter map[string]record.PlanWindow) func(line []byte) error {
 	seen := false
 	return func(line []byte) error {
+		if len(bytes.TrimSpace(line)) == 0 {
+			return nil
+		}
 		// After the init only the meter matters: skip the turns, which can be large, unread.
 		if seen && !bytes.Contains(line, []byte(`"rate_limit_event"`)) {
 			return nil
 		}
 		var e struct {
 			Type, Subtype string
+			Timestamp     string         `json:"timestamp"`
 			APIKeySource  *string        `json:"apiKeySource"`
 			Info          map[string]any `json:"rate_limit_info"`
 		}
 		if json.Unmarshal(line, &e) != nil {
-			return nil
+			return fmt.Errorf("the CLI event cannot be decoded, so its login (apiKeySource) or meter is unknown: refused as possible API billing")
 		}
 		if e.Type == "rate_limit_event" {
+			if e.Info == nil {
+				return fmt.Errorf("the CLI meter has no rate_limit_info object: refused as possible API billing")
+			}
 			if field := overageInUse(e.Info, false, "rate_limit_info"); field != "" {
 				return fmt.Errorf("the plan's meter shows %w at %s: the CLI was stopped", ErrOverage, field)
+			}
+			if meter != nil {
+				var reading event
+				if json.Unmarshal(line, &reading) == nil && reading.RateLimitInfo != nil {
+					at := e.Timestamp
+					if _, err := time.Parse(time.RFC3339Nano, at); err != nil {
+						at = time.Now().UTC().Format(time.RFC3339Nano)
+					}
+					reading.RateLimitInfo.read(meter, at)
+				}
 			}
 			if e.Info["status"] == "rejected" {
 				// The plan refused the request: its limit, which resume runs again after.
 				window, _ := e.Info["rateLimitType"].(string)
 				reset := "unknown"
-				if at, ok := e.Info["resetsAt"].(float64); ok && at > 0 {
+				if at, ok := e.Info["resetsAt"].(float64); ok && at > 0 && at <= float64(time.Now().Add(8*24*time.Hour).Unix()) {
 					reset = time.Unix(int64(at), 0).Local().Format("2006-01-02 15:04 MST")
 				}
 				return fmt.Errorf("the plan's meter says the request was rejected (window %q, resets %s): %w", window, reset, ErrPlanLimit)
@@ -183,13 +204,13 @@ func subscriptionOnly() func(line []byte) error {
 // billed beyond the plan. The CLI is stopped, and the run keeps its .started marker.
 var ErrOverage = errors.New("overage in use (usage billed beyond the plan)")
 
-// overageInUse is the path of the first field in a rate_limit_event's info that may say overage
-// is in use, "" when none does. Claude Code documents isUsingOverage only, so any field named for
-// overage (or inside one) that is true, or a status that reads as in use, counts; a flag named
-// for overage being disabled does not.
+// overageInUse checks use flags separately because overage metadata does not mean usage is billed.
 func overageInUse(v any, under bool, path string) string {
 	switch x := v.(type) {
 	case map[string]any:
+		if under {
+			return path
+		}
 		keys := make([]string, 0, len(x))
 		for k := range x {
 			keys = append(keys, k)
@@ -197,14 +218,28 @@ func overageInUse(v any, under bool, path string) string {
 		slices.Sort(keys)
 		for _, k := range keys {
 			key := strings.ToLower(k)
-			if strings.Contains(key, "disabled") {
+			if strings.Contains(key, "disabled") || strings.HasSuffix(key, "resetsat") {
 				continue
 			}
-			if p := overageInUse(x[k], under || strings.Contains(key, "overage"), path+"."+k); p != "" {
+			if key == "overagestatus" {
+				// Only statuses known not to bill pass; a new or malformed one fails closed.
+				status, _ := x[k].(string)
+				switch strings.ToLower(strings.TrimSpace(status)) {
+				case "allowed", "allowed_warning", "rejected":
+					continue
+				}
+				return path + "." + k
+			}
+			flag := strings.Contains(strings.ToLower(path+"."+k), "overage") &&
+				(strings.Contains(key, "using") || strings.Contains(key, "inuse"))
+			if p := overageInUse(x[k], flag, path+"."+k); p != "" {
 				return p
 			}
 		}
 	case []any:
+		if under {
+			return path
+		}
 		for i, y := range x {
 			if p := overageInUse(y, under, fmt.Sprintf("%s[%d]", path, i)); p != "" {
 				return p
@@ -214,12 +249,21 @@ func overageInUse(v any, under bool, path string) string {
 		if under && x {
 			return path
 		}
+	case float64:
+		if under && x != 0 {
+			return path
+		}
 	case string:
 		switch strings.ToLower(strings.TrimSpace(x)) {
-		case "in_use", "in use", "inuse", "using", "active":
+		case "false", "allowed", "rejected", "disabled", "off", "inactive", "not_in_use":
+		default:
 			if under {
 				return path
 			}
+		}
+	default:
+		if under {
+			return path
 		}
 	}
 	return ""
@@ -262,6 +306,7 @@ func envList(maps ...map[string]string) []string {
 // The stream-json events the parser reads; other events and fields are ignored.
 type event struct {
 	Type         string   `json:"type"`
+	Timestamp    string   `json:"timestamp"`
 	Subtype      string   `json:"subtype"`
 	SessionID    string   `json:"session_id"`
 	Message      *message `json:"message"`
@@ -290,18 +335,17 @@ type meterWindow struct {
 	ResetsAt    *float64 `json:"resetsAt"`
 }
 
-// read puts the info's windows into meter, a later reading replacing an earlier one; a window
-// without a utilization is skipped.
-func (i *rateLimitInfo) read(meter map[string]record.PlanWindow) {
+// read retains the newest timestamped utilization so delayed readings cannot hide usage.
+func (i *rateLimitInfo) read(meter map[string]record.PlanWindow, at string) {
 	put := func(name string, w meterWindow) {
 		if name == "" || w.Utilization == nil {
 			return
 		}
-		p := record.PlanWindow{Utilization: *w.Utilization}
+		p := record.PlanWindow{Utilization: *w.Utilization, ObservedAt: at}
 		if w.ResetsAt != nil {
 			p.ResetsAt = int64(*w.ResetsAt)
 		}
-		meter[name] = p
+		mergeMeter(meter, map[string]record.PlanWindow{name: p})
 	}
 	put(i.RateLimitType, meterWindow{Utilization: i.Utilization, ResetsAt: i.ResetsAt})
 	for name, w := range i.UnifiedWindows {
@@ -358,7 +402,7 @@ func parseStreamJSON(stdout []byte, b manifest.Backend) Outcome {
 			if o.Meter == nil {
 				o.Meter = map[string]record.PlanWindow{}
 			}
-			e.RateLimitInfo.read(o.Meter)
+			e.RateLimitInfo.read(o.Meter, e.Timestamp)
 		}
 		if c := limitCategory(e.Error); c != "" && (e.Type == "assistant" || e.Type == "system" && e.Subtype == "api_retry") {
 			limitErr = "the CLI reported a " + c + " error"
@@ -499,11 +543,13 @@ func (f Fake) Command(c Cell) (Invocation, error) {
 	if len(f.Program) == 0 {
 		return Invocation{}, fmt.Errorf("the fake adapter has no program")
 	}
+	meter := map[string]record.PlanWindow{}
 	return Invocation{
 		Argv: slices.Clone(f.Program), Dir: c.Workspace, Stdin: c.Task.Prompt,
 		Env:     append(slices.Clone(f.Env), envList(c.Backend.Env, c.Condition.Env)...),
 		Timeout: time.Duration(c.Execution.TimeoutSeconds) * time.Second,
-		Watch:   subscriptionOnly(),
+		Watch:   subscriptionOnly(meter),
+		meter:   meter,
 	}, nil
 }
 

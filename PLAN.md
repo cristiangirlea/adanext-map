@@ -246,6 +246,39 @@ repository); a fail-closed push guard (#8).
   hitting a count limit without CLI overrides. A model test pins the four documented struct sizes
   on 64-bit builds so layout changes require revisiting the estimate. The store format and runtime
   behavior are unchanged.
+- 2026-11-05 (#68): resolve CodeGraph on PATH outside the workspace at run time and refuse a
+  resolved executable inside it; resolve the Windows shell with the same checks and pass both
+  absolute paths for probe, index and MCP. Keep the limit note until the restart records its
+  result, and read its last exact count line after CLI text. Assert the report's whole restart row.
+  The wiring smoke checks
+  every init event for only its condition's MCP server and LSP only in the lsp condition, including
+  servers from user plugins. Both task files record harness as public, verified by the owner
+  with gh (public since 2026-10-12). No pilot or model call was run.
+- 2026-11-06 (#85): reading `latest` retries when the file is replaced between its check and its
+  open (`store.ErrReplaced`), as it retries sharing violations and access denied, on every OS:
+  a rename landing in that window is transient, and the bounded retry still ends in the error.
+- 2026-11-05 (#71): the plan-meter watch is a backstop that may stop after a request has started.
+  Skip whitespace-only lines; refuse other undecodable lines before init and non-object meter
+  info; check a final line without a newline too. Strict truthy/unknown-value checks apply only
+  to overage use flags (keys containing using or inuse, case-insensitive); overageStatus is
+  allowed only as allowed, allowed_warning or rejected; any other value or type is refused. Ignore ResetsAt
+  metadata, including null. Resets more than eight days ahead are unknown and stop nothing. Keep each
+  window's newest timestamped reading across attempts and runs, including resumed records;
+  timestamp arrivals when the event has none and fall back to the run start for older records.
+- 2026-11-05 (#54): close the push guard's remaining parsing gaps without new dependencies:
+  distinguish legacy arithmetic shifts from heredocs, retain unquoted let heredoc syntax, and
+  refuse nested legacy arithmetic brackets; scan executable shell/ssh heredocs using the full line,
+  support ANSI-C apostrophes/backslashes and allow literal PowerShell here-strings only for known
+  data consumers or assignments without code execution; read cmd hashes/caret escapes,
+  restore subshell directories, normalize GraphQL endpoint spellings and refuse mutations and
+  hidden queries, and allow read-only tag listings and release list/view. Unsupported escapes and dynamic or remote state fail closed;
+  regression cases cover refused and allowed forms. Refuse continued heredoc consumer lines,
+  scan source/dot heredocs, strip GraphQL query/fragment suffixes and trailing slashes, require
+  visible git/gh subcommands under xargs, and refuse variable executors with -c or stdin from a
+  pipe/heredoc. Pin PowerShell message/body here-string refusals and document file arguments.
+  Require known literal xargs subcommands without replacement words; refuse variable command
+  option clusters and parameter operators, continued `|&` heredocs, and executable shell
+  here-strings. Apply the same PowerShell message/body rule to both quote forms.
 - 2026-11-05 (#60): benchmark review follow-ups: approval text states runs x attempts as the
   maximum CLI sessions per execution, excluding limit restarts and manual marker removal, and
   that resume sees only its records directory; a fresh directory can repeat the plan. No global
