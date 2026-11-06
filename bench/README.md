@@ -94,19 +94,28 @@ The runner also reads the plan's meter: Claude Code's `rate_limit_event`, which 
 in `unifiedWindows` (`five_hour`, `seven_day`, any other) and for the event's own `rateLimitType`.
 
 - **Overage is refused.** Overage is usage billed beyond the plan. A meter that shows it in use
-  (`isUsingOverage: true`, or any other field named for overage that is true or reads as in use;
-  a flag named for overage being disabled does not count) stops the CLI at once, before the init
+  (`isUsingOverage: true`, `"true"`, a non-zero number, or an `overageStatus` other than `allowed`,
+  `allowed_warning` or `rejected`)
+  stops the CLI at once. Strict truthy/unknown-value checks apply only to overage use flags
+  whose keys contain `using` or `inuse` (case-insensitive), including nested flags.
+  Statuses `allowed`, `allowed_warning`, and `rejected` do not mean overage is in use;
+  reset metadata (keys ending in `ResetsAt`, including null) and disabled flags are ignored.
+  The watch applies before the init
   event or after it. No record is written, the execution stops, and the run keeps its `.started`
   marker: it may have spent, so resume does not start it again. Turn overage off in the plan's
   settings, then remove the marker to run it again.
 - **The plan reserve.** `execution.plan_reserve` (a fraction above 0 and at most 1; 0.8 when
   absent) keeps part of the plan for the owner. The runner keeps each window's latest reading from
   the execution's runs, starting from the records already written, and each record keeps its own
-  last reading per window as `plan_meter`. Before it starts a run, a window at or above the
-  reserve whose `resetsAt` is still ahead stops the execution cleanly: no record for the run it
-  did not start and nothing marked. It prints the window, its use and its reset in local time.
-  Run the same command again after that reset: it resumes there. A reading with no `resetsAt`
-  cannot be waited out and stops nothing; overage and a rejected request still do.
+  newest reading per window as `plan_meter`, with its `observed_at` timestamp. Readings are
+  compared by timestamp across runs and attempts, rather than by run order. The event timestamp
+  is used when present and valid; otherwise the watch timestamps the reading as it arrives.
+  Older records without a reading timestamp use their run's `started_at` as a fallback. Before
+  it starts a run, a window at or above the reserve whose `resetsAt` is still ahead stops the
+  execution cleanly: no record for the run it did not start and nothing marked. It prints the window, its use and its reset in local time.
+  Run the same command again after that reset: it resumes there. A reading with no `resetsAt`,
+  or one more than eight days ahead (including a milliseconds value), has an unknown reset and
+  stops nothing; overage and a rejected request still do.
 
 Transcripts and the warm index
 cache go to `--work` (default: a temp directory). Each workspace is a directory of its own in the
@@ -183,8 +192,11 @@ repository's own `.claude/settings.json` is never loaded. The runner
 reads the transcript as it streams: unless the `system`/`init` event gives `apiKeySource` `"none"`
 (the subscription login), the CLI is killed there, no record is written and the execution stops.
 A missing `apiKeySource`, or a turn (any event but a `system` one or a `rate_limit_event`) before
-the init event, counts as API billing; hooks' events and the meter may come first, as they do in
-Claude Code 2.1.284, and an init that never comes is bounded by `timeout_seconds`. The watch is a
+the init event, counts as API billing. Whitespace-only lines are skipped. Any other undecodable
+line before init or a `rate_limit_event`
+without an object in `rate_limit_info` is refused too. The final line is checked even without a
+trailing newline. Hooks' events and the meter may come first, as they do in Claude Code 2.1.284,
+and an init that never comes is bounded by `timeout_seconds`. The watch is a
 backstop, not a gate: the CLI starts its first request right after it writes the init event, so
 at most one request can get through before the process is stopped. `Authorize`'s checks of the
 environment and the user settings are what keep a run off API billing in the first place.
@@ -200,7 +212,7 @@ observable.
 A record carries the run's identity, the manifest's name and its synthetic flag, the source and
 after fingerprints, the index (digest, the tree it was built from, reused or built, build time,
 size, refreshes), every attempt, the answer and its hash, the check results with output hashes,
-the isolation outcome, the last plan meter reading per window (`plan_meter`, when the CLI gave
+the isolation outcome, the newest plan meter reading per window (`plan_meter`, when the CLI gave
 one), and any model-based overhead. It has no success field: success is
 recomputed from the check outputs.
 

@@ -1245,6 +1245,9 @@ func TestARecordKeepsThePlansMeter(t *testing.T) {
 	seen := map[float64]bool{}
 	for _, r := range recs {
 		five, week := r.PlanMeter["five_hour"], r.PlanMeter["seven_day"]
+		if _, err := time.Parse(time.RFC3339Nano, five.ObservedAt); err != nil {
+			t.Fatalf("missing reading timestamp: %+v", five)
+		}
 		if len(r.PlanMeter) != 2 || five.Utilization <= 0 || five.Utilization > 0.08+1e-9 || five.ResetsAt != resets || week.Utilization != 0.1 || week.ResetsAt != resets {
 			t.Fatalf("%s: meter %+v", r.RunID, r.PlanMeter)
 		}

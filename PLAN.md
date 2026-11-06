@@ -257,3 +257,11 @@ repository); a fail-closed push guard (#8).
 - 2026-11-06 (#85): reading `latest` retries when the file is replaced between its check and its
   open (`store.ErrReplaced`), as it retries sharing violations and access denied, on every OS:
   a rename landing in that window is transient, and the bounded retry still ends in the error.
+- 2026-11-05 (#71): the plan-meter watch is a backstop that may stop after a request has started.
+  Skip whitespace-only lines; refuse other undecodable lines before init and non-object meter
+  info; check a final line without a newline too. Strict truthy/unknown-value checks apply only
+  to overage use flags (keys containing using or inuse, case-insensitive); overageStatus is
+  allowed only as allowed, allowed_warning or rejected; any other value or type is refused. Ignore ResetsAt
+  metadata, including null. Resets more than eight days ahead are unknown and stop nothing. Keep each
+  window's newest timestamped reading across attempts and runs, including resumed records;
+  timestamp arrivals when the event has none and fall back to the run start for older records.
