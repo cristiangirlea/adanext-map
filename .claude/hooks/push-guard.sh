@@ -172,9 +172,11 @@ check_cmd() {
         case $cur in
           *'$')
             pv=${cs%%\}*}
-            case $pv in
-              '' | [0-9]* | *[!a-zA-Z0-9_]*) check_part "$cur"; cur= pipein=0 ;;
-              *) case $cs in *'}'*) cur=$cur'{'$pv'}' cs=${cs#*\}} ;; *) check_part "$cur"; cur= pipein=0 ;; esac ;;
+            # Operators can hide executable substitutions inside an expansion.
+            case $pv in '' | [0-9]* | *[!a-zA-Z0-9_]*) refuse "a parameter expansion cannot be read faithfully" ;; esac
+            case $cs in
+              *'}'*) cur=$cur'{'$pv'}' cs=${cs#*\}} ;;
+              *) refuse "a parameter expansion cannot be read faithfully" ;;
             esac ;;
           *) check_part "$cur"; cur= pipein=0 ;;
         esac ;;
@@ -212,7 +214,10 @@ check_cmd() {
       o\<)
         cur=$cur$ch
         case $lang$cs in
-          sh\<\<*) cur=$cur'<<' cs=${cs#??} ;; # <<<, a here-string
+          sh\<\<*)
+            # A shell can execute a here-string word as stdin.
+            (stdin_consumer "$hdline"; [ -z "$hrun" ] || refuse "an executable here-string cannot be read faithfully") || exit $?
+            cur=$cur'<<' cs=${cs#??} ;;
           sh\<*) cs=${cs#?}; cur=$cur'<'; case $stk in [ab]*) ;; *) heredoc_start ;; esac ;;
         esac ;;
       o"$nl") check_part "$cur"; [ -z "$cur" ] || pipein=0; cur=; heredoc_skip; hdline=${cs%%"$nl"*} ;;
@@ -289,6 +294,18 @@ heredoc_start() {
   done
   [ -z "$hw" ] || hdq=$hdq$hq$hd$hw$nl
 }
+# stdin_consumer LINE: recognize executable stdin consumers across the command line.
+stdin_consumer() {
+  hrun=
+  htline=$(printf '%s' "$1" | tr '|;&()<>' '        ')
+  words "$htline"
+  while [ -n "$wl" ]; do
+    ht=${wl%%"$soh"*} wl=${wl#*"$soh"}
+    prog "$ht"
+    case $ht in *'$'*) hrun=x ;; esac
+    case $w in ssh) hrun=r ;; source | . | bash | sh | zsh | dash | ksh | ash | mksh | pwsh | powershell) [ "$hrun" = r ] || hrun=x ;; esac
+  done
+}
 # heredoc_skip: at a newline, takes the queued heredocs' bodies off the text. <<- ends at the word
 # after blanks: a JSON tab arrives as a space.
 heredoc_skip() {
@@ -297,14 +314,8 @@ heredoc_skip() {
   if [ -n "$hdq" ]; then
     # A continued consumer can execute the body beyond the first line we inspect.
     htline=${hdline%"${hdline##*[![:space:]]}"}
-    case $htline in *'|' | *'&&' | *'\') refuse "a continued heredoc consumer cannot be read faithfully" ;; esac
-    htline=$(printf '%s' "$hdline" | tr '|;&()<>' '        ')
-    words "$htline"
-    while [ -n "$wl" ]; do
-      ht=${wl%%"$soh"*} wl=${wl#*"$soh"}
-      prog "$ht"
-      case $w in ssh) hrun=r ;; source | . | bash | sh | zsh | dash | ksh | ash | mksh | pwsh | powershell) [ "$hrun" = r ] || hrun=x ;; esac
-    done
+    case $htline in *'|' | *'|&' | *'&&' | *'\') refuse "a continued heredoc consumer cannot be read faithfully" ;; esac
+    stdin_consumer "$hdline"
   fi
   while [ -n "$hdq" ]; do
     he=${hdq%%"$nl"*} hdq=${hdq#*"$nl"}
@@ -344,7 +355,7 @@ check_part() {
   IFS=$soh
   set -- $wl
   IFS=' '
-  fromstdin=0 gopts=
+  fromstdin=0 xreplace= gopts=
   while [ $# -gt 0 ]; do
     case $1 in
       '') shift; continue ;;
@@ -354,13 +365,15 @@ check_part() {
           =) shift 2; continue ;;
           =*) w=${2#=}; shift 2; set -- "$w" "$@"; continue ;;
         esac
+        case $1 in '${'*) refuse "a parameter expansion names the program" ;; esac
         case $1 in *=?*) w=${1#*=}; shift; set -- "$w" "$@"; continue ;; *=) shift; continue ;; esac
         # A variable executor can interpret stdin the hook cannot resolve.
         case $pipein$hdq in 0) ;; *) refuse "a variable names a program fed by a pipe or heredoc" ;; esac
         # A variable names the program: refuse when what follows reads like one of ours.
         for t; do
           lower "$t"
-          case $lc in -c | push | tag | release | merge) refuse "a variable names the program in: $*" ;; esac
+          case $t in -[a-zA-Z]*) case ${t#-} in *[!a-zA-Z]*) ;; *c*) refuse "a variable names a command executor" ;; esac ;; esac
+          case $lc in -c | --command | push | tag | release | merge) refuse "a variable names the program in: $*" ;; esac
         done
         return 0 ;;
       *=*) shift; continue ;; # NAME=value before a command
@@ -380,6 +393,15 @@ check_part() {
             t="$*"; IFS=" 	,"; set -- $t; IFS=' ' ;;
         esac
         while [ $# -gt 0 ]; do
+          if [ "$w" = xargs ]; then
+            case $1 in
+              -I) shift; [ $# -gt 0 ] || refuse "xargs has no replacement word"; xreplace=$1; shift; continue ;;
+              -I?*) xreplace=${1#-I}; shift; continue ;;
+              -i | --replace) xreplace='{}'; shift; continue ;;
+              -i?*) xreplace=${1#-i}; shift; continue ;;
+              --replace=*) xreplace=${1#*=}; shift; continue ;;
+            esac
+          fi
           case $1 in
             -u | -g | -C | -n | -L | -P | -d | -E | -s | -a | -k | -I) shift; [ $# -gt 0 ] && shift ;;
             '' | -*) shift ;;
@@ -466,6 +488,10 @@ check_git() {
   done
   # xargs can supply a missing subcommand from stdin.
   [ $# -gt 0 ] || { [ "$fromstdin" = 1 ] && refuse "xargs hides the subcommand"; return 0; }
+  # Replacement words can turn even a known subcommand into executable stdin.
+  if [ "$fromstdin" = 1 ] && [ -n "$xreplace" ]; then
+    case $1 in *"$xreplace"*) refuse "xargs replaces the subcommand" ;; esac
+  fi
   lower "$1"
   sub=$lc
   shift
@@ -491,7 +517,7 @@ check_git() {
       rebase | reflog | remote | reset | restore | rev-list | rev-parse | revert | rm | show | show-ref | \
       stash | status | switch | symbolic-ref | update-ref | worktree | cat-file | for-each-ref | \
       format-patch | help | version | submodule | shortlog | ls-tree | check-ignore | gc | notes) ;;
-    *) check_alias "$sub" "$@" ;;
+    *) [ "$fromstdin" != 1 ] || refuse "xargs has an unknown git subcommand"; check_alias "$sub" "$@" ;;
   esac
 }
 
@@ -637,6 +663,10 @@ check_gh() {
   done
   # xargs can supply a missing subcommand from stdin.
   [ $# -gt 0 ] || { [ "$fromstdin" = 1 ] && refuse "xargs hides the subcommand"; return 0; }
+  # Replacement words can turn even a known subcommand into executable stdin.
+  if [ "$fromstdin" = 1 ] && [ -n "$xreplace" ]; then
+    case $1 in *"$xreplace"*) refuse "xargs replaces the subcommand" ;; esac
+  fi
   lower "$1"
   sub=$lc
   shift
@@ -655,6 +685,8 @@ check_gh() {
         case $t in --auto | --auto=* | --admin | --admin=*) refuse "gh pr merge $t: merge through the PR by hand" ;; esac
       done ;;
     api) check_api "$@" ;;
+    auth | browse | completion | config | extension | gist | gpg-key | issue | label | org | project | repo | ruleset | run | search | secret | ssh-key | status | variable | workflow) ;;
+    *) [ "$fromstdin" != 1 ] || refuse "xargs has an unknown gh subcommand" ;;
   esac
 }
 
@@ -710,7 +742,7 @@ check_api() {
 }
 
 main() {
-  depth=0 fromstdin=0 gopts= remote_dir=0
+  depth=0 fromstdin=0 xreplace= gopts= remote_dir=0
   if ! json_string command; then
     mentions "$input" && refuse "the hook could not read this command, and it mentions a push, a tag, a release, a merge or the API"
     exit 0

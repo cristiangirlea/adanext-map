@@ -257,3 +257,6 @@ repository); a fail-closed push guard (#8).
   scan source/dot heredocs, strip GraphQL query/fragment suffixes and trailing slashes, require
   visible git/gh subcommands under xargs, and refuse variable executors with -c or stdin from a
   pipe/heredoc. Pin PowerShell message/body here-string refusals and document file arguments.
+  Require known literal xargs subcommands without replacement words; refuse variable command
+  option clusters and parameter operators, continued `|&` heredocs, and executable shell
+  here-strings. Apply the same PowerShell message/body rule to both quote forms.

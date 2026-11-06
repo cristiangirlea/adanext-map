@@ -455,6 +455,44 @@ allowed '$EDITOR file.txt'
 refused "git commit -m @'\ntext\n'@" . PowerShell
 refused "gh pr create --body @'\ntext\n'@" . PowerShell
 
+# xargs must keep a literal known subcommand, even with replacement options.
+refused 'echo push origin main | xargs -I{} git {}'
+refused 'echo pr merge 5 | xargs -I{} gh {}'
+refused 'echo push | xargs -i git {}'
+refused 'echo push | xargs --replace=X git X'
+refused 'echo ush | xargs -IX git pX origin main'
+refused 'echo push | xargs git unknown'
+refused 'echo push | xargs -Istatus git status'
+refused 'echo push | xargs -Itat git status'
+refused 'echo release | xargs --replace=pr gh pr'
+refused 'echo pr | xargs gh unknown'
+allowed 'echo file | xargs git status'
+allowed 'echo 5 | xargs gh pr view'
+# Variable shell options and parameter operators cannot hide executors.
+refused '$SHELL -lc \"git push origin main\"'
+refused '$SHELL -ec \"git push origin main\"'
+refused '$SHELL --command \"git push origin main\"'
+refused 'bash -ec \"git push origin main\"'
+refused '${SHELL:-bash} -c \"git push origin main\"'
+refused '${SHELL-bash} -c \"git push origin main\"'
+refused '${SHELL#x} -c \"git push origin main\"'
+refused '${SHELL%x} -c \"git push origin main\"'
+refused '${SHELL/x/y} -c \"git push origin main\"'
+refused '${SHELL:=bash} -c \"git push origin main\"'
+refused '${SHELL:?missing} -c \"git push origin main\"'
+# A stderr pipeline continues a heredoc consumer, but a background operator does not.
+refused "cat <<'EOF' |&\ngit push origin main\nEOF\nbash"
+allowed "cat <<'EOF' &\ngit push origin main\nEOF\ngit status"
+# Shell here-strings are executable stdin, including variable and sourcing consumers.
+refused 'bash <<< \"git push origin main\"'
+refused '$SHELL <<< \"git push origin main\"'
+refused 'source /dev/stdin <<< \"git push origin main\"'
+refused '. /dev/stdin <<< \"git push origin main\"'
+allowed 'cat <<< \"git push origin main\"'
+# Both PowerShell quote forms require message and body files.
+refused 'git commit -m @\"\ntext\n\"@' . PowerShell
+refused 'gh pr create --body @\"\ntext\n\"@' . PowerShell
+
 # settings.json runs the hook before every Bash and PowerShell call.
 settings="$(dirname "$hook")/../settings.json"
 tr -d ' \t\r\n' < "$settings" |

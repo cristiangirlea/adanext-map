@@ -21,11 +21,16 @@ uses heredoc syntax. At the end of a heredoc command line, any shell, `source`, 
 a consumer after the delimiter or in another pipeline stage, makes the body executable
 even with quoted delimiters. Shell bodies are scanned as commands, and `ssh` bodies as remote
 commands. Remote pushes are refused when repository state is needed: local Git configuration cannot resolve a remote destination.
-Heredoc lines ending in `|`, `||`, `&&` or a backslash after trimming trailing blanks are refused
-because a consumer on a later line cannot be resolved. Variable command words (`$X`, `${X}` or
-`"$X"`) are refused with `-c` or when fed by a pipe or heredoc; `$EDITOR file.txt` remains allowed.
+Heredoc lines ending in `|`, `|&`, `||`, `&&` or a backslash after trimming trailing blanks are refused
+because a consumer on a later line cannot be resolved. A trailing `&` is a background operator, not a continuation.
+Variable command words (`$X`, `${X}` or `"$X"`) are refused with `--command`, any short-option
+cluster containing `c`, or when fed by a pipe or heredoc; parameter expansions in command
+position are refused; parameter operators are refused wherever inspected because they can hide
+executable substitutions. Shell here-strings (including stdin
+for variable programs, `source` and `.`) are refused because their words can execute as commands; `$EDITOR file.txt` remains allowed.
 `xargs git` and `xargs gh` must name their subcommand on the command line, including after global
-options; an unseen subcommand from stdin is refused. `git ls-files | xargs grep foo` remains allowed.
+options; the subcommand must be known and cannot contain the xargs replacement word. Unknown
+subcommands and unseen subcommands from stdin are refused. `git ls-files | xargs grep foo` remains allowed.
 Text heredocs remain text; unquoted bodies containing substitutions are inspected as before.
 Directory changes inside parentheses and command substitutions are restored at the closing token.
 
@@ -35,7 +40,7 @@ refused, as are dangling carets and caret line continuations. Literal PowerShell
 are accepted only with known data consumers (`Write-Output`, `Write-Host`, `Set-Content`,
 `Out-File`, `Add-Content`) or variable assignments of data. Code execution syntax, unknown
 consumers, expanding double here-strings, and malformed delimiters are refused when inspected.
-Here-strings used as commit messages or PR bodies are refused too: use a message or body file
+Both single-quoted and double-quoted here-strings used as commit messages or PR bodies are refused: use a message or body file
 with `git commit -F file` or `gh pr create --body-file file` (and `--body-file` for other gh commands
 that accept it).
 
