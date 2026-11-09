@@ -109,18 +109,20 @@ A SCIP index is untrusted input. adamap refuses, with an error naming the docume
 - a file larger than `--max-bytes`, or bytes that are not a SCIP index;
 - a range that is not 3 or 4 integers, or one that is negative or ends before it starts (in either
   the packed or the typed range encoding, and for enclosing ranges too);
-- a document with an empty path;
 - symbol information without a symbol.
 
 A backslash in a document path is read as `/` (SCIP specifies `/`, but indexers on Windows write
 `\`), and the path is cleaned (`a/./b.go` and `a//b.go` become `a/b.go`) before it is checked.
 
 A document whose path leaves the project (absolute: `/x`, `C:/x`, a UNC path; or with a `..` that
-escapes) or names the project root itself (`pkg/..`) is skipped with its occurrences and symbols,
-unread. `adamap index` prints `skipped N documents outside the project, naming its root or with unsafe names` on
+escapes), names the project root itself (`pkg/..`) or is empty is skipped with its occurrences and symbols,
+unread. `adamap index` prints `skipped N documents outside the project, naming its root, without a path or with unsafe names` on
 stderr (`1 document` for one) and still writes the store. The note includes the first three paths,
-each quoted and limited to 200 bytes including quotes and a trailing `...` when truncated.
-Indexers on Windows list such a document: the test main Go builds in its cache.
+each quoted and limited to 200 bytes including quotes and a trailing `...` when truncated; a
+document without a path shows as `""`.
+Indexers on Windows list such a document: the test main Go builds in its cache. When that cache
+is on another drive than the repository no relative path to it exists, and scip-go writes the
+document with an empty path.
 A document path with a NUL or other control character, a `:`, or a Windows device name in any
 segment (`nul`, `con.txt`, `pkg/aux.go`, `COM1`, `lpt¹`, `CONIN$`, `CONOUT$`; any case, trailing dots and spaces ignored)
 is also skipped with the same note. A relative name such as `x:y.go` is skipped as an unsafe name,

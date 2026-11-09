@@ -152,8 +152,8 @@ func decode(data []byte, lim model.Limits) (*model.Index, Skipped, error) {
 // maxSkippedPaths is how many skipped paths a Skipped keeps for a message.
 const maxSkippedPaths = 3
 
-// Skipped counts documents outside the project, naming its root or with unsafe names, and keeps the first
-// few paths, quoted and bounded to 200 bytes each, for a message.
+// Skipped counts documents outside the project, naming its root, without a path or with unsafe names,
+// and keeps the first few paths, quoted and bounded to 200 bytes each, for a message.
 type Skipped struct {
 	Count int
 	Paths []string
@@ -190,8 +190,8 @@ type document struct {
 
 // Convert turns a SCIP index into adamap's model. Exact duplicate paths merge; aliases fail. Occurrences
 // without a symbol (syntax highlighting only) are dropped; a symbol's definition is its first
-// definition occurrence. A document whose path leaves the project is skipped with its occurrences and
-// symbols, as is a known unsafe file name; any other problem is an error.
+// definition occurrence. A document whose path leaves the project or is empty is skipped with its
+// occurrences and symbols, as is a known unsafe file name; any other problem is an error.
 func Convert(x *scippb.Index) (*model.Index, Skipped, error) {
 	return convert(x, model.CheckPath)
 }
@@ -310,8 +310,8 @@ func (c *converter) finish() (*model.Index, Skipped) {
 }
 
 // normalisePath is a document path in slash form, cleaned. SCIP specifies "/", but indexers on
-// Windows write a backslash, which is always taken as a separator here. An empty path stays empty
-// for CheckPath.
+// Windows write a backslash, which is always taken as a separator here. An empty path stays empty,
+// so it is not taken for the project root.
 func normalisePath(p string) string {
 	if p == "" {
 		return p
@@ -319,9 +319,10 @@ func normalisePath(p string) string {
 	return path.Clean(strings.ReplaceAll(p, `\`, "/"))
 }
 
-// Only paths outside the project or naming its root bypass file-name validation.
+// Only paths outside the project, naming its root or empty bypass file-name validation. An empty
+// path is what an indexer writes for a file it cannot place under the root, such as one on another drive.
 func outsideProject(p string) bool {
-	return p == "." || p == ".." || strings.HasPrefix(p, "../") || strings.HasPrefix(p, "/") ||
+	return p == "" || p == "." || p == ".." || strings.HasPrefix(p, "../") || strings.HasPrefix(p, "/") ||
 		(len(p) >= 3 && ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':' && p[2] == '/')
 }
 

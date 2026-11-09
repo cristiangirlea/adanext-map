@@ -591,7 +591,7 @@ func TestIndexSkipsDocumentsOutsideTheProjectAndSaysSo(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, errOut)
 	}
-	if !strings.Contains(errOut, "skipped 2 documents outside the project, naming its root or with unsafe names") || !strings.Contains(errOut, `go-build`) {
+	if !strings.Contains(errOut, "skipped 2 documents outside the project, naming its root, without a path or with unsafe names") || !strings.Contains(errOut, `go-build`) {
 		t.Errorf("stderr %q does not say two documents were skipped", errOut)
 	}
 	if !summary.MatchString(out) {
@@ -599,6 +599,48 @@ func TestIndexSkipsDocumentsOutsideTheProjectAndSaysSo(t *testing.T) {
 	}
 	if _, idx, err := store.Load(repo, testCommit); err != nil || len(idx.Documents) != 2 {
 		t.Errorf("store: %v, %v", idx, err)
+	}
+}
+
+func TestIndexSkipsDocumentsWithoutAPathAndSaysSo(t *testing.T) {
+	x := sciptest.Index()
+	x.Documents = append(x.Documents, &scippb.Document{Language: "go"}, &scippb.Document{})
+	path := filepath.Join(t.TempDir(), "nopath.scip")
+	if err := os.WriteFile(path, sciptest.Bytes(t, x), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	code, out, errOut := runIndexCmd("--scip", path, "--commit", testCommit, "--repo", repo)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errOut)
+	}
+	if !strings.Contains(errOut, `skipped 2 documents outside the project, naming its root, without a path or with unsafe names (first: "", "")`) {
+		t.Errorf("stderr %q does not say two documents without a path were skipped", errOut)
+	}
+	if !summary.MatchString(out) {
+		t.Errorf("stdout %q is not the summary line", out)
+	}
+	if _, idx, err := store.Load(repo, testCommit); err != nil || len(idx.Documents) != 2 {
+		t.Errorf("store: %v, %v", idx, err)
+	}
+}
+
+// An index that holds only such documents still writes its store, as one that holds only documents
+// outside the project does; the note is what says nothing was kept.
+func TestIndexWritesAnEmptyStoreWhenNoDocumentHasAPath(t *testing.T) {
+	x := sciptest.Index()
+	x.Documents = []*scippb.Document{{Language: "go"}, {}}
+	path := filepath.Join(t.TempDir(), "nopath.scip")
+	if err := os.WriteFile(path, sciptest.Bytes(t, x), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	code, _, errOut := runIndexCmd("--scip", path, "--commit", testCommit, "--repo", repo)
+	if code != 0 || !strings.Contains(errOut, "skipped 2 documents") {
+		t.Fatalf("exit %d, stderr %q, want 0 and the skip note", code, errOut)
+	}
+	if _, idx, err := store.Load(repo, testCommit); err != nil || len(idx.Documents) != 0 {
+		t.Errorf("store: %v, %v, want one without documents", idx, err)
 	}
 }
 
@@ -1020,7 +1062,7 @@ func TestIndexMidStreamFailureLeavesStoreUntouched(t *testing.T) {
 }
 
 func TestIndexUsesSingularForOneSkippedDocument(t *testing.T) {
-	for _, name := range []string{"../outside.go", "aux.go", "pkg/com1.go", "a:x.go", "a\nb.go"} {
+	for _, name := range []string{"../outside.go", "aux.go", "pkg/com1.go", "a:x.go", "a\nb.go", ""} {
 		t.Run(strconv.Quote(name), func(t *testing.T) {
 			x := sciptest.Index()
 			x.Documents = append(x.Documents, &scippb.Document{RelativePath: name})
@@ -1029,7 +1071,7 @@ func TestIndexUsesSingularForOneSkippedDocument(t *testing.T) {
 				t.Fatal(err)
 			}
 			code, _, errOut := runIndexCmd("--scip", path, "--commit", testCommit, "--repo", t.TempDir())
-			if code != 0 || !strings.Contains(errOut, "skipped 1 document outside the project, naming its root or with unsafe names") {
+			if code != 0 || !strings.Contains(errOut, "skipped 1 document outside the project, naming its root, without a path or with unsafe names") {
 				t.Fatalf("exit %d, stderr %q, want singular skip note", code, errOut)
 			}
 		})

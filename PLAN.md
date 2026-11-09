@@ -299,3 +299,11 @@ repository); a fail-closed push guard (#8).
   include task revision and source
   commit/content and verify metadata/digests. Document only: CLAUDE.md loads per task revision,
   workers have no sandbox, and --keep stays refused with fix-tests. No measured run is claimed.
+- 2026-11-09 (#90): a document with an empty path is skipped with its occurrences and symbols and
+  counted in the skip note (shown as `""`), instead of failing the index. This replaces the "an
+  empty path stays fatal" part of the 2026-10-13 decision. scip-go on Windows writes the test main
+  in Go's build cache with an empty path when the cache is on another drive than the repository,
+  where no relative path exists, so every Go repository with tests on a second drive could not be
+  indexed. `model.CheckPath` still refuses an empty path, so `store.Load` refuses a store holding
+  one. The note now reads `outside the project, naming its root, without a path or with unsafe
+  names`. The store format is unchanged.
