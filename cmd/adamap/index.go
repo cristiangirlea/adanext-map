@@ -113,7 +113,7 @@ func runIndex(args []string, stdout, stderr io.Writer) int {
 		if skipped.Count == 1 {
 			noun = "document"
 		}
-		fmt.Fprintf(stderr, "adamap index: skipped %d %s outside the project, naming its root or with unsafe names (first: %s)\n",
+		fmt.Fprintf(stderr, "adamap index: skipped %d %s outside the project, naming its root, without a path or with unsafe names (first: %s)\n",
 			skipped.Count, noun, strings.Join(skipped.Paths, ", "))
 	}
 	dir, err := store.Write(*repo, store.Header{

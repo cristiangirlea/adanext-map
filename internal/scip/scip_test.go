@@ -254,7 +254,6 @@ func TestConvertRejectsMalformedInput(t *testing.T) {
 				SingleLineEnclosingRange: &scippb.SingleLineRange{Line: 2, StartCharacter: 5, EndCharacter: 1},
 			}
 		}, "enclosing"},
-		{"empty path", func(x *scippb.Index) { x.Documents[0].RelativePath = "" }, "no path"},
 		{"symbol information without a symbol", func(x *scippb.Index) { x.Documents[0].Symbols[0].Symbol = "" }, "no symbol"},
 	}
 	for _, c := range cases {
@@ -401,12 +400,36 @@ func TestConvertSkipsEveryKindOfPathOutsideTheProject(t *testing.T) {
 	diff(t, got, wantFixture())
 }
 
-func TestConvertKeepsAnEmptyPathFatalEvenNextToSkippedOnes(t *testing.T) {
+// With Go's build cache on another drive than the project no relative path exists, and scip-go
+// writes the test main it indexes there with no path; it is skipped like a path that leaves the project.
+func TestConvertSkipsADocumentWithoutAPath(t *testing.T) {
+	const symbol = "scip-go gomod example.com/m v1 `example.com/m/pkg.test`/main()."
 	x := sciptest.Index()
-	x.Documents = append(x.Documents, &scippb.Document{RelativePath: "../x.go"}, &scippb.Document{})
-	if _, _, err := Convert(x); err == nil || !strings.Contains(err.Error(), "no path") {
-		t.Fatalf("err = %v, want one saying there is no path", err)
+	for range 2 {
+		x.Documents = append(x.Documents, &scippb.Document{
+			Language:    "go",
+			Symbols:     []*scippb.SymbolInformation{{Symbol: symbol, DisplayName: "main"}, {Symbol: "local 0"}},
+			Occurrences: []*scippb.Occurrence{{Range: []int32{1, 0, 4}, Symbol: symbol, SymbolRoles: int32(scippb.SymbolRole_Definition)}},
+		})
 	}
+	x.Documents = append(x.Documents, &scippb.Document{RelativePath: "../x.go"})
+	want := Skipped{Count: 3, Paths: []string{`""`, `""`, `"../x.go"`}}
+	got, skipped, err := Convert(x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(skipped, want) {
+		t.Fatalf("skipped %+v, want %+v", skipped, want)
+	}
+	diff(t, got, wantFixture())
+	decoded, skipped, err := Decode(sciptest.Bytes(t, x))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(skipped, want) {
+		t.Fatalf("Decode skipped %+v, want %+v", skipped, want)
+	}
+	diff(t, decoded, wantFixture())
 }
 
 func TestDecodeRefusesMoreItemsThanTheCountLimitsBeforeConverting(t *testing.T) {
@@ -743,6 +766,8 @@ func TestConvertDoesNotValidateSkippedContents(t *testing.T) {
 		{RelativePath: "../symbol.go", Symbols: []*scippb.SymbolInformation{{}}},
 		{RelativePath: "../range.go", Occurrences: []*scippb.Occurrence{{Symbol: "s", Range: []int32{-1, 0, 1}}}},
 		{RelativePath: "../enclosing.go", Occurrences: []*scippb.Occurrence{{Symbol: "s", Range: []int32{0, 0, 1}, EnclosingRange: []int32{1}}}},
+		{Symbols: []*scippb.SymbolInformation{{}}},
+		{Occurrences: []*scippb.Occurrence{{Symbol: "s", Range: []int32{-1, 0, 1}}}},
 	} {
 		x := sciptest.Index()
 		x.Documents = append(x.Documents, d)
@@ -756,9 +781,13 @@ func TestConvertDoesNotValidateSkippedContents(t *testing.T) {
 
 func TestConvertKeepsReferencesToASkippedDefinition(t *testing.T) {
 	const symbol = "outside."
-	for _, external := range []bool{false, true} {
+	for _, c := range []struct {
+		path     string
+		external bool
+	}{{"../outside.go", false}, {"../outside.go", true}, {"", false}, {"", true}} {
+		external := c.external
 		x := &scippb.Index{Documents: []*scippb.Document{
-			{RelativePath: "../outside.go", Symbols: []*scippb.SymbolInformation{{Symbol: symbol, DisplayName: "discarded"}},
+			{RelativePath: c.path, Symbols: []*scippb.SymbolInformation{{Symbol: symbol, DisplayName: "discarded"}},
 				Occurrences: []*scippb.Occurrence{{Symbol: symbol, Range: []int32{0, 0, 1}, SymbolRoles: int32(scippb.SymbolRole_Definition)}}},
 			{RelativePath: "kept.go", Occurrences: []*scippb.Occurrence{{Symbol: symbol, Range: []int32{1, 0, 1}}}},
 		}}
@@ -798,28 +827,13 @@ func TestSkippedPathsAreBoundedAndQuoted(t *testing.T) {
 }
 
 func TestConvertClassifiesPathsBeforeDiscardingContents(t *testing.T) {
-	for _, tc := range []struct {
-		path      string
-		wantError string
-	}{
-		{"x:y.go", ""},
-		{`\\server\share\x.go`, ""},
-		{`\\?\C:\x`, ""},
-		{"pkg/..", ""},
-		{"", "document 2: no path"},
-	} {
-		t.Run(strconv.Quote(tc.path), func(t *testing.T) {
+	for _, p := range []string{"x:y.go", `\\server\share\x.go`, `\\?\C:\x`, "pkg/..", ""} {
+		t.Run(strconv.Quote(p), func(t *testing.T) {
 			x := sciptest.Index()
-			x.Documents = append(x.Documents, &scippb.Document{RelativePath: tc.path,
+			x.Documents = append(x.Documents, &scippb.Document{RelativePath: p,
 				Symbols: []*scippb.SymbolInformation{{}}})
 			got, skipped, err := Convert(x)
-			if tc.wantError != "" {
-				if err == nil || err.Error() != tc.wantError || got != nil || skipped.Count != 0 {
-					t.Fatalf("Convert = %v, %+v, %v, want fatal %q", got, skipped, err, tc.wantError)
-				}
-				return
-			}
-			if err != nil || skipped.Count != 1 || !slices.Equal(skipped.Paths, []string{strconv.Quote(tc.path)}) {
+			if err != nil || skipped.Count != 1 || !slices.Equal(skipped.Paths, []string{strconv.Quote(p)}) {
 				t.Fatalf("Convert: skipped %+v, err %v, want one skip", skipped, err)
 			}
 			diff(t, got, wantFixture())
