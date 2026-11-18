@@ -35,8 +35,8 @@ runner behind an approval gate, the records and the reducer); no measured result
 1. `adamap index` runs the indexer that fits the repository (or reads a given `index.scip`) and
    writes the store for the current commit.
 2. The queries and the map read the store; nothing is parsed at question time.
-3. `adamap mcp` serves the same queries as MCP tools; `adamap install` writes the host's entry
-   (Claude Code, Codex, any MCP host).
+3. `adamap mcp` serves the same queries as MCP tools; `adamap install` prints the host's
+   entry, or writes it for Claude Code with `--claude` (Claude Code, Codex, any MCP host).
 
 ## Install
 
