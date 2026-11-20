@@ -262,8 +262,9 @@ func Passes(ch manifest.Check, res CheckResult, r *Record) bool {
 		if res.Output != r.Answer {
 			return false
 		}
+		slashAnswer := strings.ReplaceAll(r.Answer, `\`, "/")
 		for _, s := range ch.Expect.Contains {
-			if !strings.Contains(r.Answer, s) {
+			if !strings.Contains(r.Answer, s) && !strings.Contains(slashAnswer, s) {
 				return false
 			}
 		}
