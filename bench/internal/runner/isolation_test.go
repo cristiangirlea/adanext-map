@@ -8,7 +8,9 @@ import (
 	"io"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -156,7 +158,11 @@ func TestExecuteGivesTheClaudeCellsTheListedPlugins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stub := filepath.Join(bin, "claude"+filepath.Ext(self))
+	name := "claude"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	stub := filepath.Join(bin, name)
 	data, err := os.ReadFile(self)
 	if err != nil {
 		t.Fatal(err)
@@ -165,6 +171,14 @@ func TestExecuteGivesTheClaudeCellsTheListedPlugins(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// The real CLI must never run from a test: claude has to be the stub.
+	found, err := exec.LookPath("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, b := evalPath(t, found), evalPath(t, stub); a != b {
+		t.Fatalf("claude resolves to %s, not the stub %s", a, b)
+	}
 	o := options(t, m, src, m.PlannedRuns())
 	o.Environ = append(cleanEnviron(), "CLAUDE_CONFIG_DIR="+t.TempDir(), "CLAUDE_CODE_PLUGIN_DIRS=/mods", "BENCH_TEST_DUMP="+dump)
 	var listedWith []string
@@ -203,6 +217,15 @@ func TestExecuteGivesTheClaudeCellsTheListedPlugins(t *testing.T) {
 			t.Fatalf("cell %s: CLAUDE_CODE_PLUGIN_DIRS reached the worker", p)
 		}
 	}
+}
+
+func evalPath(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }
 
 func TestWorkerSetupListsThePluginsAndDropsPluginDirs(t *testing.T) {
