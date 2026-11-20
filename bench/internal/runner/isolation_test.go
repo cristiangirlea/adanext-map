@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -52,6 +53,30 @@ func TestClaudeCommandTurnsOffTheAccountsSetup(t *testing.T) {
 		if settings.EnabledPlugins[goplsLSP] != wantLSP {
 			t.Fatalf("%s: %s = %v, want %v", cond, goplsLSP, settings.EnabledPlugins[goplsLSP], wantLSP)
 		}
+	}
+}
+
+// The backend's settings come first and the condition's last; enabledPlugins entries merge.
+func TestClaudeSettingsMergeInOrder(t *testing.T) {
+	m := benchtest.Pilot()
+	m.Backends[0].Settings = map[string]string{"enabledPlugins": `{"b@x": true, "c@x": true}`, "outputStyle": "Explanatory"}
+	c := cell(m, "none")
+	c.Condition.Settings = map[string]string{"enabledPlugins": `{"c@x": false}`, "outputStyle": "Learning"}
+	c.Plugins = []string{"a@x", "b@x"}
+	inv, err := runner.Claude{}.Command(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		OutputStyle    string          `json:"outputStyle"`
+		EnabledPlugins map[string]bool `json:"enabledPlugins"`
+	}
+	if err := json.Unmarshal([]byte(inv.Files[flag(inv.Argv, "--settings")]), &settings); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"a@x": false, "b@x": true, "c@x": false}
+	if settings.OutputStyle != "Learning" || !maps.Equal(settings.EnabledPlugins, want) {
+		t.Fatalf("settings %+v, want Learning and %v", settings, want)
 	}
 }
 
