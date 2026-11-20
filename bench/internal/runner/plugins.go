@@ -15,11 +15,12 @@ const pluginListTimeout = time.Minute
 
 // InstalledPlugins lists Claude Code's installed plugins with `claude plugin list --json`, run in
 // env: those enabled in the user's settings, synced to the account, or loaded for the session.
-func InstalledPlugins(env []string) ([]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), pluginListTimeout)
+func InstalledPlugins(ctx context.Context, env []string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, pluginListTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "claude", "plugin", "list", "--json")
-	cmd.Env = env
+	// A nil Env would hand the CLI this process's whole environment.
+	cmd.Env = append([]string{}, env...)
 	cmd.WaitDelay = time.Second
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
@@ -50,7 +51,7 @@ func ParsePluginList(data []byte) ([]string, error) {
 // WorkerSetup drops CLAUDE_CODE_PLUGIN_DIRS from environ, since plugins loaded from a directory
 // would come back in every session, and, when a claude backend runs, lists the installed plugins
 // so each cell can turn them off. A list that cannot be read stops the execution.
-func WorkerSetup(claude bool, environ []string, list func([]string) ([]string, error)) ([]string, []string, error) {
+func WorkerSetup(ctx context.Context, claude bool, environ []string, list func(context.Context, []string) ([]string, error)) ([]string, []string, error) {
 	var env []string
 	for _, kv := range environ {
 		if k, _, _ := strings.Cut(kv, "="); !strings.EqualFold(k, "CLAUDE_CODE_PLUGIN_DIRS") {
@@ -60,7 +61,7 @@ func WorkerSetup(claude bool, environ []string, list func([]string) ([]string, e
 	if !claude {
 		return nil, env, nil
 	}
-	plugins, err := list(env)
+	plugins, err := list(ctx, env)
 	if err != nil {
 		return nil, nil, errors.Join(errors.New("refusing to run: the installed plugins could not be listed, so they cannot be turned off in the workers"), err)
 	}

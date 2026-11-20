@@ -75,7 +75,7 @@ func TestExecuteRefusesWhenThePluginsCannotBeListed(t *testing.T) {
 		Manifest: m, Approval: m.PlannedRuns(),
 		Environ:    append(cleanEnviron(), "CLAUDE_CONFIG_DIR="+home),
 		RecordsDir: filepath.Join(t.TempDir(), "records"), WorkDir: filepath.Join(t.TempDir(), "work"),
-		ListPlugins: func([]string) ([]string, error) { return nil, errors.New("no claude here") },
+		ListPlugins: func(context.Context, []string) ([]string, error) { return nil, errors.New("no claude here") },
 	}
 	if err := runner.Authorize(m, m.PlannedRuns(), o.Environ); err != nil {
 		t.Fatalf("the pilot fixture does not pass Authorize: %v", err)
@@ -93,11 +93,11 @@ func TestExecuteRefusesWhenThePluginsCannotBeListed(t *testing.T) {
 
 func TestExecutePassesTheListedPluginsAndDropsPluginDirs(t *testing.T) {
 	var seen []string
-	list := func(env []string) ([]string, error) {
+	list := func(_ context.Context, env []string) ([]string, error) {
 		seen = env
 		return []string{"a@x"}, nil
 	}
-	got, env, err := runner.WorkerSetup(true, []string{"PATH=/bin", "CLAUDE_CODE_PLUGIN_DIRS=/mods", "claude_code_plugin_dirs=/x"}, list)
+	got, env, err := runner.WorkerSetup(context.Background(), true, []string{"PATH=/bin", "CLAUDE_CODE_PLUGIN_DIRS=/mods", "claude_code_plugin_dirs=/x"}, list)
 	if err != nil || !slices.Equal(got, []string{"a@x"}) {
 		t.Fatalf("plugins %q, %v", got, err)
 	}
@@ -106,7 +106,10 @@ func TestExecutePassesTheListedPluginsAndDropsPluginDirs(t *testing.T) {
 			t.Fatalf("env %q", e)
 		}
 	}
-	got, _, err = runner.WorkerSetup(false, nil, func([]string) ([]string, error) { t.Fatal("listed without a claude backend"); return nil, nil })
+	got, _, err = runner.WorkerSetup(context.Background(), false, nil, func(context.Context, []string) ([]string, error) {
+		t.Fatal("listed without a claude backend")
+		return nil, nil
+	})
 	if err != nil || got != nil {
 		t.Fatalf("no claude backend: %q, %v", got, err)
 	}

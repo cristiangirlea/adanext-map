@@ -36,7 +36,7 @@ type Options struct {
 	// Fake is the adapter for the fake backend (synthetic manifests only).
 	Fake Fake
 	// ListPlugins lists the claude CLI's installed plugins; InstalledPlugins when nil.
-	ListPlugins func(env []string) ([]string, error)
+	ListPlugins func(ctx context.Context, env []string) ([]string, error)
 	// Keep leaves each workspace in place after its record is written.
 	Keep bool
 	Log  io.Writer
@@ -88,7 +88,7 @@ func Execute(ctx context.Context, o Options) error {
 		list = InstalledPlugins
 	}
 	claude := slices.ContainsFunc(m.Backends, func(b manifest.Backend) bool { return b.CLI == "claude" })
-	plugins, env, err := WorkerSetup(claude, scrub(o.Environ), list)
+	plugins, env, err := WorkerSetup(ctx, claude, scrub(o.Environ), list)
 	if err != nil {
 		return err
 	}
