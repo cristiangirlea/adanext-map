@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cristiangirlea/adanext-map/bench/internal/benchtest"
+	"github.com/cristiangirlea/adanext-map/bench/internal/manifest"
 	"github.com/cristiangirlea/adanext-map/bench/internal/record"
 )
 
@@ -249,6 +250,31 @@ func TestUsageArithmetic(t *testing.T) {
 		if _, ok := u.Tokens(); ok {
 			t.Errorf("%+v gives reported tokens", u)
 		}
+	}
+}
+
+func TestPassesAnswer(t *testing.T) {
+	check := manifest.Check{
+		Type:   manifest.CheckAnswer,
+		Expect: manifest.Expect{Contains: []string{"internal/rank/render.go", "PageRank"}},
+	}
+	for _, tc := range []struct {
+		name   string
+		answer string
+		want   bool
+	}{
+		{"slashes", "PageRank: internal/rank/render.go", true},
+		{"backslashes", `PageRank: internal\rank\render.go`, true},
+		{"wrong path", `PageRank: internal\query\render.go`, false},
+		{"missing string", `internal\rank\render.go`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &record.Record{Answer: tc.answer}
+			res := record.CheckResult{Output: tc.answer}
+			if got := record.Passes(check, res, r); got != tc.want {
+				t.Errorf("Passes() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

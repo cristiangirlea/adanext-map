@@ -177,7 +177,7 @@ A **check** is declared before execution, with what it `needs`:
 |---|---|
 | `command` | The command, run in the workspace after the worker, exits with `expect.exit` (default 0). |
 | `fix-tests` | The same, after the fix revision's files matching `paths` (default `*_test.go`) are laid over the tree, from a grader checkout made after the worker finished. All original Go `_test.go` files are restored from the task revision during grading, with matching fix files taking precedence. Worker-added Go `_test.go` files outside the expected set are temporarily set aside across the workspace, excluding `.git`, and named in the check output; this conservative scope covers checks such as `go test ./...`. Modified or deleted original tests, including `TestMain`, cannot replace the grader's tests. Worker files are restored after grading. |
-| `answer` | The final answer holds every `expect.contains` string. |
+| `answer` | The final answer holds every `expect.contains` string. A path also matches when written with backslashes. |
 | `no-changes` | The worker left the tree as it found it. |
 | `review` | Never by itself: a human-reviewed answer, recorded with its reviewer, and never an executable gate. Every task needs at least one executable check, and a fix task needs a command or fix-tests check. |
 

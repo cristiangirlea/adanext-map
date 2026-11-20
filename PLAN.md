@@ -307,3 +307,4 @@ repository); a fail-closed push guard (#8).
   indexed. `model.CheckPath` still refuses an empty path, so `store.Load` refuses a store holding
   one. The note now reads `outside the project, naming its root, without a path or with unsafe
   names`. The store format is unchanged.
+- 2026-11-20 (#95): the answer check reads backslashes in the answer as slashes when matching expected strings, so a correct Windows path passes.
