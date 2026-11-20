@@ -23,6 +23,9 @@ import (
 // The test binary stands in for the programs a run starts: the fake agent, an indexer, a probe
 // that fails, and a check that passes only when the fix's test file was laid over the tree.
 func TestMain(m *testing.M) {
+	if strings.HasPrefix(filepath.Base(os.Args[0]), "claude") {
+		os.Exit(claudeStub())
+	}
 	role := os.Getenv("BENCH_TEST_HELPER")
 	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "bench-helper-") {
 		role = strings.TrimPrefix(os.Args[1], "bench-helper-") // an indexer or a probe, named by its argv
@@ -489,7 +492,7 @@ func TestDryRunPrintsEveryPlannedCellAndRunsNothing(t *testing.T) {
 	var out bytes.Buffer
 	runner.DryRun(m, &out, runner.Fake{}, []string{"ANTHROPIC_API_KEY=sk-x", "PATH=/bin"})
 	text := out.String()
-	for _, want := range []string{"150 planned runs", "--i-have-approval-for-N-runs 150", "ANTHROPIC_API_KEY", "t09.adamap.claude.r3", "claude -p"} {
+	for _, want := range []string{"150 planned runs", "--i-have-approval-for-N-runs 150", "ANTHROPIC_API_KEY", "t09.adamap.claude.r3", "claude -p", "claude plugin list --json"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("no %q in the dry run", want)
 		}

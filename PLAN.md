@@ -312,3 +312,12 @@ repository); a fail-closed push guard (#8).
   answer names an expected path with backslashes, recorded the check as failed; recomputed now it
   passes, so `validate --records`, `reduce` and a resume refuse that record set: rerun those runs
   into a new records directory. No measured records existed when this changed.
+- 2026-11-20 (#94): the wiring smoke showed each claude worker loading the runner account's own
+  setup: every installed and synced plugin, about 350 skills and commands, and the account's output
+  style. The runner now lists the installed plugins once per execution with `claude plugin list
+  --json` and refuses to start when it cannot. Each cell's settings set every listed plugin to
+  false, except one the condition enables, and set `outputStyle` to `default`. The CLI starts
+  with `--disable-slash-commands`, and the worker's environment loses `CLAUDE_CODE_PLUGIN_DIRS`. The
+  login stays the subscription's. The user's `CLAUDE.md`, rules files and auto-memory still load
+  (stated in the README). `--bare` was ruled out because it accepts only an API key, and
+  `--safe-mode` because it also turns off the condition's MCP server and plugin.

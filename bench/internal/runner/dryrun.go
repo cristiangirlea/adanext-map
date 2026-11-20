@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cristiangirlea/adanext-map/bench/internal/manifest"
@@ -36,6 +37,9 @@ func DryRun(m *manifest.Manifest, w io.Writer, fake Fake, environ []string) {
 		fmt.Fprintf(w, "a real run would refuse: provider API key variables are set: %s\n", strings.Join(keys, ", "))
 	} else {
 		fmt.Fprintln(w, "provider API key variables: none set")
+	}
+	if slices.ContainsFunc(m.Backends, func(b manifest.Backend) bool { return b.CLI == "claude" }) {
+		fmt.Fprintln(w, "a real run first lists the installed plugins (claude plugin list --json) to turn them off in the workers, and refuses if it cannot")
 	}
 	fmt.Fprintf(w, "a real run needs %s %d, after the owner approves: %s\n\n", ApprovalFlag, n, approvalScope(m))
 

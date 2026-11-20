@@ -185,6 +185,7 @@ func (v *validator) conditions(m *Manifest) {
 		v.noKeysInArgs(p+".inject", c.Inject)
 		v.noKeysInArgs(p+".probe", c.Probe)
 		v.noKeys(p+".settings", c.Settings)
+		v.pluginSettings(p+".settings", c.Settings)
 		v.noKeys(p+".env", c.Env)
 		v.noSettingsHome(p+".env", c.Env)
 	}
@@ -222,6 +223,7 @@ func (v *validator) backends(m *Manifest) {
 			v.add(p+".plan", fmt.Sprintf("%q: the benchmark runs CLIs on their subscription plans, never API access", b.Plan))
 		}
 		v.noKeys(p+".settings", b.Settings)
+		v.pluginSettings(p+".settings", b.Settings)
 		v.noKeys(p+".env", b.Env)
 		v.noSettingsHome(p+".env", b.Env)
 	}
@@ -541,10 +543,24 @@ func (v *validator) noSettingsHome(path string, kv map[string]string) {
 		if slices.Contains(settingsHomeNames, strings.ToUpper(k)) {
 			names = append(names, k)
 		}
+		if strings.EqualFold(k, "CLAUDE_CODE_PLUGIN_DIRS") {
+			v.add(path+"."+k, "loads plugins into every session: the runner turns the account's plugins off in the workers")
+		}
 	}
 	sort.Strings(names)
 	for _, k := range names {
 		v.add(path+"."+k, "changes where Claude Code reads its settings: the user settings the run is authorized on must be the ones that were scanned")
+	}
+}
+
+// pluginSettings refuses an enabledPlugins that is not a JSON object: anything else would replace
+// the runner's list of plugins turned off instead of adding to it.
+func (v *validator) pluginSettings(path string, kv map[string]string) {
+	if s, ok := kv["enabledPlugins"]; ok {
+		var x map[string]any
+		if json.Unmarshal([]byte(s), &x) != nil || x == nil {
+			v.add(path+".enabledPlugins", "not a JSON object of plugin ids to true or false")
+		}
 	}
 }
 
