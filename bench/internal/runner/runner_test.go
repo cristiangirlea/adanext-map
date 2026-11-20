@@ -23,6 +23,9 @@ import (
 // The test binary stands in for the programs a run starts: the fake agent, an indexer, a probe
 // that fails, and a check that passes only when the fix's test file was laid over the tree.
 func TestMain(m *testing.M) {
+	if strings.HasPrefix(filepath.Base(os.Args[0]), "claude") {
+		os.Exit(claudeStub())
+	}
 	role := os.Getenv("BENCH_TEST_HELPER")
 	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "bench-helper-") {
 		role = strings.TrimPrefix(os.Args[1], "bench-helper-") // an indexer or a probe, named by its argv

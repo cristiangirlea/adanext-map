@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -91,7 +93,94 @@ func TestExecuteRefusesWhenThePluginsCannotBeListed(t *testing.T) {
 	}
 }
 
-func TestExecutePassesTheListedPluginsAndDropsPluginDirs(t *testing.T) {
+// claudeStub stands in for the claude CLI when the test binary runs under that name: it saves
+// the settings file it was given and its environment to BENCH_TEST_DUMP, then answers as a
+// subscription session that did nothing.
+func claudeStub() int {
+	io.Copy(io.Discard, os.Stdin)
+	args := os.Args[1:]
+	i := slices.Index(args, "--settings")
+	if i < 0 || i+1 >= len(args) {
+		return 2
+	}
+	settings, err := os.ReadFile(args[i+1])
+	if err != nil {
+		return 2
+	}
+	dump, _ := json.Marshal(map[string]any{"settings": json.RawMessage(settings), "args": args, "env": os.Environ()})
+	f, err := os.CreateTemp(os.Getenv("BENCH_TEST_DUMP"), "cell-*.json")
+	if err != nil {
+		return 2
+	}
+	f.Write(dump)
+	f.Close()
+	fmt.Println(`{"type":"system","subtype":"init","apiKeySource":"none","session_id":"s"}`)
+	fmt.Println(`{"type":"result","subtype":"success","is_error":false,"result":"pkg/a.go pkg/b.go","session_id":"s","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}`)
+	return 0
+}
+
+// Execute hands the listed plugins and the environment without CLAUDE_CODE_PLUGIN_DIRS to the
+// claude cells it starts.
+func TestExecuteGivesTheClaudeCellsTheListedPlugins(t *testing.T) {
+	src, pre, fix := repo(t)
+	m := smoke(t, pre, fix)
+	m.Synthetic = false
+	m.Backends = benchtest.Pilot().Backends
+	bin, dump := t.TempDir(), t.TempDir()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := filepath.Join(bin, "claude"+filepath.Ext(self))
+	data, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stub, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	o := options(t, m, src, m.PlannedRuns())
+	o.Environ = append(cleanEnviron(), "CLAUDE_CONFIG_DIR="+t.TempDir(), "CLAUDE_CODE_PLUGIN_DIRS=/mods", "BENCH_TEST_DUMP="+dump)
+	var listedWith []string
+	o.ListPlugins = func(_ context.Context, env []string) ([]string, error) {
+		listedWith = env
+		return []string{"a@x"}, nil
+	}
+	if err := runner.Authorize(m, m.PlannedRuns(), o.Environ); err != nil {
+		t.Fatalf("the manifest does not pass Authorize: %v", err)
+	}
+	runner.Execute(context.Background(), o) // the cells are what this test reads, not the records
+	cells, _ := filepath.Glob(filepath.Join(dump, "cell-*.json"))
+	if len(cells) == 0 {
+		t.Fatalf("no claude cell started; log:\n%s", o.Log)
+	}
+	if slices.ContainsFunc(listedWith, func(kv string) bool { return strings.HasPrefix(kv, "CLAUDE_CODE_PLUGIN_DIRS=") }) {
+		t.Fatal("the plugins were listed with CLAUDE_CODE_PLUGIN_DIRS set")
+	}
+	for _, p := range cells {
+		var cell struct {
+			Settings struct {
+				OutputStyle    string          `json:"outputStyle"`
+				EnabledPlugins map[string]bool `json:"enabledPlugins"`
+			}
+			Args, Env []string
+		}
+		raw, _ := os.ReadFile(p)
+		if err := json.Unmarshal(raw, &cell); err != nil {
+			t.Fatal(err)
+		}
+		on, listed := cell.Settings.EnabledPlugins["a@x"]
+		if on || !listed || cell.Settings.OutputStyle != "default" || !slices.Contains(cell.Args, "--disable-slash-commands") {
+			t.Fatalf("cell %s: settings %+v args %q", p, cell.Settings, cell.Args)
+		}
+		if slices.ContainsFunc(cell.Env, func(kv string) bool { return strings.HasPrefix(strings.ToUpper(kv), "CLAUDE_CODE_PLUGIN_DIRS=") }) {
+			t.Fatalf("cell %s: CLAUDE_CODE_PLUGIN_DIRS reached the worker", p)
+		}
+	}
+}
+
+func TestWorkerSetupListsThePluginsAndDropsPluginDirs(t *testing.T) {
 	var seen []string
 	list := func(_ context.Context, env []string) ([]string, error) {
 		seen = env
