@@ -307,6 +307,11 @@ repository); a fail-closed push guard (#8).
   indexed. `model.CheckPath` still refuses an empty path, so `store.Load` refuses a store holding
   one. The note now reads `outside the project, naming its root, without a path or with unsafe
   names`. The store format is unchanged.
+- 2026-11-20 (#95): the answer check reads backslashes in the answer as slashes when matching
+  expected strings, so a correct Windows path passes. A record graded before this change, whose
+  answer names an expected path with backslashes, recorded the check as failed; recomputed now it
+  passes, so `validate --records`, `reduce` and a resume refuse that record set: rerun those runs
+  into a new records directory. No measured records existed when this changed.
 - 2026-11-20 (#94): the wiring smoke showed each claude worker loading the runner account's own
   setup: every installed and synced plugin, about 350 skills and commands, and the account's output
   style. The runner now lists the installed plugins once per execution with `claude plugin list
