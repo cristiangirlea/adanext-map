@@ -78,14 +78,16 @@ func TestExecuteRefusesWhenThePluginsCannotBeListed(t *testing.T) {
 		ListPlugins: func([]string) ([]string, error) { return nil, errors.New("no claude here") },
 	}
 	if err := runner.Authorize(m, m.PlannedRuns(), o.Environ); err != nil {
-		t.Skipf("the pilot fixture does not pass Authorize here: %v", err)
+		t.Fatalf("the pilot fixture does not pass Authorize: %v", err)
 	}
 	err := runner.Execute(context.Background(), o)
 	if err == nil || !strings.Contains(err.Error(), "plugins") || !strings.Contains(err.Error(), "no claude here") {
 		t.Fatalf("err %v", err)
 	}
-	if _, err := os.Stat(o.WorkDir); err == nil {
-		t.Fatal("a workspace was made")
+	for _, dir := range []string{o.WorkDir, o.RecordsDir} {
+		if _, err := os.Stat(dir); err == nil {
+			t.Fatalf("%s was made", dir)
+		}
 	}
 }
 
