@@ -278,6 +278,42 @@ func TestPassesAnswer(t *testing.T) {
 	}
 }
 
+// Recomputed checks hold a backslash answer to the new rule: passed is consistent, and a record
+// graded false before it is reported.
+func TestABackslashAnswerIsGradedTheSameWhenRecomputed(t *testing.T) {
+	m := benchtest.Synthetic()
+	recs := benchtest.Records(m)
+	x := benchtest.Find(recs, "t00.none.fake.r1")
+	x.Answer = `pkg\a.go and pkg\b.go`
+	x.AnswerSHA256 = record.SHA256(x.Answer)
+	x.Checks[0].Output = x.Answer
+	x.Checks[0].OutputSHA256 = record.SHA256(x.Answer)
+	if p := record.Check(m, recs); len(p) != 0 || !record.Success(m, x) {
+		t.Fatalf("problems %v, success %v", p, record.Success(m, x))
+	}
+	x.Checks[0].Passed = false
+	if p := record.Check(m, recs); len(p) != 1 || !strings.Contains(p[0].String(), "says passed=false, its output says true") {
+		t.Fatalf("problems %v", p)
+	}
+}
+
+func TestPassesAnswerReadsBackslashesOneWay(t *testing.T) {
+	for _, tc := range []struct {
+		expect, answer string
+		want           bool
+	}{
+		{`a\b`, `a\b`, true},
+		{`a\b`, "a/b", false},
+		{"pkg/a.go", `pkg\\a.go`, false},
+	} {
+		check := manifest.Check{Type: manifest.CheckAnswer, Expect: manifest.Expect{Contains: []string{tc.expect}}}
+		r := &record.Record{Answer: tc.answer}
+		if got := record.Passes(check, record.CheckResult{Output: tc.answer}, r); got != tc.want {
+			t.Errorf("expect %q, answer %q: %v, want %v", tc.expect, tc.answer, got, tc.want)
+		}
+	}
+}
+
 func TestSuccessComesFromTheChecksNotAFlag(t *testing.T) {
 	m := benchtest.Synthetic()
 	recs := benchtest.Records(m)
