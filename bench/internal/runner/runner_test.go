@@ -492,7 +492,7 @@ func TestDryRunPrintsEveryPlannedCellAndRunsNothing(t *testing.T) {
 	var out bytes.Buffer
 	runner.DryRun(m, &out, runner.Fake{}, []string{"ANTHROPIC_API_KEY=sk-x", "PATH=/bin"})
 	text := out.String()
-	for _, want := range []string{"150 planned runs", "--i-have-approval-for-N-runs 150", "ANTHROPIC_API_KEY", "t09.adamap.claude.r3", "claude -p"} {
+	for _, want := range []string{"150 planned runs", "--i-have-approval-for-N-runs 150", "ANTHROPIC_API_KEY", "t09.adamap.claude.r3", "claude -p", "claude plugin list --json"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("no %q in the dry run", want)
 		}
