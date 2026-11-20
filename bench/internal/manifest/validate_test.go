@@ -197,6 +197,43 @@ func TestValidateRefusesAnEnvThatMovesTheSettingsHome(t *testing.T) {
 	}
 }
 
+// The runner turns the account's plugins off in the workers; a manifest must not load them back.
+func TestValidateRefusesWhatWouldBringThePluginsBack(t *testing.T) {
+	has := func(m *manifest.Manifest, path, msg string) bool {
+		for _, i := range m.Validate() {
+			if i.Path == path && strings.Contains(i.Msg, msg) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, name := range []string{"CLAUDE_CODE_PLUGIN_DIRS", "claude_code_plugin_dirs"} {
+		m := benchtest.Pilot()
+		m.Backends[0].Env = map[string]string{name: "/mods"}
+		m.Conditions[1].Env = map[string]string{name: "/mods"}
+		for _, path := range []string{"backends[0].env." + name, "conditions[1].env." + name} {
+			if !has(m, path, "loads plugins") {
+				t.Errorf("%s: not refused: %v", path, m.Validate())
+			}
+		}
+	}
+	for _, value := range []string{"null", "[]", "true", `"x"`, "not json"} {
+		m := benchtest.Pilot()
+		m.Backends[0].Settings = map[string]string{"enabledPlugins": value}
+		m.Conditions[1].Settings = map[string]string{"enabledPlugins": value}
+		for _, path := range []string{"backends[0].settings.enabledPlugins", "conditions[1].settings.enabledPlugins"} {
+			if !has(m, path, "not a JSON object") {
+				t.Errorf("%s = %s: not refused", path, value)
+			}
+		}
+	}
+	m := benchtest.Pilot()
+	m.Conditions[1].Settings = map[string]string{"enabledPlugins": `{"gopls-lsp@claude-plugins-official": true}`}
+	if has(m, "conditions[1].settings.enabledPlugins", "") {
+		t.Errorf("an object is refused: %v", m.Validate())
+	}
+}
+
 // A process environment splits each entry at its first "=", so a key holding "=" names another
 // variable than the one the checks above compare: {"HOME=/x": ""} would reach the worker as HOME.
 func TestValidateRefusesAnEnvKeyThatIsNotOneName(t *testing.T) {
