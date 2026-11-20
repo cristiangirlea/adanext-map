@@ -277,7 +277,9 @@ date, model and context tier.
 unplanned or swapped run ID; synthetic and real records mixed; source drift (another commit, or a
 dirty tree); index drift (built from another tree, or another digest within a warm cell); a check
 missing, undeclared, of another type, on another tree, with a hash that does not match its output,
-or whose passed flag disagrees with its output; incomplete counters; wrong cache arithmetic.
+or whose passed flag disagrees with its output; incomplete counters; wrong cache arithmetic. A
+record graded before backslashes in an answer matched an expected path (2026-11-20) can disagree
+this way: rerun it into a new records directory.
 
 The report holds: identities and fixed settings; coverage per cell (a cell is complete when every
 repeat is recorded, supported and has reported usage); success, isolation failures and restarts after a limit; p50/p95

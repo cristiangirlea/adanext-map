@@ -307,4 +307,8 @@ repository); a fail-closed push guard (#8).
   indexed. `model.CheckPath` still refuses an empty path, so `store.Load` refuses a store holding
   one. The note now reads `outside the project, naming its root, without a path or with unsafe
   names`. The store format is unchanged.
-- 2026-11-20 (#95): the answer check reads backslashes in the answer as slashes when matching expected strings, so a correct Windows path passes.
+- 2026-11-20 (#95): the answer check reads backslashes in the answer as slashes when matching
+  expected strings, so a correct Windows path passes. A record graded before this change, whose
+  answer names an expected path with backslashes, recorded the check as failed; recomputed now it
+  passes, so `validate --records`, `reduce` and a resume refuse that record set: rerun those runs
+  into a new records directory. No measured records existed when this changed.
