@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -29,7 +30,9 @@ type Cell struct {
 	Workspace, StateDir string
 	// Injected is what the condition injects into the system prompt (the map), if anything.
 	Injected string
-	Attempt  int
+	// Plugins are the CLI's installed plugins, turned off unless the cell's settings enable one.
+	Plugins []string
+	Attempt int
 }
 
 // Invocation is one attempt's process: the program and arguments, where it runs, what it adds to
@@ -75,7 +78,9 @@ type Adapter interface {
 // Claude is Claude Code's CLI in print mode with stream-json output. Each attempt is a fresh
 // session; the settings are the user's (checked by Authorize) and the cell's, never the task
 // repository's (--setting-sources user); the MCP servers are only the condition's
-// (--strict-mcp-config); the tools are the fixed set plus the condition's; the prompt goes on stdin.
+// (--strict-mcp-config); the tools are the fixed set plus the condition's; the account's plugins,
+// skills, commands and output style are off (--disable-slash-commands and the cell's settings);
+// the prompt goes on stdin.
 type Claude struct{}
 
 func (Claude) Command(c Cell) (Invocation, error) {
@@ -93,10 +98,21 @@ func (Claude) Command(c Cell) (Invocation, error) {
 	if err != nil {
 		return Invocation{}, err
 	}
-	settings := map[string]any{}
+	// The account's own setup would weigh on every condition alike: its plugins are off and
+	// its output style is the default, unless the cell's settings say otherwise.
+	plugins := map[string]any{}
+	for _, p := range c.Plugins {
+		plugins[p] = false
+	}
+	settings := map[string]any{"outputStyle": "default", "enabledPlugins": plugins}
 	for _, kv := range []map[string]string{c.Backend.Settings, c.Condition.Settings} {
 		for k, v := range kv {
-			settings[k] = settingValue(v)
+			val := settingValue(v)
+			if on, ok := val.(map[string]any); ok && k == "enabledPlugins" {
+				maps.Copy(plugins, on)
+				continue
+			}
+			settings[k] = val
 		}
 	}
 	set, err := json.MarshalIndent(settings, "", "  ")
@@ -108,7 +124,7 @@ func (Claude) Command(c Cell) (Invocation, error) {
 	argv := []string{"claude", "-p", "--output-format", "stream-json", "--verbose",
 		"--model", c.Backend.Model, "--permission-mode", c.Execution.PermissionMode,
 		"--setting-sources", "user", "--strict-mcp-config", "--mcp-config", mcpPath, "--settings", setPath,
-		"--allowedTools", strings.Join(tools, ",")}
+		"--disable-slash-commands", "--allowedTools", strings.Join(tools, ",")}
 	if len(c.Condition.Deny) > 0 {
 		argv = append(argv, "--disallowedTools", strings.Join(c.Condition.Deny, ","))
 	}

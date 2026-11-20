@@ -204,9 +204,15 @@ record cannot claim a run it is not, and a swapped task and condition names no p
 
 The claude adapter runs `claude -p --output-format stream-json --verbose --model <model>
 --permission-mode <mode> --setting-sources user --strict-mcp-config --mcp-config <state>/mcp.json
---settings <state>/settings.json --allowedTools <fixed tools plus the condition's>
-[--disallowedTools ...] [--append-system-prompt <map>]`. Only the condition's MCP server is configured
-by the runner; the wiring smoke below checks for servers added by user plugins too. The task
+--settings <state>/settings.json --disable-slash-commands --allowedTools <fixed tools plus the
+condition's> [--disallowedTools ...] [--append-system-prompt <map>]`. Only the condition's MCP server
+is configured by the runner; the wiring smoke below checks for servers added by user plugins too.
+The runner account's own setup is turned off in every worker: before the runs, the runner lists the
+installed plugins (`claude plugin list --json`, which includes plugins synced to the account) and
+refuses to start if it cannot. Each cell's settings file sets every listed plugin to `false` in
+`enabledPlugins`, unless the condition's own `enabledPlugins` turns one on. That settings file also
+sets `outputStyle` to `default`. `--disable-slash-commands` turns off skills and commands, and
+`CLAUDE_CODE_PLUGIN_DIRS` is removed from the worker's environment. The task
 repository's own `.claude/settings.json` is never loaded. Its `CLAUDE.md` instruction files still
 load from each task revision and can differ across tasks. This is not normalized by the framework:
 inspect those instructions when approving tasks and interpret cross-task results with that limit.
@@ -223,8 +229,8 @@ backstop, not a gate: the CLI starts its first request right after it writes the
 at most one request can get through before the process is stopped. `Authorize`'s checks of the
 environment and the user settings are what keep a run off API billing in the first place.
 
-Not yet controlled, and to settle in the wiring smoke before the pilot: the CLI also reads the
-user's own settings and memory files, and the worker is not sandboxed from the network or from
+Not yet controlled: the CLI still reads the user's other settings, their `CLAUDE.md` and rules
+files, and auto-memory. The worker is not sandboxed from the network or from
 paths outside its workspace beyond the CLI's permission mode: keeping the other runs' state away
 from the workspace hides nothing from a worker that searches the disk. Isolation records only what is
 observable.

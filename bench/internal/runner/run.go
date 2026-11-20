@@ -35,6 +35,8 @@ type Options struct {
 	Sources map[string]string
 	// Fake is the adapter for the fake backend (synthetic manifests only).
 	Fake Fake
+	// ListPlugins lists the claude CLI's installed plugins; InstalledPlugins when nil.
+	ListPlugins func(env []string) ([]string, error)
 	// Keep leaves each workspace in place after its record is written.
 	Keep bool
 	Log  io.Writer
@@ -81,6 +83,15 @@ func Execute(ctx context.Context, o Options) error {
 			}
 		}
 	}
+	list := o.ListPlugins
+	if list == nil {
+		list = InstalledPlugins
+	}
+	claude := slices.ContainsFunc(m.Backends, func(b manifest.Backend) bool { return b.CLI == "claude" })
+	plugins, env, err := WorkerSetup(claude, scrub(o.Environ), list)
+	if err != nil {
+		return err
+	}
 	for _, dir := range []string{o.RecordsDir, o.WorkDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
@@ -99,7 +110,6 @@ func Execute(ctx context.Context, o Options) error {
 		backends[b.ID] = b
 	}
 	fmt.Fprintln(o.Log, "approval:", approvalScope(m))
-	env := scrub(o.Environ)
 	meter, err := lastMeter(o.RecordsDir)
 	if err != nil {
 		return err
@@ -129,7 +139,7 @@ func Execute(ctx context.Context, o Options) error {
 			hits = limitHits(data)
 			fmt.Fprintf(o.Log, "run %s: met the plan's limit before (%s), started again\n", run.ID, limited)
 		}
-		c := Cell{Run: run, Task: tasks[run.Task], Condition: conds[run.Condition], Backend: backends[run.Backend], Execution: m.Execution}
+		c := Cell{Run: run, Task: tasks[run.Task], Condition: conds[run.Condition], Backend: backends[run.Backend], Execution: m.Execution, Plugins: plugins}
 		fmt.Fprintf(o.Log, "run %d/%d %s\n", run.Seq, m.PlannedRuns(), run.ID)
 		r, err := o.one(ctx, c, env, hits)
 		if errors.Is(err, ErrPlanLimit) {

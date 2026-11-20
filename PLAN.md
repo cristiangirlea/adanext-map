@@ -307,3 +307,12 @@ repository); a fail-closed push guard (#8).
   indexed. `model.CheckPath` still refuses an empty path, so `store.Load` refuses a store holding
   one. The note now reads `outside the project, naming its root, without a path or with unsafe
   names`. The store format is unchanged.
+- 2026-11-20 (#94): the wiring smoke showed each claude worker loading the runner account's own
+  setup: every installed and synced plugin, about 350 skills and commands, and the account's output
+  style. The runner now lists the installed plugins once per execution with `claude plugin list
+  --json` and refuses to start when it cannot. Each cell's settings set every listed plugin to
+  false, except one the condition enables, and set `outputStyle` to `default`. The CLI starts
+  with `--disable-slash-commands`, and the worker's environment loses `CLAUDE_CODE_PLUGIN_DIRS`. The
+  login stays the subscription's. The user's `CLAUDE.md`, rules files and auto-memory still load
+  (stated in the README). `--bare` was ruled out because it accepts only an API key, and
+  `--safe-mode` because it also turns off the condition's MCP server and plugin.
